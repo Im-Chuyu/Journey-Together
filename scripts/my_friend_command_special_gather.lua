@@ -124,11 +124,20 @@ local function RockFruit(inst, command)
         if preparation ~= nil then return preparation end
         if tool ~= nil then
             local target = mined[1]
-            -- Confirmation after gathering must use exactly the same action
-            -- as a direct rock-fruit mining command.  The normal buffered
-            -- MINE action is what the companion stategraph repeats between
-            -- swings; calling GetRepeatWorkAction here bypasses that chain.
-            local action = Action(inst, target, ACTIONS.MINE, tool, "rockfruit")
+            local action
+            if command.cracking then
+                -- Continue through the work-target path used by the regular
+                -- mining command so repeated swings remain attached to this
+                -- target after the confirmation drop.
+                inst._my_friend_work_target = target
+                inst._my_friend_work_action = ACTIONS.MINE
+                inst._my_friend_work_left = target.components.workable:GetWorkLeft()
+                inst._my_friend_work_stall_deadline = GetTime() + 45
+                action = require("my_friend_base_ai").GetRepeatWorkAction(
+                    inst, target, ACTIONS.MINE)
+            else
+                action = Action(inst, target, ACTIONS.MINE, tool, "rockfruit")
+            end
             if action ~= nil then command.gathered = true return action end
         end
     end
