@@ -3677,6 +3677,9 @@ function M.GetCommandAction(inst)
     if id == "rockfruit" or id == "bullkelp" or id == "dry_meat" then
         return require("my_friend_command_special_gather").GetAction(inst, command)
     end
+    if id == "monkeytail" or id == "banana" then
+        return require("my_friend_command_gather").GetAction(inst, command)
+    end
     if id == "carry_statue" then
         return require("my_friend_command_carry").GetAction(inst, command)
     end

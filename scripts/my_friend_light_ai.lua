@@ -157,6 +157,26 @@ function M.HasUsableEquippedLight(inst)
         and inst.components.inventory ~= nil and #GetEquippedLights(inst) > 0
 end
 
+local function EnsureEquippedLightActive(inst)
+    local inventory = inst ~= nil and inst.components ~= nil
+        and inst.components.inventory or nil
+    if inventory == nil then return end
+    for _, item in ipairs(GetEquippedLights(inst)) do
+        local machine = item.components.machine
+        if machine ~= nil and not machine:IsOn() and machine:CanInteract() then
+            machine:TurnOn()
+        else
+            local needs_callback = item.prefab == "minerhat" and item._light == nil
+                or (item.prefab == "torch" or item.prefab == "lighter") and item.fires == nil
+                or item.prefab == "nightstick" and item.fire == nil
+            local equip = item.components.equippable
+            if needs_callback and equip ~= nil and equip.onequipfn ~= nil then
+                equip.onequipfn(item, inst, false)
+            end
+        end
+    end
+end
+
 local function LightScore(inst, item)
     local equippable = item.components.equippable
     local slot = equippable.equipslot
@@ -303,7 +323,6 @@ function M.IsExternallyLit(inst)
         end
         if not supplied_by_equipment then return true end
     end
-    if not inst:IsInLight() then return false end
     if TheSim == nil then return true end
 
     local x, y, z = inst.Transform:GetWorldPosition()
@@ -314,9 +333,10 @@ function M.IsExternallyLit(inst)
             if IsOwnedLight(inst, light) then self_lit = true else return true end
         end
     end
-    -- A distant bright sample says nothing about the character's position.
-    -- Keep carried light until daylight or a real external light reaches us.
-    return not self_lit and inst:IsInLight()
+    -- The light watcher can remain stale while a follower is outside the
+    -- player's active area.  The nearby-light scan above is authoritative in
+    -- that case: if no external light reaches this point, it is dark here.
+    return false
 end
 
 local function StoreEquippedLight(inst, item)
@@ -360,6 +380,7 @@ end
 
 function M.UpdateEquipment(inst)
     if not CanAct(inst) then return false end
+    EnsureEquippedLightActive(inst)
     local dark = M.IsDark(inst)
     if Policy.IsBusy(inst) and not dark then return false end
     -- Combat owns the hand slot. Without this guard a rain umbrella or a

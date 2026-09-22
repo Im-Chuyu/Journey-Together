@@ -94,6 +94,15 @@ function M.Reply(inst, key, argument)
     return Speech.Reply(inst, key, argument)
 end
 
+-- Command acknowledgements can have several authored variants while keeping
+-- the existing fixed reply API unchanged for the older commands.
+function M.RandomReply(inst, key, argument)
+    if inst == nil or not inst:IsValid() or inst.components.talker == nil then return false end
+    local state = State(inst)
+    state.speech_after = GetTime() + 4
+    return Speech.Random(inst, Speech.Key(inst, key), M.MAX_DURATION, argument)
+end
+
 local function HasText(text, value)
     return type(text) == "string" and text:find(value, 1, true) ~= nil
 end

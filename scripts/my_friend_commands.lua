@@ -113,7 +113,7 @@ end
 local WORK = {chop = true, mine = true, harvest = true, hoe = true, water = true, tidy = true,
     seeds = true, equipment = true, dig_grass = true, dig_sapling = true, dig_stump = true,
     butterfly = true, fish = true, rockfruit = true, bullkelp = true, dry_meat = true,
-    carry_statue = true}
+    carry_statue = true, monkeytail = true, banana = true}
 
 -- Every reply line lives in my_friend_dialogue_lines.lua and is echoed into
 -- the chat window of nearby players.
@@ -436,12 +436,17 @@ function M.Dispatch(friend, player, message)
         origin = player:GetPosition(),
         deadline = GetTime() + (id == "seeds" and 120 or (id == "tidy" or id == "chop"
             or id == "explore" or id == "fish") and math.huge
-            or (id == "rockfruit" or id == "bullkelp" or id == "dry_meat") and 300
+            or (id == "rockfruit" or id == "bullkelp" or id == "dry_meat"
+                or id == "monkeytail" or id == "banana") and 300
             or (id == "hoe" or id == "water" or id == "dig_grass"
                 or id == "dig_sapling" or id == "dig_stump") and 600 or 180),
         charge_pending = WORK[id] == true}
     if id == "fish" then require("my_friend_fishing").Configure(friend) end
-    Dialogue.Reply(friend, "describe_" .. id)
+    if id == "monkeytail" or id == "banana" then
+        Dialogue.RandomReply(friend, "describe_" .. id)
+    else
+        Dialogue.Reply(friend, "describe_" .. id)
+    end
     return true
 end
 

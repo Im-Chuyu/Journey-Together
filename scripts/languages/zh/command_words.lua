@@ -17,6 +17,8 @@ return {
     { id = "fish", zh = {"钓鱼", "打鱼", "抓鱼"} },
     { id = "rockfruit", zh = {"石果"} },
     { id = "bullkelp", zh = {"海带"} },
+    { id = "monkeytail", zh = {"猴尾草", "猴尾", "猴尾草"} },
+    { id = "banana", zh = {"香蕉", "香蕉丛", "摘香蕉"} },
     { id = "dry_meat", zh = {"晾肉", "晾干", "晾肉架"} },
     { id = "sit", zh = {"坐上去", "椅子", "凳子"} },
     { id = "stop_sit", zh = {"站起来", "别坐", "下椅子", "离开椅子"} },
