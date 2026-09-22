@@ -1,4 +1,5 @@
 local LightAI = require("my_friend_light_ai")
+local ActiveArea = require("my_friend_active_area")
 
 local M = {}
 
@@ -7,7 +8,7 @@ local M = {}
 -- need the same small safety net because their pets can otherwise remain in
 -- an unloaded area indefinitely.
 M.PET_RETURN_DISTANCE = 32
-M.UPDATE_PERIOD = 1
+M.UPDATE_PERIOD = .5
 
 local function IsAlive(inst)
     return inst ~= nil and inst:IsValid()
@@ -36,10 +37,11 @@ local function ReturnPet(owner, pet)
     if pet.sg ~= nil and pet.sg.GoToState ~= nil and pet.sg:HasStateTag("sleeping") then
         pet.sg:GoToState("idle")
     end
-    if pet.entity ~= nil and pet.entity:IsAsleep() then pet.entity:Wake() end
+    ActiveArea.KeepAwake(owner, pet)
 end
 
 function M.Update(inst)
+    ActiveArea.Update(inst)
     if not IsAlive(inst) then return end
 
     -- This runs independently of the companion brain, which may be paused
@@ -54,7 +56,9 @@ end
 function M.Configure(inst)
     if TheWorld == nil or not TheWorld.ismastersim then return end
     if inst._my_friend_offscreen_task == nil then
+        inst:ListenForEvent("onremove", ActiveArea.Clear)
         inst._my_friend_offscreen_task = inst:DoPeriodicTask(M.UPDATE_PERIOD, M.Update)
+        ActiveArea.Update(inst)
     end
 end
 

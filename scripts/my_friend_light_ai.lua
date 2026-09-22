@@ -1,6 +1,7 @@
 local M = {}
 local EquipSlots = require("my_friend_equip_slots")
 local Policy = require("my_friend_policy")
+local ActiveArea = require("my_friend_active_area")
 
 M.LIGHT_SEARCH_RANGE = 30
 M.EXTERNAL_LIGHT_SCAN_RANGE = 12
@@ -161,17 +162,7 @@ local function EnsureEquippedLightActive(inst)
     local inventory = inst ~= nil and inst.components ~= nil
         and inst.components.inventory or nil
     if inventory == nil then return end
-    local active_item
     for _, item in ipairs(GetEquippedLights(inst)) do
-        active_item = active_item or item
-        local function KeepAwake(light)
-            if light ~= nil and light.entity ~= nil and light.entity.SetCanSleep ~= nil then
-                light.entity:SetCanSleep(false)
-            end
-        end
-        KeepAwake(item._light)
-        KeepAwake(item.fire)
-        for _, fire in ipairs(item.fires or {}) do KeepAwake(fire) end
         local machine = item.components.machine
         if machine ~= nil and not machine:IsOn() and machine:CanInteract() then
             machine:TurnOn()
@@ -184,26 +175,18 @@ local function EnsureEquippedLightActive(inst)
                 equip.onequipfn(item, inst, false)
             end
         end
-    end
-    -- Equipment FX entities can be culled by the interest manager while the
-    -- companion is outside the player's loaded area.  Mirror the equipped
-    -- light on the companion's replicated entity so remote clients still
-    -- receive a real light source and Charlie cannot attack in darkness.
-    if inst.entity ~= nil and inst.entity.AddLight ~= nil then
-        if inst.Light == nil then pcall(function() inst.entity:AddLight() end) end
-        local light = inst.Light
-        if light ~= nil then
-            if light.SetRadius ~= nil then
-                light:SetRadius(active_item ~= nil
-                    and ((LIGHT_PREFABS[active_item.prefab] or 1) >= 6 and 2.5 or 2) or 0)
-            end
-            if light.SetFalloff ~= nil then light:SetFalloff(.8) end
-            if light.SetIntensity ~= nil then light:SetIntensity(.8) end
-            if light.SetColour ~= nil then light:SetColour(1, 1, 1) end
-            if active_item ~= nil then light:Enable() elseif light.Disable ~= nil then light:Disable() end
-            if inst.entity.SetCanSleep ~= nil then inst.entity:SetCanSleep(false) end
+        -- Torch skins keep their real Light one level below the fire FX.
+        -- Acquire only sleeping entities; the area releases them when left.
+        local function KeepAwake(fx)
+            if fx == nil then return end
+            ActiveArea.KeepAwake(inst, fx)
+            if fx._light ~= nil then ActiveArea.KeepAwake(inst, fx._light) end
         end
+        KeepAwake(item._light)
+        KeepAwake(item.fire)
+        for _, fire in ipairs(item.fires or {}) do KeepAwake(fire) end
     end
+
 end
 
 local function LightScore(inst, item)
@@ -408,8 +391,9 @@ function M.OnBuildItem(inst, item)
 end
 
 function M.UpdateEquipment(inst)
-    if not CanAct(inst) then return false end
+    if not IsAlive(inst) or inst:HasTag("playerghost") then return false end
     EnsureEquippedLightActive(inst)
+    if not CanAct(inst) then return false end
     local dark = M.IsDark(inst)
     if Policy.IsBusy(inst) and not dark then return false end
     -- Combat owns the hand slot. Without this guard a rain umbrella or a
