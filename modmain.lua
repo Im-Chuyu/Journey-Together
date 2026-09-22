@@ -56,6 +56,19 @@ local ContainerCompat = require("my_friend_container_compat")
 AddClassPostConstruct("components/container_replica", ContainerCompat.WrapReplica)
 AddComponentPostInit("teleporter", require("my_friend_wormhole").Configure)
 require("my_friend_shadow_compat").Install()
+
+-- A carried light is a separate FX entity.  The normal player interest
+-- manager may put that child to sleep when its owner is far from the active
+-- player, even though the companion itself is kept awake.  Keep only the
+-- small set of light children awake; this preserves normal culling for every
+-- other item and effect in the world.
+for _, prefab in ipairs({"lanternlight", "minerhatlight", "torchfire", "nightstickfire"}) do
+    AddPrefabPostInit(prefab, function(inst)
+        if inst ~= nil and inst.entity ~= nil and inst.entity.SetCanSleep ~= nil then
+            inst.entity:SetCanSleep(false)
+        end
+    end)
+end
 AddShardModRPCHandler("MyFriends", "HomeChunk", ShardHome.ReceiveChunk)
 AddShardModRPCHandler("MyFriends", "HomeAck", ShardHome.ReceiveAck)
 AddShardModRPCHandler("MyFriends", "PresenceProbe", ShardHome.ReceiveProbe)

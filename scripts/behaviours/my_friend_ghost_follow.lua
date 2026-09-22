@@ -49,18 +49,20 @@ function GhostFollow:Visit()
         -- Do not use locomotor here. Its route finder still honours land
         -- blockers even though a player ghost has no collision volume.
         inst.components.locomotor:Stop()
-        DriftTo(inst, leader, .25)
-        self.goal, self.refresh, self.moving = leader:GetPosition(), now + .25, true
+        local elapsed = self.last_update ~= nil and math.min(.1, math.max(.02, now - self.last_update)) or .05
+        DriftTo(inst, leader, elapsed)
+        self.last_update = now
+        self.goal, self.refresh, self.moving = leader:GetPosition(), now + .05, true
     elseif self.moving then
         inst.components.locomotor:Stop()
         self.goal, self.moving = nil, false
     end
-    self:Sleep(.25)
+    self:Sleep(.05)
 end
 
 function GhostFollow:OnStop()
     if not Policy.IsBusy(self.inst) then self.inst.components.locomotor:Stop() end
-    self.goal, self.moving, self.chasing = nil, nil, nil
+    self.goal, self.moving, self.chasing, self.last_update = nil, nil, nil, nil
 end
 
 return GhostFollow

@@ -83,6 +83,9 @@ function M.InTravelRange(inst, point)
     if action ~= nil and action._my_friend_wormhole ~= nil then
         return require("my_friend_wormhole").InTravelRange(inst, action, point)
     end
+    if action ~= nil and action._my_friend_gather_command ~= nil then
+        return inst._my_friend_command == action._my_friend_gather_command
+    end
     if action ~= nil and action._my_friend_owned_recovery
         and GetTime() <= (inst._my_friend_backpack_deadline or 0) then return true end
     local command = inst._my_friend_command

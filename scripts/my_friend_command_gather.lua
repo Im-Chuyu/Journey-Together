@@ -7,7 +7,7 @@ local Tidy = require("my_friend_tidy")
 
 local M = {}
 M.RANGE = 20
-M.REED_SEARCH_RANGE = 64
+M.REED_SEARCH_RANGE = 20
 M.REED_TIMEOUT = 120
 
 local function DistanceSq(a, b)
@@ -15,7 +15,32 @@ local function DistanceSq(a, b)
 end
 
 local function Origin(command)
-    return command.origin or command.player:GetPosition()
+    return command.search_point or command.origin or command.player:GetPosition()
+end
+
+local function FindMarshPoint(inst)
+    local topology = TheWorld ~= nil and TheWorld.topology or nil
+    local nodes = topology ~= nil and topology.nodes or nil
+    if nodes == nil then return end
+    local ids = topology.ids
+    local ox, _, oz = inst.Transform:GetWorldPosition()
+    local best, distance
+    for index, node in ipairs(nodes) do
+        local id = string.lower(tostring(ids ~= nil and ids[index] or ""))
+        if id:find("marsh", 1, true) or id:find("swamp", 1, true) then
+            local x = node.x or node.cent ~= nil and node.cent[1]
+            local z = node.y or node.cent ~= nil and node.cent[2]
+            if type(x) == "number" and type(z) == "number"
+                and TheWorld.Map:IsPassableAtPoint(x, 0, z)
+                and not TheWorld.Map:IsOceanTileAtPoint(x, 0, z) then
+                local d = (x - ox)^2 + (z - oz)^2
+                if distance == nil or d < distance then
+                    best, distance = Vector3(x, 0, z), d
+                end
+            end
+        end
+    end
+    return best
 end
 
 local function Reachable(inst, target)
@@ -54,6 +79,22 @@ local function IsMarsh(entity)
         and TheWorld.Map:GetTileAtPoint(p.x, 0, p.z) == tiles.MARSH
 end
 
+local function FindLoadedReedPoint(inst)
+    local ox, _, oz = inst.Transform:GetWorldPosition()
+    local best, distance
+    for _, entity in pairs(Ents or {}) do
+        if entity.Transform ~= nil and Pickable(entity, "reeds") and IsMarsh(entity)
+            and Reachable(inst, entity) then
+            local x, _, z = entity.Transform:GetWorldPosition()
+            local d = (x - ox)^2 + (z - oz)^2
+            if distance == nil or d < distance then
+                best, distance = Vector3(x, 0, z), d
+            end
+        end
+    end
+    return best
+end
+
 local function FindReeds(inst, command)
     local point = Origin(command)
     local x, _, z = point:Get()
@@ -69,11 +110,36 @@ local function FindReeds(inst, command)
     return best
 end
 
+local function MarshTravel(inst, command)
+    local point = FindLoadedReedPoint(inst) or FindMarshPoint(inst)
+    if point == nil then return end
+    command.search_point = point
+    local action = BufferedAction(inst, nil, ACTIONS.WALKTO, nil, point)
+    action.arrivedist = 4
+    action._my_friend_gather_command = command
+    action.validfn = function()
+        return inst._my_friend_command == command
+            and TheWorld.Map:IsPassableAtPoint(point.x, 0, point.z)
+    end
+    action:AddSuccessAction(function()
+        command.phase = "reeds"
+        command.reed_deadline = GetTime() + M.REED_TIMEOUT
+        command.scan_after, command.waiting = nil, nil
+    end)
+    action:AddFailAction(function()
+        if inst._my_friend_command == command and not action._my_friend_cancelled then
+            command.phase, command.waiting = "deliver", nil
+        end
+    end)
+    return action
+end
+
 local function PickAction(inst, command, target, dialogue_kind)
     if not Reachable(inst, target) then return end
     local action = BufferedAction(inst, target, ACTIONS.PICK)
     action.arrivedist = 2
     action._my_friend_dialogue_kind = dialogue_kind
+    action._my_friend_gather_command = command
     action.validfn = function()
         return inst._my_friend_command == command and Reachable(inst, target)
             and target:GetDistanceSqToPoint(Origin(command)) <= M.RANGE * M.RANGE
@@ -97,6 +163,7 @@ local function HandOver(inst, command, item)
         or DistanceSq(inst, command.player) > 32 * 32 then return end
     local action = Tidy.HandOver(inst, command, item)
     if action ~= nil then
+        action._my_friend_gather_command = command
         action:AddSuccessAction(function()
             if inst._my_friend_command == command then
                 require("my_friend_commands").Clear(inst)
@@ -125,6 +192,7 @@ local function StoreInFridge(inst, command, item)
                 or command.id == "monkeytail" and candidate.prefab == "cutreeds")
     end, 32)
     if action ~= nil then
+        action._my_friend_gather_command = command
         action:AddSuccessAction(function()
             if inst._my_friend_command == command then
                 require("my_friend_commands").Clear(inst)
@@ -175,10 +243,22 @@ local function Monkeytail(inst, command)
                 return action
             end
         end
-        command.phase = "reeds"
+        command.phase = "marsh_travel"
         command.reed_deadline = GetTime() + M.REED_TIMEOUT
+        command.search_point = nil
+    end
+    if command.phase == "marsh_travel" then
+        local action = MarshTravel(inst, command)
+        if action ~= nil then return action end
+        command.phase = "deliver"
+        return Deliver(inst, command, {cutreeds = true})
     end
     if command.phase == "reeds" then
+        if command.scan_after ~= nil and GetTime() < command.scan_after then
+            command.waiting = true
+            return
+        end
+        command.waiting, command.scan_after = nil, nil
         if GetTime() >= (command.reed_deadline or 0) then
             command.phase = "deliver"
             return Deliver(inst, command, {cutreeds = true})
@@ -187,12 +267,16 @@ local function Monkeytail(inst, command)
         if target ~= nil then
             local action = PickAction(inst, command, target, "gather")
             if action ~= nil then
-                action:AddSuccessAction(function() command.gathered = true end)
+                action:AddSuccessAction(function()
+                    command.gathered = true
+                    command.scan_after = GetTime() + 5
+                end)
                 return action
             end
         else
-            command.phase = "deliver"
-            return Deliver(inst, command, {cutreeds = true})
+            command.scan_after = GetTime() + 5
+            command.waiting = true
+            return
         end
     end
 end

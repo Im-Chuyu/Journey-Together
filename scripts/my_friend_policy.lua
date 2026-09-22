@@ -152,6 +152,8 @@ function M.GuardAction(inst, action, radius)
             if point ~= nil and (point - origin):LengthSq() > 16^2 then return false end
         elseif act._my_friend_roaming ~= nil then
             if not M.IsRoaming(inst) or inst._my_friend_command ~= act._my_friend_roaming then return false end
+        elseif act._my_friend_gather_command ~= nil then
+            if inst._my_friend_command ~= act._my_friend_gather_command then return false end
         elseif leader ~= nil and not act._my_friend_owned_recovery
             and not M.IsDeathRecoveryAction(inst, act) then
             if target ~= nil and not M.InRange(inst, target, radius) then return false end

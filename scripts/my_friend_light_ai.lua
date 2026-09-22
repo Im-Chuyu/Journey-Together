@@ -161,7 +161,17 @@ local function EnsureEquippedLightActive(inst)
     local inventory = inst ~= nil and inst.components ~= nil
         and inst.components.inventory or nil
     if inventory == nil then return end
+    local active_item
     for _, item in ipairs(GetEquippedLights(inst)) do
+        active_item = active_item or item
+        local function KeepAwake(light)
+            if light ~= nil and light.entity ~= nil and light.entity.SetCanSleep ~= nil then
+                light.entity:SetCanSleep(false)
+            end
+        end
+        KeepAwake(item._light)
+        KeepAwake(item.fire)
+        for _, fire in ipairs(item.fires or {}) do KeepAwake(fire) end
         local machine = item.components.machine
         if machine ~= nil and not machine:IsOn() and machine:CanInteract() then
             machine:TurnOn()
@@ -173,6 +183,25 @@ local function EnsureEquippedLightActive(inst)
             if needs_callback and equip ~= nil and equip.onequipfn ~= nil then
                 equip.onequipfn(item, inst, false)
             end
+        end
+    end
+    -- Equipment FX entities can be culled by the interest manager while the
+    -- companion is outside the player's loaded area.  Mirror the equipped
+    -- light on the companion's replicated entity so remote clients still
+    -- receive a real light source and Charlie cannot attack in darkness.
+    if inst.entity ~= nil and inst.entity.AddLight ~= nil then
+        if inst.Light == nil then pcall(function() inst.entity:AddLight() end) end
+        local light = inst.Light
+        if light ~= nil then
+            if light.SetRadius ~= nil then
+                light:SetRadius(active_item ~= nil
+                    and ((LIGHT_PREFABS[active_item.prefab] or 1) >= 6 and 2.5 or 2) or 0)
+            end
+            if light.SetFalloff ~= nil then light:SetFalloff(.8) end
+            if light.SetIntensity ~= nil then light:SetIntensity(.8) end
+            if light.SetColour ~= nil then light:SetColour(1, 1, 1) end
+            if active_item ~= nil then light:Enable() elseif light.Disable ~= nil then light:Disable() end
+            if inst.entity.SetCanSleep ~= nil then inst.entity:SetCanSleep(false) end
         end
     end
 end

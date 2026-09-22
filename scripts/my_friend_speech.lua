@@ -32,9 +32,17 @@ local function Register(strings, prefix, source)
         if #resolved > 0 then strings[prefix .. key] = resolved end
     end
     for key, line in pairs(type(source.replies) == "table" and source.replies or {}) do
-        if type(line) == "table" and type(line[1]) == "string" then
-            strings[prefix .. key] = { line[2] ~= nil
-                and Language.Text(line[1], line[2]) or line[1] }
+        if type(line) == "table" then
+            local resolved = {}
+            for _, entry in ipairs(line) do
+                if type(entry) == "string" then
+                    resolved[#resolved + 1] = entry
+                elseif type(entry) == "table" and type(entry[1]) == "string" then
+                    resolved[#resolved + 1] = entry[2] ~= nil
+                        and Language.Text(entry[1], entry[2]) or entry[1]
+                end
+            end
+            if #resolved > 0 then strings[prefix .. key] = resolved end
         end
     end
 end

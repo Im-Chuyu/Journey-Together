@@ -19,7 +19,7 @@ return {
     { id = "fish", en = {"go fishing", "catch fish", "fish"} },
     { id = "rockfruit", en = {"rock fruit", "rock avocado"} },
     { id = "bullkelp", en = {"bull kelp", "bullkelp"} },
-    { id = "monkeytail", en = {"monkeytail", "monkey tail", "pick monkeytail"} },
+    { id = "monkeytail", en = {"monkeytail", "monkey tail", "pick monkeytail", "reeds", "pick reeds"} },
     { id = "banana", en = {"banana", "bananas", "pick bananas", "banana bush"} },
     { id = "dry_meat", en = {"dry meat", "dry food", "meat rack"} },
     { id = "sit", en = {"sit down", "take a seat", "chair", "stool"} },
