@@ -1,8 +1,8 @@
 # Journey Together
 
-饥荒联机版模组：AI伙伴（Journey Together）。伙伴可以跟随玩家、协助战斗、独立生存、整理物资、制作料理，并通过聊天指令执行工作。
+饥荒联机版模组：一路同行（Journey Together）。伙伴可以跟随玩家、协助战斗、独立生存、整理物资、制作料理，并通过聊天指令执行工作。
 
-## 分支约定
+## 分支
 
 - `main`：稳定发布版本，适合直接下载和使用。
 - `develop`：下一版本开发和联调分支。
@@ -15,7 +15,7 @@
 - `scripts/my_friend_command_words.lua`
 - `scripts/my_friend_dialogue_lines.lua`
 
-为了方便贡献者扩展，项目提供了可插拔文件：
+为了方便贡献者扩展，项目提供了可配置文件：
 
 - `scripts/my_friend_command_word_packs.lua`：登记额外关键词模块。
 - `scripts/my_friend_dialogue_packs.lua`：登记额外台词模块。
