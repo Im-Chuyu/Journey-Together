@@ -1,11 +1,10 @@
 -- Routes every companion line through the vanilla "chatter" network path so
 -- nearby players see it both as a speech bubble and in their chat window,
 -- exactly like the Hermit Crab. Only a short key travels over the wire; the
--- text itself lives in the selected my_friend_dialogue_lines_<language>.lua
+-- text itself lives in the selected scripts/languages/<code>/dialogue_lines.lua
 -- file on every machine.
 local Language = require("my_friend_strings")
 local LanguageFiles = require("my_friend_language")
-local Characters = require("my_friend_characters")
 
 local M = {}
 
@@ -40,38 +39,14 @@ local function Register(strings, prefix, source)
     end
 end
 
-local function RegisterPacks(strings, packs)
-    if type(packs) ~= "table" then return end
-    for _, module_name in ipairs(packs) do
-        if type(module_name) == "string" then
-            local pack = LanguageFiles.Pack(Language.language, module_name)
-            local ok = type(pack) == "table"
-            if ok and type(pack) == "table" then Register(strings, "", pack) end
-        end
-    end
-end
-
 -- Resolved once per language so the networked id stays a plain array index.
 --
--- Besides the shared defaults, one optional file per character is loaded:
---     scripts/my_friend_dialogue_lines_<character>.lua
--- with the same { lines = {...}, replies = {...} } shape as the default file.
--- Only the keys it actually defines are overridden, and a character with no
--- file at all simply speaks the default lines.
+-- All shared and character-specific keys are kept in the selected language
+-- file, so contributors only need to submit one dialogue file per language.
 function M.BuildStrings()
     local strings = {}
     local lines = LanguageFiles.DialogueLines(Language.language)
     Register(strings, "", lines)
-    local ok_packs, packs = pcall(require, "my_friend_dialogue_packs")
-    if ok_packs then RegisterPacks(strings, packs) end
-    for _, character in ipairs(Characters.List()) do
-        local base = "my_friend_dialogue_lines_" .. character
-        local override = LanguageFiles.Pack(Language.language, base)
-        local ok = type(override) == "table"
-        if ok and type(override) == "table" then
-            Register(strings, character .. CHARACTER_SEPARATOR, override)
-        end
-    end
     STRINGS[M.TABLE] = strings
     return strings
 end

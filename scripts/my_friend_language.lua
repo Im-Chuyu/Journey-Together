@@ -1,6 +1,6 @@
 -- Loads reviewed language files from scripts/languages/<code>/.
 local M = {}
-local function Load(language, filename, legacy)
+local function Load(language, filename)
     local code = type(language) == "string" and language:lower() or "zh"
     local ok, value = pcall(require, "languages/" .. code .. "/" .. filename)
     if ok and type(value) == "table" then return value end
@@ -8,16 +8,21 @@ local function Load(language, filename, legacy)
         ok, value = pcall(require, "languages/zh/" .. filename)
         if ok and type(value) == "table" then return value end
     end
-    if legacy ~= nil then
-        ok, value = pcall(require, legacy .. "_" .. code)
-        if ok and type(value) == "table" then return value end
-        if code ~= "zh" then
-            ok, value = pcall(require, legacy .. "_zh")
-            if ok and type(value) == "table" then return value end
+end
+function M.CommandWords(language)
+    local source = Load(language, "command_words")
+    if type(source) ~= "table" then return end
+    local result = {}
+    for _, entry in ipairs(source) do
+        if type(entry) == "table" and type(entry.id) == "string" then
+            local words = entry.keywords or entry[language]
+                or entry.zh or entry.en
+            if type(words) == "table" then
+                result[#result + 1] = {id = entry.id, keywords = words}
+            end
         end
     end
+    return result
 end
-function M.CommandWords(language) return Load(language, "command_words", "my_friend_command_words") end
-function M.DialogueLines(language) return Load(language, "dialogue_lines", "my_friend_dialogue_lines") end
-function M.Pack(language, base) return Load(language, base, base) end
+function M.DialogueLines(language) return Load(language, "dialogue_lines") end
 return M

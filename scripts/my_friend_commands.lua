@@ -10,7 +10,7 @@ local SpecialCommands = require("my_friend_special_commands")
 local Language = require("my_friend_strings")
 local LanguageFiles = require("my_friend_language")
 
--- Keywords live in my_friend_command_words.lua, which is meant to be edited.
+-- Keywords live in scripts/languages/<code>/command_words.lua.
 -- Anything malformed there is skipped with a log line rather than taking the
 -- whole mod down, so a typo in the config never stops the world from loading.
 local COMMANDS = {}
@@ -24,7 +24,7 @@ do
     for _, entry in ipairs(configured) do
         if type(entry) == "table" and type(entry.id) == "string" then
             local words = {}
-            for _, list in ipairs({entry.keywords, entry[Language.language], entry.zh, entry.en}) do
+            for _, list in ipairs({entry.keywords}) do
                 for _, word in ipairs(type(list) == "table" and list or {}) do
                     if type(word) == "string" then
                         word = word:lower():match("^%s*(.-)%s*$")
@@ -34,33 +34,6 @@ do
             end
             if #words > 0 then
             COMMANDS[#COMMANDS + 1] = {id = entry.id, words = words}
-        end
-    end
-    local ok_packs, packs = pcall(require, "my_friend_command_word_packs")
-    if ok_packs and type(packs) == "table" then
-        for _, module_name in ipairs(packs) do
-            if type(module_name) == "string" then
-                local pack = LanguageFiles.Pack(Language.language, module_name)
-                local loaded = type(pack) == "table"
-                if loaded and type(pack) == "table" then
-                    for _, entry in ipairs(pack) do
-                        if type(entry) == "table" and type(entry.id) == "string" then
-                            local words = {}
-                            for _, list in ipairs({entry.keywords, entry[Language.language], entry.zh, entry.en}) do
-                                for _, word in ipairs(type(list) == "table" and list or {}) do
-                                    if type(word) == "string" then
-                                        word = word:lower():match("^%s*(.-)%s*$")
-                                        if #word > 0 then words[#words + 1] = word end
-                                    end
-                                end
-                            end
-                            if #words > 0 then
-                                COMMANDS[#COMMANDS + 1] = {id = entry.id, words = words}
-                            end
-                        end
-                    end
-                end
-            end
         end
     end
     end
