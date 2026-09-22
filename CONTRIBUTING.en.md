@@ -2,15 +2,14 @@
 
 ## Adding a language
 
-Chinese is the default fallback. Create one keyword file and one dialogue file
-for the language code, for example:
+Chinese is the default fallback. Create one folder and two files, for example:
 
-- `scripts/my_friend_command_words_ja.lua`
-- `scripts/my_friend_dialogue_lines_ja.lua`
+- `scripts/languages/ja/command_words.lua`
+- `scripts/languages/ja/dialogue_lines.lua`
 
-Add `{description = "日本語", data = "ja"}` to the `language` options in
-`modinfo.lua`. The loader will select those files when the mod setting is
-`ja`. Keep the command ids and dialogue keys from the Chinese files unchanged.
+Do not edit `modinfo.lua` in the translation pull request. The maintainer adds
+`{description = "日本語", data = "ja"}` after review. Keep command ids and
+dialogue keys unchanged.
 
 Each dialogue line is a one element table such as `{ "A line" }`; each reply is
 also a one element table. Do not put multiple languages in one entry.

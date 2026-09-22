@@ -4,6 +4,7 @@
 -- text itself lives in the selected my_friend_dialogue_lines_<language>.lua
 -- file on every machine.
 local Language = require("my_friend_strings")
+local LanguageFiles = require("my_friend_language")
 local Characters = require("my_friend_characters")
 
 local M = {}
@@ -43,11 +44,8 @@ local function RegisterPacks(strings, packs)
     if type(packs) ~= "table" then return end
     for _, module_name in ipairs(packs) do
         if type(module_name) == "string" then
-            local ok, pack = pcall(require, module_name .. "_" .. Language.language)
-            if not ok and Language.language ~= "zh" then
-                ok, pack = pcall(require, module_name .. "_zh")
-            end
-            if not ok then ok, pack = pcall(require, module_name) end
+            local pack = LanguageFiles.Pack(Language.language, module_name)
+            local ok = type(pack) == "table"
             if ok and type(pack) == "table" then Register(strings, "", pack) end
         end
     end
@@ -62,21 +60,14 @@ end
 -- file at all simply speaks the default lines.
 function M.BuildStrings()
     local strings = {}
-    local ok_lines, lines = pcall(require, "my_friend_dialogue_lines_" .. Language.language)
-    if not ok_lines and Language.language ~= "zh" then
-        ok_lines, lines = pcall(require, "my_friend_dialogue_lines_zh")
-    end
-    if not ok_lines then ok_lines, lines = pcall(require, "my_friend_dialogue_lines") end
+    local lines = LanguageFiles.DialogueLines(Language.language)
     Register(strings, "", lines)
     local ok_packs, packs = pcall(require, "my_friend_dialogue_packs")
     if ok_packs then RegisterPacks(strings, packs) end
     for _, character in ipairs(Characters.List()) do
         local base = "my_friend_dialogue_lines_" .. character
-        local ok, override = pcall(require, base .. "_" .. Language.language)
-        if not ok and Language.language ~= "zh" then
-            ok, override = pcall(require, base .. "_zh")
-        end
-        if not ok then ok, override = pcall(require, base) end
+        local override = LanguageFiles.Pack(Language.language, base)
+        local ok = type(override) == "table"
         if ok and type(override) == "table" then
             Register(strings, character .. CHARACTER_SEPARATOR, override)
         end

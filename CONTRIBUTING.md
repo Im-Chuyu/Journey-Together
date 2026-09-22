@@ -1,15 +1,24 @@
 # Journey Together contributions
 
+## Translation Pull Requests
+
+Create a folder under `scripts/languages/<language code>/` and add only:
+
+- `command_words.lua`
+- `dialogue_lines.lua`
+
+Copy `scripts/languages/_template` to begin. Keep existing command ids and
+dialogue keys unchanged. Do not modify core code, pack manifests, or
+`modinfo.lua`; the maintainer handles review and release registration.
+
 ## Command keywords
 
-Copy `scripts/my_friend_command_words_template.lua` to a language file such as
-`scripts/my_friend_command_words_ja.lua`. For an optional pack, add the base
-module name to `scripts/my_friend_command_word_packs.lua`.
+The canonical file is `scripts/languages/<code>/command_words.lua`.
 
-Each language has its own file. Chinese uses this shape:
+Each language uses this shape:
 
 ```lua
-{ id = "existing_command_id", zh = { "关键词" } },
+{ id = "existing_command_id", keywords = { "keyword" } },
 ```
 
 Keywords use substring matching in Chinese and word-boundary matching in
@@ -18,9 +27,8 @@ entry. Only existing command ids are accepted by a keyword pack.
 
 ## Dialogue
 
-Copy the language template to a language-specific file and add its base module
-name to `scripts/my_friend_dialogue_packs.lua`. Shared lines use the `lines`
-table and one-line command responses use `replies`.
+The canonical file is `scripts/languages/<code>/dialogue_lines.lua`. Shared
+lines use the `lines` table and one-line command responses use `replies`.
 
 Each language file contains only one language. Use `{1}` when the caller
 supplies a name or other argument. Do not remove required keys from the Chinese

@@ -12,23 +12,22 @@ and respond to chat commands.
 
 ## Language files
 
-Chinese is the default language. Keywords and dialogue are stored in separate
-files for each language:
+Chinese is the default language. Keywords and dialogue are stored in two files
+under `scripts/languages/<code>/` for each language.
 
-- `scripts/my_friend_command_words_zh.lua`
-- `scripts/my_friend_command_words_en.lua`
-- `scripts/my_friend_dialogue_lines_zh.lua`
-- `scripts/my_friend_dialogue_lines_en.lua`
+Contributors only need to submit two files under
+`scripts/languages/<code>/`:
 
-To add another language, copy the corresponding templates, use the same
-command ids and dialogue keys, and add the language to `configuration_options`
-in `modinfo.lua`. For example, a language code `ja` loads
-`my_friend_command_words_ja.lua` and `my_friend_dialogue_lines_ja.lua`.
-Missing dialogue or keywords fall back to Chinese.
+- `command_words.lua`
+- `dialogue_lines.lua`
 
-Optional contributor packs are registered in
-`scripts/my_friend_command_word_packs.lua` and
-`scripts/my_friend_dialogue_packs.lua`. Full formatting rules are described in
+They should not edit core code, pack manifests, or `modinfo.lua`. The maintainer
+reviews and merges the language files, then adds the language option to
+`modinfo.lua` before downloading the repository as a release mod. Missing files
+fall back to Chinese.
+
+The folder `scripts/languages/_template` is the starting point. Full formatting
+rules are described in
 [`CONTRIBUTING.en.md`](CONTRIBUTING.en.md).
 
 ## Local checks
