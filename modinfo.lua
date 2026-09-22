@@ -20,6 +20,8 @@ configuration_options = {
         name = "language",
         label = chinese and "伙伴语言" or "Companion Language",
         options = {
+            -- Add a new {description = "...", data = "xx"} entry when adding
+            -- my_friend_command_words_xx.lua and my_friend_dialogue_lines_xx.lua.
             {description = chinese and "中文" or "Chinese", data = "zh"},
             {description = "English", data = "en"},
         },

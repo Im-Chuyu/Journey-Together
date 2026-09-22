@@ -1,8 +1,9 @@
 -- Optional shared dialogue packs.
 --
--- Add accepted contributor files here.  Each module must return:
---     { lines = { key = { { "中文", "English" } } },
---       replies = { key = { "中文", "English" } } }
--- A pack may add new keys or override existing keys.  Character-specific
--- files remain supported through my_friend_dialogue_lines_<prefab>.lua.
+-- Add a base module name here. The loader selects <module>_<language>.lua and
+-- falls back to <module>_zh.lua. Each module returns:
+--     { lines = { key = { { "one line" }, { "another line" } } },
+--       replies = { key = { "one reply" } } }
+-- Character-specific files remain supported through
+-- my_friend_dialogue_lines_<prefab>_<language>.lua.
 return {}

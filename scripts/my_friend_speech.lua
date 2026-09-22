@@ -1,9 +1,9 @@
 -- Routes every companion line through the vanilla "chatter" network path so
 -- nearby players see it both as a speech bubble and in their chat window,
 -- exactly like the Hermit Crab. Only a short key travels over the wire; the
--- text itself lives in my_friend_dialogue_lines.lua on every machine.
+-- text itself lives in the selected my_friend_dialogue_lines_<language>.lua
+-- file on every machine.
 local Language = require("my_friend_strings")
-local Lines = require("my_friend_dialogue_lines")
 local Characters = require("my_friend_characters")
 
 local M = {}
@@ -25,14 +25,16 @@ local function Register(strings, prefix, source)
         local resolved = {}
         for _, line in ipairs(group) do
             if type(line) == "table" and type(line[1]) == "string" then
-                resolved[#resolved + 1] = Language.Text(line[1], line[2] or line[1])
+                resolved[#resolved + 1] = line[2] ~= nil
+                    and Language.Text(line[1], line[2]) or line[1]
             end
         end
         if #resolved > 0 then strings[prefix .. key] = resolved end
     end
     for key, line in pairs(type(source.replies) == "table" and source.replies or {}) do
         if type(line) == "table" and type(line[1]) == "string" then
-            strings[prefix .. key] = { Language.Text(line[1], line[2] or line[1]) }
+            strings[prefix .. key] = { line[2] ~= nil
+                and Language.Text(line[1], line[2]) or line[1] }
         end
     end
 end
@@ -41,7 +43,11 @@ local function RegisterPacks(strings, packs)
     if type(packs) ~= "table" then return end
     for _, module_name in ipairs(packs) do
         if type(module_name) == "string" then
-            local ok, pack = pcall(require, module_name)
+            local ok, pack = pcall(require, module_name .. "_" .. Language.language)
+            if not ok and Language.language ~= "zh" then
+                ok, pack = pcall(require, module_name .. "_zh")
+            end
+            if not ok then ok, pack = pcall(require, module_name) end
             if ok and type(pack) == "table" then Register(strings, "", pack) end
         end
     end
@@ -56,11 +62,21 @@ end
 -- file at all simply speaks the default lines.
 function M.BuildStrings()
     local strings = {}
-    Register(strings, "", Lines)
+    local ok_lines, lines = pcall(require, "my_friend_dialogue_lines_" .. Language.language)
+    if not ok_lines and Language.language ~= "zh" then
+        ok_lines, lines = pcall(require, "my_friend_dialogue_lines_zh")
+    end
+    if not ok_lines then ok_lines, lines = pcall(require, "my_friend_dialogue_lines") end
+    Register(strings, "", lines)
     local ok_packs, packs = pcall(require, "my_friend_dialogue_packs")
     if ok_packs then RegisterPacks(strings, packs) end
     for _, character in ipairs(Characters.List()) do
-        local ok, override = pcall(require, "my_friend_dialogue_lines_" .. character)
+        local base = "my_friend_dialogue_lines_" .. character
+        local ok, override = pcall(require, base .. "_" .. Language.language)
+        if not ok and Language.language ~= "zh" then
+            ok, override = pcall(require, base .. "_zh")
+        end
+        if not ok then ok, override = pcall(require, base) end
         if ok and type(override) == "table" then
             Register(strings, character .. CHARACTER_SEPARATOR, override)
         end

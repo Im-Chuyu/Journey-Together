@@ -3,7 +3,7 @@ local TheNet = _G.TheNet
 require("my_friend_client_init").Install()
 local InventoryAI = require("my_friend_inventory")
 local Language = require("my_friend_strings")
-Language.language = GetModConfigData("language") == "en" and "en" or "zh"
+Language.language = GetModConfigData("language") or "zh"
 local Text = Language.Text
 -- Every companion line is registered in STRINGS on both the server and the
 -- clients so the vanilla chatter channel can echo it into nearby chat windows.

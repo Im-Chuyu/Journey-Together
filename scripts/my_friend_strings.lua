@@ -1,6 +1,6 @@
--- Language helper only. Every player facing line lives in
--- my_friend_dialogue_lines.lua, which is the file to edit when rewriting
--- the companion's dialogue.
+-- Language selection shared by the UI, keyword loader and dialogue loader.
+-- Add a language option in modinfo.lua and provide matching *_<code>.lua
+-- files; missing dialogue falls back to Chinese.
 local M = {language = "zh"}
 
 function M.Text(zh, en)

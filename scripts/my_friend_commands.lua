@@ -7,13 +7,18 @@ local Home = require("my_friend_home")
 local Dialogue = require("my_friend_dialogue")
 local Riding = require("my_friend_beefalo").Riding
 local SpecialCommands = require("my_friend_special_commands")
+local Language = require("my_friend_strings")
 
 -- Keywords live in my_friend_command_words.lua, which is meant to be edited.
 -- Anything malformed there is skipped with a log line rather than taking the
 -- whole mod down, so a typo in the config never stops the world from loading.
 local COMMANDS = {}
 do
-    local ok, configured = pcall(require, "my_friend_command_words")
+    local ok, configured = pcall(require, "my_friend_command_words_" .. Language.language)
+    if not ok and Language.language ~= "zh" then
+        ok, configured = pcall(require, "my_friend_command_words_zh")
+    end
+    if not ok then ok, configured = pcall(require, "my_friend_command_words") end
     if not ok or type(configured) ~= "table" then
         print("[MyFriends] my_friend_command_words.lua could not be read: "
             .. tostring(configured))
@@ -38,7 +43,11 @@ do
     if ok_packs and type(packs) == "table" then
         for _, module_name in ipairs(packs) do
             if type(module_name) == "string" then
-                local loaded, pack = pcall(require, module_name)
+                local loaded, pack = pcall(require, module_name .. "_" .. Language.language)
+                if not loaded and Language.language ~= "zh" then
+                    loaded, pack = pcall(require, module_name .. "_zh")
+                end
+                if not loaded then loaded, pack = pcall(require, module_name) end
                 if loaded and type(pack) == "table" then
                     for _, entry in ipairs(pack) do
                         if type(entry) == "table" and type(entry.id) == "string" then
