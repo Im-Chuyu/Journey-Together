@@ -575,6 +575,11 @@ local function ConfigureFriend(inst)
     inst:AddTag("my_friend")
     inst:AddTag("companion")
     inst:AddTag("noplayerindicator")
+    -- The companion uses the vanilla grue component, but darkness damage is
+    -- only disabled for this entity. Other damage sources remain unchanged.
+    if inst.components.grue ~= nil then
+        inst.components.grue:AddImmunity("my_friend_darkness")
+    end
     RemovePlayerIdentity(inst)
     if inst.components.hudindicatable ~= nil then
         inst.components.hudindicatable:SetShouldTrackFunction(function()
