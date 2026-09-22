@@ -141,28 +141,42 @@ local function Monkeytail(inst, command)
     if command.phase == "deliver" then
         return Deliver(inst, command, {cutreeds = true})
     end
-    if command.scan_after ~= nil and GetTime() < command.scan_after then
-        command.waiting = true
-        return
+    if command.scan_after ~= nil then
+        if GetTime() < command.scan_after then
+            command.waiting = true
+            return
+        end
+        -- A full five-second quiet period passed. The scan below gets one
+        -- more chance to find a plant that regrew before we finish.
+        command.waiting, command.scan_after = nil, nil
+        command.waiting_for_regrowth = true
     end
-    command.waiting, command.scan_after = nil, nil
 
     -- The reed command is deliberately local: it searches the same 20-unit
     -- command area as monkeytails and never sends the companion to a marsh.
     local target = FindNearby(inst, command, "monkeytail", M.RANGE)
         or FindNearby(inst, command, "reeds", M.RANGE)
     if target ~= nil then
+        command.waiting_for_regrowth = nil
         local action = PickAction(inst, command, target, "gather")
         if action ~= nil then
             action:AddSuccessAction(function()
                 command.gathered = true
-                command.scan_after = GetTime() + 5
+                -- Keep picking continuously while any nearby target remains.
+                -- The five-second delay starts only after a scan finds none.
+                command.scan_after = nil
+                command.waiting_for_regrowth = nil
             end)
             return action
         end
     end
-    command.phase = "deliver"
-    return Deliver(inst, command, {cutreeds = true})
+    if command.waiting_for_regrowth then
+        command.phase = "deliver"
+        return Deliver(inst, command, {cutreeds = true})
+    end
+    command.scan_after = GetTime() + 5
+    command.waiting = true
+    return
 end
 
 local function Banana(inst, command)
