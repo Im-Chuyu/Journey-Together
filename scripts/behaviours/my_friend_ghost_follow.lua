@@ -32,6 +32,7 @@ function GhostFollow:Visit()
     if self.status == READY then
         Navigation.CancelSteering(inst)
         Navigation.ClearStuck(inst)
+        if inst.components.locomotor ~= nil then inst.components.locomotor:Stop() end
         inst._my_friend_steering_cache, inst._my_friend_last_move = nil, nil
         self.goal, self.moving = nil, false
     end
@@ -48,7 +49,6 @@ function GhostFollow:Visit()
     if self.chasing then
         -- Do not use locomotor here. Its route finder still honours land
         -- blockers even though a player ghost has no collision volume.
-        inst.components.locomotor:Stop()
         local elapsed = self.last_update ~= nil and math.min(.1, math.max(.02, now - self.last_update)) or .05
         DriftTo(inst, leader, elapsed)
         self.last_update = now
@@ -57,7 +57,7 @@ function GhostFollow:Visit()
         inst.components.locomotor:Stop()
         self.goal, self.moving = nil, false
     end
-    self:Sleep(.05)
+    self:Sleep(.03)
 end
 
 function GhostFollow:OnStop()

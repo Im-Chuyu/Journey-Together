@@ -161,13 +161,19 @@ end
 local function HandOver(inst, command, item)
     if command.player == nil or not command.player:IsValid()
         or DistanceSq(inst, command.player) > 32 * 32 then return end
-    local action = Tidy.HandOver(inst, command, item)
+    local count = item.components ~= nil and item.components.stackable ~= nil
+        and item.components.stackable:StackSize() or 1
+    local action = Tidy.HandOver(inst, command, item, count)
     if action ~= nil then
         action._my_friend_gather_command = command
         action:AddSuccessAction(function()
             if inst._my_friend_command == command then
-                require("my_friend_commands").Clear(inst)
-                Dialogue.RandomReply(inst, command.id == "banana" and "banana_done" or "monkeytail_done")
+                -- Keep the command alive until every stack and every item of
+                -- this gathering run has been delivered. The next brain tick
+                -- re-enters Deliver and hands over the remaining products.
+                command.gathered = true
+                command.phase = "deliver"
+                inst._my_friend_replan_requested = true
             end
         end)
     end

@@ -4,7 +4,6 @@ local M = {}
 -- simulation, not client map revelation or registration as a human player.
 M.RADIUS = ENTITY_POPIN_RADIUS or 64
 M.RELEASE_RADIUS = ENTITY_POPOUT_RADIUS or M.RADIUS * 1.2
-local EXCLUDE = {"INLIMBO"}
 local owners = {}
 local held = {}
 
@@ -60,8 +59,18 @@ function M.Update(owner)
         return
     end
     local x, y, z = owner.Transform:GetWorldPosition()
-    for _, entity in ipairs(TheSim:FindEntities(x, y, z, M.RADIUS, nil, EXCLUDE)) do
-        M.KeepAwake(owner, entity)
+    -- TheSim:FindEntities follows the current player interest area and may
+    -- omit an entity that is already asleep outside it. Ents is the server's
+    -- complete entity table, so use it here to wake resources that are close
+    -- to the companion even when no human player is nearby.
+    for _, entity in pairs(Ents or {}) do
+        if entity ~= owner and entity.Transform ~= nil
+            and not entity:HasTag("INLIMBO") then
+            local ex, _, ez = entity.Transform:GetWorldPosition()
+            if (ex - x)^2 + (ez - z)^2 <= M.RADIUS^2 then
+                M.KeepAwake(owner, entity)
+            end
+        end
     end
     for entity in pairs(owners[owner] or {}) do
         if not entity:IsValid() or entity:HasTag("INLIMBO")
