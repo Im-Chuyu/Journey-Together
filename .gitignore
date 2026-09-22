@@ -1,0 +1,12 @@
+# Generated or local game data
+*.log
+crashlog.txt
+server_log.txt
+client_log.txt
+*.dmp
+
+# Editor and OS files
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
