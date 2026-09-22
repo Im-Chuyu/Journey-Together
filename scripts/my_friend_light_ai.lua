@@ -1,7 +1,6 @@
 local M = {}
 local EquipSlots = require("my_friend_equip_slots")
 local Policy = require("my_friend_policy")
-local ActiveArea = require("my_friend_active_area")
 
 M.LIGHT_SEARCH_RANGE = 30
 M.EXTERNAL_LIGHT_SCAN_RANGE = 12
@@ -175,16 +174,6 @@ local function EnsureEquippedLightActive(inst)
                 equip.onequipfn(item, inst, false)
             end
         end
-        -- Torch skins keep their real Light one level below the fire FX.
-        -- Acquire only sleeping entities; the area releases them when left.
-        local function KeepAwake(fx)
-            if fx == nil then return end
-            ActiveArea.KeepAwake(inst, fx)
-            if fx._light ~= nil then ActiveArea.KeepAwake(inst, fx._light) end
-        end
-        KeepAwake(item._light)
-        KeepAwake(item.fire)
-        for _, fire in ipairs(item.fires or {}) do KeepAwake(fire) end
     end
 
 end

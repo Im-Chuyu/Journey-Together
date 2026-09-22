@@ -275,12 +275,14 @@ local function Monkeytail(inst, command)
             if action ~= nil then
                 action:AddSuccessAction(function()
                     command.gathered = true
-                    command.scan_after = GetTime() + 5
+                    -- Reeds use the same continuous pick loop as grass and
+                    -- twigs; do not pause five seconds between plants.
+                    command.scan_after = nil
                 end)
                 return action
             end
         else
-            command.scan_after = GetTime() + 5
+            command.scan_after = GetTime() + .25
             command.waiting = true
             return
         end
