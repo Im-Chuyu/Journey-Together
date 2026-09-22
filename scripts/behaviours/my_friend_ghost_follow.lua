@@ -6,23 +6,6 @@ local GhostFollow = Class(BehaviourNode, function(self, inst)
     self.inst = inst
 end)
 
-local GHOST_SPEED = 6
-
-local function DriftTo(inst, target, dt)
-    local x, y, z = inst.Transform:GetWorldPosition()
-    local tx, _, tz = target.Transform:GetWorldPosition()
-    local dx, dz = tx - x, tz - z
-    local distance = math.sqrt(dx * dx + dz * dz)
-    if distance <= .001 then return end
-    local step = math.min(distance, GHOST_SPEED * dt)
-    local nx, nz = x + dx / distance * step, z + dz / distance * step
-    if inst.Physics ~= nil and inst.Physics.Teleport ~= nil then
-        inst.Physics:Teleport(nx, y, nz)
-    else
-        inst.Transform:SetPosition(nx, y, nz)
-    end
-end
-
 function GhostFollow:Visit()
     local inst, now = self.inst, GetTime()
     if self.status == READY then
@@ -43,23 +26,26 @@ function GhostFollow:Visit()
     if distance >= 7^2 then self.chasing = true end
     if distance <= 3^2 then self.chasing = false end
     if self.chasing then
-        -- Ghosts have no collision body, so move directly to the player's
-        -- current position instead of routing around terrain or buildings.
-        DriftTo(inst, leader, self.last_update ~= nil
-            and math.min(.1, math.max(.02, now - self.last_update)) or .05)
-        self.last_update = now
-        self.goal, self.refresh = leader:GetPosition(), now + .03
+        -- Use the same locomotor/stategraph path as ordinary companion
+        -- movement. Ghost physics is already configured by SGwilsonghost, so
+        -- direct transform stepping only introduced visible network stutter.
+        local target = leader:GetPosition()
+        if self.goal == nil or now >= (self.refresh or 0)
+            or (self.goal - target):LengthSq() > 1 then
+            inst.components.locomotor:GoToPoint(target, nil, true)
+            self.goal, self.refresh = target, now + .1
+        end
         self.moving = true
     elseif self.moving then
         inst.components.locomotor:Stop()
         self.goal, self.moving = nil, false
     end
-    self:Sleep(.03)
+    self:Sleep(.1)
 end
 
 function GhostFollow:OnStop()
     if not Policy.IsBusy(self.inst) then self.inst.components.locomotor:Stop() end
-    self.goal, self.moving, self.chasing, self.last_update = nil, nil, nil, nil
+    self.goal, self.moving, self.chasing = nil, nil, nil
 end
 
 return GhostFollow
