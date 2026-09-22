@@ -699,6 +699,7 @@ local function ConfigureFriend(inst)
     inst._my_friend_greeting_task = inst:DoPeriodicTask(.5, CoreAI.UpdateGreetings)
     inst._my_friend_inventory_task = inst:DoPeriodicTask(1, CoreAI.MergeOneStack)
     Dialogue.Configure(inst)
+    require("my_friend_offscreen").Configure(inst)
     inst._my_friend_platform_task = inst:DoPeriodicTask(.1, require("my_friend_platforms").Observe)
     inst._my_friend_care_task = inst:DoPeriodicTask(2, require("my_friend_social_ai").UpdateCare)
     inst._my_friend_beefalo_leash_task = inst:DoPeriodicTask(3,
