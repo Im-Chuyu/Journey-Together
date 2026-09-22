@@ -1,30 +1,27 @@
 # Contributing
 
-## Adding a language
+## Translation Pull Requests
 
-Chinese is the default fallback. Create one folder and two files, for example:
+Create `scripts/languages/<language code>/` and add only:
 
-- `scripts/languages/ja/command_words.lua`
-- `scripts/languages/ja/dialogue_lines.lua`
+- `command_words.lua`
+- `dialogue_lines.lua`
 
-Do not edit `modinfo.lua` in the translation pull request. The maintainer adds
-`{description = "日本語", data = "ja"}` after review. Keep command ids and
-dialogue keys unchanged.
+Copy `scripts/languages/_template` to begin. Do not edit core code or
+`modinfo.lua` in a translation pull request. The maintainer reviews the files,
+registers the language, and publishes the next mod version.
 
-Each dialogue line is a one element table such as `{ "A line" }`; each reply is
-also a one element table. Do not put multiple languages in one entry.
+## Keyword entries
 
-## Adding keyword or dialogue packs
-
-For optional aliases, create language-specific modules based on the templates
-and add the base module name to the corresponding pack manifest. A keyword
-entry uses an existing command id:
+Use an existing command id:
 
 ```lua
-{ id = "follow", en = { "come along" } },
+{ id = "follow", keywords = { "come along" } },
 ```
 
-A dialogue pack uses the same keys already used by the companion:
+## Dialogue entries
+
+Use existing dialogue keys:
 
 ```lua
 return {
@@ -33,11 +30,12 @@ return {
 }
 ```
 
-Chinese keyword matching uses substrings. English and other Latin-script
-keywords use word boundaries. The longest matching keyword wins; equal lengths
-use the earlier entry.
+Each file contains one language only. Keep command ids and dialogue keys
+unchanged. The longest matching keyword wins; equal lengths use the earlier
+entry.
 
 ## Branches
 
-Use `main` for stable releases, `develop` for integration, and create focused
-`feature/*` branches from `develop`.
+Use `main` for stable releases, `develop` for integration, and focused
+`feature/*` branches from `develop`. Run the Lua syntax check and test the
+affected language in a local DST world before submitting.
