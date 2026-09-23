@@ -5,26 +5,29 @@ local Policy = require("my_friend_policy")
 local Riding = require("my_friend_riding")
 local Dialogue = require("my_friend_dialogue")
 
-local function IsStatue(entity)
-    if entity == nil or entity.components == nil
-        or entity.components.inventoryitem == nil then return false end
-    local prefab = entity.prefab or ""
-    return entity:HasTag("statue") or entity:HasTag("sculpture")
-        or prefab:find("statue", 1, true) ~= nil
-        or prefab:find("sculpture_", 1, true) ~= nil
-end
-
-local function CanPickUp(entity)
+local function CanPickUp(inst, entity)
+    if entity == nil or not entity:IsValid() or entity.components == nil
+        or not entity:HasTag("heavy") then return false end
     local item = entity.components.inventoryitem
-    return item ~= nil and (item.canbepickedup or item.canbepickedupalive)
+    local equip = entity.components.equippable
+    local restrictions = inst.components.itemtyperestrictions
+    local current = equip ~= nil and inst.components.inventory:GetEquippedItem(equip.equipslot) or nil
+    return item ~= nil and equip ~= nil and not equip:IsRestricted(inst)
+        and not inst.components.inventory.noheavylifting
+        and (current == nil or not current.components.equippable:ShouldPreventUnequipping())
+        and item.owner == nil
+        and (item.canbepickedup or item.canbepickedupalive and not inst:HasTag("player")
+            or item.grabbableoverridetag ~= nil and inst:HasTag(item.grabbableoverridetag))
         and not entity:IsInLimbo()
+        and (restrictions == nil or restrictions:IsAllowed(entity))
+        and (entity.components.container == nil or not entity.components.container:IsOpenedByOthers(inst))
+        and (entity.components.burnable == nil or not entity.components.burnable:IsBurning()
+            or entity.components.lighter ~= nil)
+        and (entity.components.projectile == nil or not entity.components.projectile:IsThrown())
 end
 
 local function Carrying(inst)
-    local inventory = inst.components.inventory
-    if inventory == nil then return nil end
-    local body = inventory:GetEquippedItem(EQUIPSLOTS.BODY)
-    return body ~= nil and body:HasTag("heavy") and body or nil
+    return require("my_friend_equip_slots").GetHeavy(inst.components.inventory)
 end
 
 local function FindStatue(inst, command)
@@ -33,7 +36,7 @@ local function FindStatue(inst, command)
     local best, distance
     for _, entity in ipairs(TheSim:FindEntities(x, 0, z, 32, nil,
         {"INLIMBO", "burnt", "fire"})) do
-        if IsStatue(entity) and CanPickUp(entity)
+        if CanPickUp(inst, entity)
             and not require("my_friend_navigation").IsBlocked(inst, entity:GetPosition()) then
             local d = inst:GetDistanceSqToInst(entity)
             if distance == nil or d < distance then best, distance = entity, d end
@@ -85,7 +88,7 @@ function M.GetAction(inst, command)
         action._my_friend_dialogue_kind = "carry_statue"
         action.validfn = function()
             return command == inst._my_friend_command and target:IsValid()
-                and CanPickUp(target) and Carrying(inst) == nil
+                and CanPickUp(inst, target) and Carrying(inst) == nil
         end
         action:AddSuccessAction(function()
             command.phase = "mount"

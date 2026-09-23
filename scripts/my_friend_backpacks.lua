@@ -41,6 +41,7 @@ local function SetOwned(item, owned)
         item:AddTag("my_friend_owned_backpack")
     else
         item:RemoveTag("my_friend_owned_backpack")
+        item._my_friend_heavy_left = nil
     end
 end
 
@@ -51,11 +52,14 @@ function M.WrapBackpack(inst)
     inst.OnSave = function(self, data)
         local refs = old_save ~= nil and old_save(self, data) or nil
         if self._my_friend_owned_backpack then data.my_friend_owned_backpack = true end
+        if self._my_friend_heavy_left then data.my_friend_heavy_left = true end
         return refs
     end
     inst.OnLoad = function(self, data, ents)
         if old_load ~= nil then old_load(self, data, ents) end
         SetOwned(self, data ~= nil and data.my_friend_owned_backpack == true)
+        self._my_friend_heavy_left = self._my_friend_owned_backpack
+            and data ~= nil and data.my_friend_heavy_left == true or nil
     end
 end
 
@@ -218,6 +222,7 @@ local function ClearAction(friend)
 end
 
 local function StartOwnedRecovery(friend)
+    if require("my_friend_carry_backpack").BlocksRecovery(friend) then return end
     if friend._my_friend_backpack_target ~= nil then return end
     if friend._my_friend_recover_death_drops then return end
     if GetTime() < (friend._my_friend_backpack_recover_after or 0) then return end
@@ -315,6 +320,7 @@ function M.Update(friend)
 end
 
 function M.GetAction(friend)
+    if require("my_friend_carry_backpack").BlocksRecovery(friend) then return end
     M.Update(friend)
     if friend == nil or not friend:IsValid() or friend.components.inventory == nil
         or friend._my_friend_under_threat or friend._my_friend_backpack_action
@@ -427,6 +433,7 @@ function M.GetAction(friend)
 end
 
 function M.GetOwnedRecoveryAction(friend, target)
+    if require("my_friend_carry_backpack").BlocksRecovery(friend) then return end
     -- A player request owns the backpack slot until it finishes. Overwriting
     -- its target from the death-drop recovery loop is what made "换个背包" and
     -- "捡个背包" look like they were ignored right after a revive.

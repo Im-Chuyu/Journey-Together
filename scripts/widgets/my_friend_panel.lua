@@ -429,7 +429,7 @@ function MyFriendPanel:Refresh()
         local wet = raw:match("^[^|]*|[^|]*|[^|]*|(.*)$")
         moisture, moisturemax = ParsePair(wet)
     end
-    self.title:SetTruncatedString(friend:GetDisplayName(), 140, 48, true)
+    self.title:SetTruncatedString(require("my_friend_strings").CompanionName(friend), 140, 48, true)
     self.stats:SetString(string.format(TextForLanguage("生命 %d/%d    饥饿 %d/%d    理智 %d/%d    雨水 %d/%d",
         "Health %d/%d    Hunger %d/%d    Sanity %d/%d    Wetness %d/%d"),
         math.floor((hp or 0) + .5), math.floor((hpmax or 0) + .5),

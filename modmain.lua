@@ -743,6 +743,7 @@ local function ConfigureFriend(inst)
             Backpacks.MarkOwned(inst, item)
         end
     end)
+    require("my_friend_carry_backpack").Configure(inst)
     inst:ListenForEvent("attacked", function(_, data)
         require("my_friend_riding").OnAttacked(inst)
         require("my_friend_equipment").Hurt(inst)

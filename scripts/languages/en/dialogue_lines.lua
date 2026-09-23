@@ -841,6 +841,10 @@ M.replies = {
     special_command_ok = {"All right, I'll prepare it."},
     no_backpack = {"There's no backpack I can use nearby, and I won't make a new one."},
     backpack_unreachable = {"I can't get to that backpack right now. Let's wait until it's safer."},
+    carry_backpack_ask = {"I've put the heavy load down. May I go back for my backpack?", "My backpack is still where I picked up that load. Can I fetch it?", "My hands are free now. Is it okay if I retrieve my backpack?"},
+    carry_backpack_yes = {"I'll fetch my backpack and come straight back to you.", "All right, I'll be back once I have my bag.", "I'll get my bag. I'll ride my beefalo if it's available."},
+    carry_backpack_done = {"I've got my backpack. I'm back!", "Bag recovered. Ready to follow you again.", "My backpack is with me again. Let's keep going."},
+    carry_backpack_failed = {"I can't retrieve my backpack right now. I'll follow you for now.", "I couldn't finish that trip. I'll catch up with you first."},
     no_tool = {"I can't find a tool I can use, so I'll leave this for now."},
     hoe_incomplete = {"I've tidied every hole I could. Some are blocked by crops or obstacles and I can't manage those. Could you help?"},
 

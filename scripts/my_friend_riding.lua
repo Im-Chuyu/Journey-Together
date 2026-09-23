@@ -58,6 +58,9 @@ local function IsAvailableBeefalo(inst, beefalo)
     return true
 end
 
+-- Used when the bell is in the backpack left behind during heavy lifting.
+M.IsAvailableBeefalo = IsAvailableBeefalo
+
 function M.GetBeefalo(inst, predicate)
     return M.GetBoundBeefalo(inst, function(beefalo)
         return IsAvailableBeefalo(inst, beefalo) and (predicate == nil or predicate(beefalo))

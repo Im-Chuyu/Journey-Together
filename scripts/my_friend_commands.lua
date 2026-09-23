@@ -76,6 +76,7 @@ end
 
 function M.Clear(friend)
     if friend == nil then return end
+    require("my_friend_carry_backpack").Cancel(friend)
     local old = friend._my_friend_command
     if old ~= nil and old.id == "fish" then require("my_friend_fishing").Cancel(friend, old) end
     if old ~= nil and old.id == "butterfly" and friend.components.combat ~= nil
@@ -200,6 +201,11 @@ function M.Dispatch(friend, player, message)
         or friend == nil or not friend:IsValid() or friend.components.health == nil then return false end
     message = message:match("^%s*(.-)%s*$")
     local addressed_message = AddressedMessage(friend, message)
+    -- A pending backpack question also accepts a short reply without a name.
+    -- Exact answers prevent "not okay" / "不可以" granting permission.
+    if require("my_friend_carry_backpack").Answer(friend, player, addressed_message or message) then
+        return true
+    end
     if addressed_message == nil then return false end
     local text = addressed_message:lower()
     -- The rock-fruit command has a short follow-up question. Handle it before

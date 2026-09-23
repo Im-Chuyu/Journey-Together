@@ -35,6 +35,14 @@ function M.GetBackpack(inventory)
     end
 end
 
+function M.GetHeavy(inventory)
+    if inventory == nil then return end
+    for _, slot in ipairs(M.All()) do
+        local item = inventory:GetEquippedItem(slot)
+        if item ~= nil and item:HasTag("heavy") then return item, slot end
+    end
+end
+
 -- Extra-slot mods may hide overflow from viewers who are not container
 -- openers. The companion panel still needs its actual equipped bag.
 function M.BackpackContainer(inventory)

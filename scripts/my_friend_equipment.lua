@@ -19,6 +19,9 @@ function M.MarkPlayerEquipped(inst, item)
 end
 
 function M.Allowed(inst, slot)
+    local inventory = inst.components ~= nil and inst.components.inventory or nil
+    local current = inventory ~= nil and inventory:GetEquippedItem(slot) or nil
+    if current ~= nil and current:HasTag("heavy") then return false end
     return GetTime() >= ((inst._my_friend_equip_after or {})[slot] or 0)
 end
 
@@ -51,6 +54,11 @@ function M.Wrap(inventory)
     local equip = inventory.Equip
     inventory.Equip = function(self, item, ...)
         local component = item ~= nil and item.components.equippable or nil
+        if self.inst:HasTag("my_friend") and component ~= nil and not self.isloading
+            and not self.inst._my_friend_player_equipping then
+            local current = self:GetEquippedItem(component.equipslot)
+            if current ~= nil and current ~= item and current:HasTag("heavy") then return false end
+        end
         if self.inst:HasTag("my_friend") and component ~= nil and not self.isloading
             and not self.inst._my_friend_player_equipping
             and not self.inst._my_friend_light_equip_override then

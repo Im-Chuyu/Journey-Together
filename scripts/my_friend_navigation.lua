@@ -77,6 +77,9 @@ function M.InTravelRange(inst, point)
     local root = inst.brain ~= nil and inst.brain.bt ~= nil and inst.brain.bt.root or nil
     local action = inst._my_friend_navigation_action
         or root ~= nil and root.active ~= nil and root.active.node.action or nil
+    if action ~= nil and action._my_friend_carry_backpack ~= nil then
+        return require("my_friend_carry_backpack").IsTravelAction(inst, action)
+    end
     if action ~= nil and action._my_friend_revive_return ~= nil
         and action._my_friend_revive_return == inst._my_friend_ghost_revive
         and GetTime() < action._my_friend_revive_return.deadline then return true end

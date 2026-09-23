@@ -480,6 +480,7 @@ function MyFriendBrain:OnStart()
                 and id ~= "hurt" and id ~= "eat" and id ~= "temperature"
                 and id ~= "seek_light" and id ~= "emergency_light_supply"
                 and id ~= "emergency_fire" and id ~= "backpack_recovery" and id ~= "revive_return"
+                and id ~= "carry_backpack"
                 and not ((id == "food" or id == "container_food" or id == "cook")
                     and inst.components.hunger:GetPercent() < .2) then return end
             if command ~= nil and (command.id == "seeds" or command.id == "tidy" or command.id == "equipment")
@@ -640,6 +641,8 @@ function MyFriendBrain:OnStart()
     end), BeefaloAI.GetAction, "正在照料皮弗牛", 35)
     Action("recipe_cooking", Alive(function(c) return RecipeCooking.Score(inst, c) end),
         RecipeCooking.GetAction, "正在准备料理", 35)
+    Action("carry_backpack", Alive(function() return require("my_friend_carry_backpack").Score(inst) end),
+        require("my_friend_carry_backpack").GetAction, "正在取回搬重物时留下的背包", 180)
     Action("backpack_recovery", Alive(function() return Backpacks.Priority(inst) end),
         Backpacks.GetAction, "正在找回自己的背包", 30)
     Action("cleanup", Alive(function()
@@ -679,7 +682,7 @@ function MyFriendBrain:OnStart()
         local command = Commands.Get(inst)
         if Policy.IsRoaming(inst) then return 0 end
         return c.leader ~= nil and command ~= nil
-            and (command.special ~= nil and 132 or 104) or 0
+            and (command.special ~= nil and 132 or command.id == "carry_statue" and 117 or 104) or 0
     end), function(actor) return Commands.Commit(actor, BaseAI.GetCommandAction(actor)) end, nil, 180)
     local function ExpeditionScore(c)
         return Policy.IsRoaming(inst) and not c.threat and not c.dark and not c.thermal
