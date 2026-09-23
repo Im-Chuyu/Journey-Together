@@ -744,6 +744,7 @@ M.lines = {
 }
 
 M.replies = {
+    command_refuse_human = {"按理说，你这个级别的人类还没有权力命令我，但是为了满足你，我会听你的下一条命令。"},
     describe_carry_statue = {"我去搬最近的雕像，然后跟着你走。"},
     carry_statue_follow = {"雕像搬好了，我会抱着它跟着你。附近有牛的话，我再骑牛搬。"},
     carry_statue_mount = {"抱稳了，雕像也能坐牛赶路。"},

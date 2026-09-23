@@ -64,6 +64,25 @@ local function Contains(text, word)
     return text:find(word, 1, true) ~= nil
 end
 
+local function HasChinese(text)
+    if type(text) ~= "string" then return false end
+    -- UTF-8 CJK Unified Ideographs use E4-E9 (and EA for the first
+    -- extension block). Checking bytes keeps this compatible with DST's Lua
+    -- 5.1 runtime, which has no UTF-8 library.
+    for index = 1, #text do
+        local byte = text:byte(index)
+        if byte ~= nil and byte >= 0xE4 and byte <= 0xEA then return true end
+    end
+    return false
+end
+
+local function MaybeRefuseChinese(friend, command_text, id)
+    if id == nil or id == "allow_pickup" or not HasChinese(command_text)
+        or math.random() >= .03 then return false end
+    Dialogue.Reply(friend, "command_refuse_human")
+    return true
+end
+
 function M.Get(friend)
     local command = friend ~= nil and friend._my_friend_command or nil
     if command ~= nil and (not Policy.IsLocalPlayer(command.player)
@@ -241,7 +260,10 @@ function M.Dispatch(friend, player, message)
         end
     end
     local pet = require("my_friend_pets").Parse(text)
-    if pet ~= nil then return require("my_friend_pets").Request(friend, player, pet) end
+    if pet ~= nil then
+        if MaybeRefuseChinese(friend, addressed_message, "adopt_pet") then return true end
+        return require("my_friend_pets").Request(friend, player, pet)
+    end
     -- Parse names from the original case-preserving message, never from keywords.
     local rename = addressed_message:match("改名为%s*(.-)%s*$")
         or addressed_message:match("改名%s*(.-)%s*$")
@@ -252,11 +274,13 @@ function M.Dispatch(friend, player, message)
     end
     local affinity = friend.components.my_friend_affinity
     if rename ~= nil and affinity ~= nil then
+        if MaybeRefuseChinese(friend, addressed_message, "rename") then return true end
         if rename:sub(1, 1) == ":" then rename = rename:sub(2)
         elseif rename:sub(1, #"：") == "：" then rename = rename:sub(#"：" + 1) end
         return M.Rename(friend, player, rename)
     end
     local id = FindCommand(friend, text)
+    if MaybeRefuseChinese(friend, addressed_message, id) then return true end
     if friend:HasTag("playerghost") then
         local portal = Contains(text, "大门") or Contains(text, "绚丽之门")
             or Contains(text, "天体传送门") or Contains(text, "portal")
@@ -270,6 +294,7 @@ function M.Dispatch(friend, player, message)
     end
     local special = SpecialCommands.Parse(friend, addressed_message, id ~= nil)
     if special ~= nil then
+        if id == nil and MaybeRefuseChinese(friend, addressed_message, "special") then return true end
         if friend:HasTag("playerghost") or Policy.GetLeader(friend) ~= player then return false end
         M.Clear(friend)
         if special.special == "wendy_recall" then
