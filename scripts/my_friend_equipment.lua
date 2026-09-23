@@ -62,7 +62,10 @@ function M.Wrap(inventory)
         if self.inst:HasTag("my_friend") and component ~= nil and not self.isloading
             and not self.inst._my_friend_player_equipping
             and not self.inst._my_friend_light_equip_override then
-            if not M.Allowed(self.inst, component.equipslot) then return false end
+            local carry_heavy = self.inst._my_friend_command ~= nil
+                and self.inst._my_friend_command.id == "carry_statue"
+                and item ~= nil and item:HasTag("heavy")
+            if not carry_heavy and not M.Allowed(self.inst, component.equipslot) then return false end
             local current = self:GetEquippedItem(component.equipslot)
             if component.equipslot == EQUIPSLOTS.HEAD and current ~= nil and current ~= item
                 and GetTime() < (current._my_friend_player_equipped_until or 0) then

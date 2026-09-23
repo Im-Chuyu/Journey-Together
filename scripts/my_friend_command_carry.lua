@@ -5,6 +5,10 @@ local Policy = require("my_friend_policy")
 local Riding = require("my_friend_riding")
 local Dialogue = require("my_friend_dialogue")
 
+local function IsRiding(inst)
+    return inst.components.rider ~= nil and inst.components.rider:IsRiding()
+end
+
 local function CanPickUp(inst, entity)
     if entity == nil or not entity:IsValid() or entity.components == nil
         or not entity:HasTag("heavy") then return false end
@@ -53,6 +57,12 @@ end
 function M.GetAction(inst, command)
     local carried = Carrying(inst)
     if carried == nil and command.phase == nil then
+        if IsRiding(inst) then
+            -- A previous failed pickup may have left the companion mounted.
+            -- Do not issue MOUNT against an already mounted rider; continue
+            -- the search from the current position instead.
+            command.phase = "find"
+        else
         local mount = Riding.GetBeefalo(inst)
         if mount ~= nil then
             command.phase = "mount_before"
@@ -75,6 +85,7 @@ function M.GetAction(inst, command)
         else
             command.phase = "find"
         end
+        end
     end
     if carried == nil then
         local target = FindStatue(inst, command)
@@ -91,13 +102,32 @@ function M.GetAction(inst, command)
                 and CanPickUp(inst, target) and Carrying(inst) == nil
         end
         action:AddSuccessAction(function()
-            command.phase = "mount"
-            Dialogue.Reply(inst, "carry_statue_follow")
+            -- PICKUP can report success after GiveItem has put a heavy object
+            -- into an ordinary inventory slot, especially after the previous
+            -- statue was manually removed and the body slot is empty. Force
+            -- the real heavy equip, then advance only if it actually worked.
+            if Carrying(inst) ~= target and target:IsValid() then
+                inst.components.inventory:Equip(target)
+            end
+            if Carrying(inst) == target then
+                command.phase = "mount"
+                Dialogue.Reply(inst, "carry_statue_follow")
+            else
+                command.phase = nil
+                inst._my_friend_replan_requested = true
+            end
         end)
         return Policy.GuardAction(inst, action, 32)
     end
 
     if command.phase == "mount" then
+        if IsRiding(inst) then
+            -- The statue is already secured and the mount action is complete.
+            -- Clearing this command hands movement back to the normal riding
+            -- behaviour instead of trying to mount the same beefalo again.
+            require("my_friend_commands").Clear(inst)
+            return
+        end
         local mount = Riding.GetBeefalo(inst)
         if mount == nil then
             FinishWalking(inst)
