@@ -36,7 +36,6 @@ local function ReturnPet(owner, pet)
     if pet.sg ~= nil and pet.sg.GoToState ~= nil and pet.sg:HasStateTag("sleeping") then
         pet.sg:GoToState("idle")
     end
-    if pet.entity ~= nil and pet.entity:IsAsleep() then pet.entity:Wake() end
 end
 
 function M.Update(inst)
