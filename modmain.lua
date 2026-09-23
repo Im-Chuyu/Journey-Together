@@ -960,7 +960,7 @@ AddModRPCHandler("MyFriends", "PanelLocked", function(player, friend, kind)
         end
         return
     end
-    local needed = kind == "skin" and 50 or 100
+    local needed = kind == "skin" and 40 or 80
     if friend.components.my_friend_affinity:Get(player) < needed then
         Dialogue.Reply(friend, "affinity_locked", tostring(needed))
     end
@@ -997,7 +997,7 @@ end)
 AddModRPCHandler("MyFriends", "SetSkins", function(player, friend, base, body, hand, legs, feet)
     if not CanManage(player, friend) then return end
     if friend.components.my_friend_affinity == nil
-        or friend.components.my_friend_affinity:Get(player) < 50 then
+        or friend.components.my_friend_affinity:Get(player) < 40 then
         Dialogue.Reply(friend, "affinity_skin")
         return
     end

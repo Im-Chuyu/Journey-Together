@@ -200,9 +200,9 @@ local MyFriendPanel = Class(Widget, function(self, owner)
         end)
 
     self.skin = ActionButton(TextForLanguage("衣柜", "Wardrobe"),
-        TextForLanguage("衣柜：好感度达到50可以换装", "Wardrobe: requires 50 affinity"),
+        TextForLanguage("衣柜：好感度达到40可以换装", "Wardrobe: requires 40 affinity"),
         ACTION_X + ACTION_STEP, function()
-            if self:GetAffinityScore() < 50 then
+            if self:GetAffinityScore() < 40 then
                 SendModRPCToServer(GetModRPC("MyFriends", "PanelLocked"), self.friend, "skin")
             else
                 self:OpenSkinScreen()
@@ -210,9 +210,9 @@ local MyFriendPanel = Class(Widget, function(self, owner)
         end)
 
     self.rename = ActionButton(TextForLanguage("改名", "Rename"),
-        TextForLanguage("改名：好感度达到100可以改名", "Rename: requires 100 affinity"),
+        TextForLanguage("改名：好感度达到80可以改名", "Rename: requires 80 affinity"),
         ACTION_X + ACTION_STEP * 2, function()
-            if self:GetAffinityScore() < 100 then
+            if self:GetAffinityScore() < 80 then
                 SendModRPCToServer(GetModRPC("MyFriends", "PanelLocked"), self.friend, "rename")
             else
                 self:OpenRenameScreen()
@@ -418,8 +418,8 @@ function MyFriendPanel:Refresh()
             usable and .28 or .2, 1)
     end
     Dim(self.switch, self:CanSwitchCharacter())
-    Dim(self.skin, score >= 50)
-    Dim(self.rename, score >= 100)
+    Dim(self.skin, score >= 40)
+    Dim(self.rename, score >= 80)
     local hp, hpmax, hunger, hungermax, sanity, sanitymax
     local moisture, moisturemax = 0, 100
     if friend.components ~= nil and friend.components.health ~= nil then

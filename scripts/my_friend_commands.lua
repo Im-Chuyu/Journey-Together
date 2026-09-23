@@ -148,7 +148,7 @@ function M.Rename(friend, player, name)
         or friend.components.health:IsDead() then return false end
     local affinity = friend.components.my_friend_affinity
     if affinity == nil then return false end
-    if affinity:Get(player) < 100 then
+    if affinity:Get(player) < 80 then
         Reply(friend, "affinity_name")
         return false
     end
