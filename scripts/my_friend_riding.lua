@@ -197,6 +197,11 @@ function M.GetDismountAction(inst)
     return BufferedAction(inst, inst, ACTIONS.DISMOUNT)
 end
 
+local function KeepHeavyCarryMounted(inst)
+    local carried = require("my_friend_equip_slots").GetHeavy(inst.components.inventory)
+    return carried ~= nil and inst._my_friend_carrying_statue == carried
+end
+
 local RideToLeader = Class(BehaviourNode, function(self, inst)
     BehaviourNode._ctor(self, "MyFriendRideToLeader")
     self.inst = inst
@@ -237,6 +242,10 @@ end
 
 function RideToLeader:CheckArrivalDecision(leader)
     local inst = self.inst
+    if KeepHeavyCarryMounted(inst) then
+        inst._my_friend_mount_keep_riding = true
+        return
+    end
     if Platforms.NeedsCrossing(inst, leader) then
         inst._my_friend_mount_keep_riding = nil
         return

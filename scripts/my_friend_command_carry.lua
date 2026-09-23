@@ -110,6 +110,7 @@ function M.GetAction(inst, command)
                 inst.components.inventory:Equip(target)
             end
             if Carrying(inst) == target then
+                inst._my_friend_carrying_statue = target
                 command.phase = "mount"
                 Dialogue.Reply(inst, "carry_statue_follow")
             else
