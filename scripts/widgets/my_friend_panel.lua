@@ -384,9 +384,20 @@ end
 
 function MyFriendPanel:RefreshStatusBadges(hp, hpmax, hunger, hungermax, sanity, sanitymax)
     if self.statusbadges == nil then return end
-    self.statusbadges[1]:SetPercent((hpmax or 0) > 0 and (hp or 0) / hpmax or 0)
-    self.statusbadges[2]:SetPercent((hungermax or 0) > 0 and (hunger or 0) / hungermax or 0)
-    self.statusbadges[3]:SetPercent((sanitymax or 0) > 0 and (sanity or 0) / sanitymax or 0)
+    local replica = self.friend ~= nil and self.friend.replica or nil
+    local health = replica ~= nil and replica.health or nil
+    local sanityreplica = replica ~= nil and replica.sanity or nil
+    local healthpenalty = health ~= nil and health:GetPenaltyPercent() or 0
+    local sanitypenalty = sanityreplica ~= nil and sanityreplica:GetPenaltyPercent() or 0
+    -- Match the vanilla HUD's full SetPercent signature. Uncompromising Mode
+    -- compares penaltypercent directly, including during our initial refresh
+    -- before the companion's status data has arrived.
+    self.statusbadges[1]:SetPercent((hpmax or 0) > 0 and (hp or 0) / hpmax or 0,
+        hpmax or 100, healthpenalty)
+    self.statusbadges[2]:SetPercent((hungermax or 0) > 0 and (hunger or 0) / hungermax or 0,
+        hungermax or 100)
+    self.statusbadges[3]:SetPercent((sanitymax or 0) > 0 and (sanity or 0) / sanitymax or 0,
+        sanitymax or 100, sanitypenalty)
 end
 
 function MyFriendPanel:Refresh()
