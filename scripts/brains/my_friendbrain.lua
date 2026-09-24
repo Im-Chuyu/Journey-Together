@@ -809,6 +809,10 @@ function MyFriendBrain:OnStart()
             LightAI.UpdateEquipment(inst)
             if not dark then require("my_friend_equipment").UpdateLoadout(inst) end
         end
+        local repair, urgent_repair = false, false
+        if not ghost then
+            repair, urgent_repair = require("my_friend_equipment").GetRepairStatus(inst)
+        end
         return {
             leader = leader, rejoining = rejoining, leaderdead = leaderdead,
             ghost = ghost, threat = threat, canfight = inst._my_friend_can_fight,
@@ -825,9 +829,8 @@ function MyFriendBrain:OnStart()
             reserve = ghost or LightAI.HasLightReserve(inst),
             full = not ghost and BaseAI.GetStoragePressure(inst),
             waitlight = not ghost and LightAI.ShouldWaitInLight(inst),
-            repair = not ghost and require("my_friend_equipment").HasRepairAction(inst),
-            urgent_repair = not ghost
-                and require("my_friend_equipment").HasUrgentRepairAction(inst),
+            repair = repair,
+            urgent_repair = urgent_repair,
             greeting = CoreAI.IsGreetingPauseActive(inst),
             hurt = GetTime() < (inst._my_friend_hurt_until or 0),
             hurt_evade = hurt_evade,
