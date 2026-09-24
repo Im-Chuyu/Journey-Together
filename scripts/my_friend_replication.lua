@@ -1,5 +1,6 @@
 local M = {}
 local EquipSlots = require("my_friend_equip_slots")
+local SYNC_PERIOD = 0.75
 
 -- NPC inventories have no owning client. Publish their read-only replicas;
 -- all transfers still pass the existing server-side distance/affinity checks.
@@ -14,6 +15,9 @@ function M.PublishItem(item)
 end
 
 function M.Sync(inst)
+    local now = GetTime()
+    if now < (inst._my_friend_replication_next or 0) then return end
+    inst._my_friend_replication_next = now + SYNC_PERIOD
     local inventory = inst.components.inventory
     if inventory == nil then return end
     local replica = inst.replica.inventory

@@ -3,7 +3,7 @@ name = chinese and "一路同行" or "Journey Together"
 description = chinese and "在这片永恒大陆，我会与你并肩同行。"
     or "On this eternal continent, I will travel with you."
 author = "阮秀"
-version = "1.6.6"
+version = "1.7.2"
 forumthread = ""
 api_version = 10
 
@@ -23,6 +23,7 @@ configuration_options = {
             -- Add a new {description = "...", data = "xx"} entry after the
             -- reviewed files are added under scripts/languages/xx/.
             {description = chinese and "中文" or "Chinese", data = "zh"},
+            {description = "繁體中文", data = "zh_tw"},
             {description = "English", data = "en"},
         },
         default = chinese and "zh" or "en",

@@ -1,4 +1,5 @@
 local M = {}
+local LOADOUT_PERIOD = .5
 local EquipSlots = require("my_friend_equip_slots")
 
 function M.Removed(inst, slot, item)
@@ -28,6 +29,7 @@ end
 function M.Hurt(inst)
     inst._my_friend_equip_after = nil
     inst._my_friend_backpack_recover_after = nil
+    inst._my_friend_loadout_next = 0
 end
 
 function M.Save(inst, data)
@@ -351,7 +353,7 @@ function M.GetDroppedCombatItemAction(inst)
     end
 end
 
-local function FindRepairKit(inst, item)
+local function FindRepairKit(inst, item, items)
     local inventory = inst.components.inventory
     if inventory == nil then return end
     local forge = item.components ~= nil and item.components.forgerepairable or nil
@@ -364,7 +366,7 @@ local function FindRepairKit(inst, item)
             end
         end
     end
-    for _, kit in ipairs(inventory:ReferenceAllItems()) do
+    for _, kit in ipairs(items or inventory:ReferenceAllItems()) do
         local kitforge = kit.components ~= nil and kit.components.forgerepair or nil
         if material ~= nil and kitforge ~= nil
             and kitforge.repairmaterial == material then
@@ -386,12 +388,21 @@ local function FindRepairKit(inst, item)
     end
 end
 
-function M.GetRepairAction(inst)
+function M.GetRepairStatus(inst)
     if inst == nil or inst.components == nil or inst.components.inventory == nil
-        or require("my_friend_policy").IsBusy(inst)
-        or GetTime() < (inst._my_friend_repair_after or 0) then return end
-    local ordinary
-    for _, item in ipairs(inst.components.inventory:ReferenceAllItems()) do
+        or require("my_friend_policy").IsBusy(inst) then return false, false end
+    local now = GetTime()
+    if now < (inst._my_friend_repair_status_until or 0) then
+        return inst._my_friend_repair_has == true, inst._my_friend_repair_urgent == true
+    end
+    if now < (inst._my_friend_repair_after or 0) then
+        inst._my_friend_repair_status_until = now + .5
+        inst._my_friend_repair_has, inst._my_friend_repair_urgent = false, false
+        return false, false
+    end
+    local items = inst.components.inventory:ReferenceAllItems()
+    local has, urgent = false, false
+    for _, item in ipairs(items) do
         if IsBroken(item) and item.components ~= nil
             and (item.components.equippable ~= nil or item.components.armor ~= nil
                 or item.components.insulator ~= nil or item.components.forgerepairable ~= nil
@@ -401,11 +412,40 @@ function M.GetRepairAction(inst)
                 or item:HasTag("forgerepairable_voidcloth")
                 or item:HasTag("needssewing")
                 or item.prefab == "heatstone" or item.prefab == "heatrock") then
-            local kit, action_id = FindRepairKit(inst, item)
+            local kit = FindRepairKit(inst, item, items)
+            if kit ~= nil then
+                has = true
+                urgent = urgent or IsUrgentRepairItem(item)
+            end
+        end
+    end
+    inst._my_friend_repair_status_until = now + .5
+    inst._my_friend_repair_has, inst._my_friend_repair_urgent = has, urgent
+    return has, urgent
+end
+
+function M.GetRepairAction(inst)
+    if inst == nil or inst.components == nil or inst.components.inventory == nil
+        or require("my_friend_policy").IsBusy(inst)
+        or GetTime() < (inst._my_friend_repair_after or 0) then return end
+    local ordinary
+    local items = inst.components.inventory:ReferenceAllItems()
+    for _, item in ipairs(items) do
+        if IsBroken(item) and item.components ~= nil
+            and (item.components.equippable ~= nil or item.components.armor ~= nil
+                or item.components.insulator ~= nil or item.components.forgerepairable ~= nil
+                or item:HasTag("forgerepairable_lunarplant")
+                or item:HasTag("forgerepairable_wagpunk_bits")
+                or item:HasTag("forgerepairable_dreadstone")
+                or item:HasTag("forgerepairable_voidcloth")
+                or item:HasTag("needssewing")
+                or item.prefab == "heatstone" or item.prefab == "heatrock") then
+            local kit, action_id = FindRepairKit(inst, item, items)
             if kit ~= nil and action_id ~= nil then
                 local action = BufferedAction(inst, item, action_id, kit)
                 action:AddSuccessAction(function()
                     if inst:IsValid() then inst._my_friend_repair_after = GetTime() + 2 end
+                    if inst:IsValid() then inst._my_friend_repair_status_until = 0 end
                 end)
                 if IsUrgentRepairItem(item) then return action end
                 ordinary = ordinary or action
@@ -416,21 +456,20 @@ function M.GetRepairAction(inst)
 end
 
 function M.HasRepairAction(inst)
-    return M.GetRepairAction(inst) ~= nil
+    local has = M.GetRepairStatus(inst)
+    return has
 end
 
 function M.HasUrgentRepairAction(inst)
-    if inst == nil or inst.components == nil or inst.components.inventory == nil
-        or require("my_friend_policy").IsBusy(inst) then return false end
-    for _, item in ipairs(inst.components.inventory:ReferenceAllItems()) do
-        if IsUrgentRepairItem(item) and IsBroken(item)
-            and FindRepairKit(inst, item) ~= nil then return true end
-    end
-    return false
+    local _, urgent = M.GetRepairStatus(inst)
+    return urgent
 end
 
 function M.UpdateLoadout(inst)
     if inst == nil or not inst:IsValid() or inst.components == nil then return end
+    local now = GetTime()
+    if now < (inst._my_friend_loadout_next or 0) then return end
+    inst._my_friend_loadout_next = now + LOADOUT_PERIOD
     local inventory = inst.components.inventory
     if inventory == nil or inventory.ReferenceAllItems == nil then return end
     if require("my_friend_policy").IsBusy(inst) then return end
@@ -451,7 +490,6 @@ function M.UpdateLoadout(inst)
         or _G.GetTime() < (inst._my_friend_combat_hand_until or 0) then return end
 
     local needs = ActiveNeeds(inst)
-    local now = GetTime()
     -- Built once: this runs on every brain tick, and ReferenceAllItems walks
     -- both grids plus the backpack and allocates a fresh table each call.
     local items = inventory:ReferenceAllItems()
