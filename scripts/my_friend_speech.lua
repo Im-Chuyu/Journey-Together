@@ -53,9 +53,36 @@ end
 -- file, so contributors only need to submit one dialogue file per language.
 function M.BuildStrings()
     local strings = {}
-    local lines = LanguageFiles.DialogueLines(Language.language)
+    local voice_index = {}
+    local lines = LanguageFiles.DialogueLines(Language.language, "wendy")
     Register(strings, "", lines)
+    -- Traditional Chinese uses the same voice catalogue as simplified
+    -- Chinese; only the displayed text is translated separately.
+    local voice_source = lines
+    if Language.language == "zh_tw" then
+        voice_source = LanguageFiles.DialogueLines("zh", "wendy") or lines
+    end
+    local order = type(voice_source.voice_order) == "table"
+        and voice_source.voice_order or {}
+    for number, entry in ipairs(order) do
+        voice_index[entry[1] .. ":" .. tostring(entry[2])] = number
+    end
+    for _, character in ipairs({"wendy", "wickerbottom", "warly"}) do
+        local source = LanguageFiles.DialogueLines(Language.language, character)
+        Register(strings, character .. CHARACTER_SEPARATOR, source)
+        local character_voice_source = source
+        if Language.language == "zh_tw" then
+            character_voice_source = LanguageFiles.DialogueLines("zh", character)
+                or source
+        end
+        for number, entry in ipairs(type(character_voice_source.voice_order) == "table"
+            and character_voice_source.voice_order or {}) do
+            voice_index[character .. CHARACTER_SEPARATOR .. entry[1] .. ":"
+                .. tostring(entry[2])] = number
+        end
+    end
     STRINGS[M.TABLE] = strings
+    STRINGS.MY_FRIEND_VOICE_INDEX = voice_index
     return strings
 end
 
@@ -152,6 +179,7 @@ function M.Say(inst, key, index, duration, argument, quiet)
         local payload = (argument ~= nil and argument ~= "")
             and (key .. SEPARATOR .. argument) or key
         talker:Chatter(payload, index, duration, true, Priority())
+        require("my_friend_voice").PlayLine(inst, key, index)
         return true
     end
     talker:Say(text, duration, quiet == true, false, false, nil, nil, nil, nil,

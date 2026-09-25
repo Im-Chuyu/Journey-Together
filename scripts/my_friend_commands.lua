@@ -9,33 +9,40 @@ local Riding = require("my_friend_beefalo").Riding
 local SpecialCommands = require("my_friend_special_commands")
 local Language = require("my_friend_strings")
 local LanguageFiles = require("my_friend_language")
+local Characters = require("my_friend_characters")
 
 -- Keywords live in scripts/languages/<code>/command_words.lua.
 -- Anything malformed there is skipped with a log line rather than taking the
 -- whole mod down, so a typo in the config never stops the world from loading.
 local COMMANDS = {}
 do
+    local function AddConfigured(configured, character)
+        for _, entry in ipairs(type(configured) == "table" and configured or {}) do
+            if type(entry) == "table" and type(entry.id) == "string" then
+                local words = {}
+                for _, list in ipairs({entry.keywords}) do
+                    for _, word in ipairs(type(list) == "table" and list or {}) do
+                        if type(word) == "string" then
+                            word = word:lower():match("^%s*(.-)%s*$")
+                            if #word > 0 then words[#words + 1] = word end
+                        end
+                    end
+                end
+                if #words > 0 then
+                    COMMANDS[#COMMANDS + 1] = {id = entry.id, words = words,
+                        character = entry.character or character}
+                end
+            end
+        end
+    end
     local configured = LanguageFiles.CommandWords(Language.language)
     if type(configured) ~= "table" then
         print("[MyFriends] my_friend_command_words.lua could not be read: "
             .. tostring(configured))
-        configured = {}
     end
-    for _, entry in ipairs(configured) do
-        if type(entry) == "table" and type(entry.id) == "string" then
-            local words = {}
-            for _, list in ipairs({entry.keywords}) do
-                for _, word in ipairs(type(list) == "table" and list or {}) do
-                    if type(word) == "string" then
-                        word = word:lower():match("^%s*(.-)%s*$")
-                        if #word > 0 then words[#words + 1] = word end
-                    end
-                end
-            end
-            if #words > 0 then
-            COMMANDS[#COMMANDS + 1] = {id = entry.id, words = words}
-        end
-    end
+    AddConfigured(configured)
+    for _, character in ipairs(Characters.List()) do
+        AddConfigured(LanguageFiles.CharacterCommandWords(Language.language, character), character)
     end
     if #COMMANDS == 0 then
         print("[MyFriends] No usable chat keywords were configured.")
@@ -202,6 +209,7 @@ local function FindCommand(friend, text)
         -- Answers only count while a question is pending. Longest keyword
         -- wins; configuration order breaks ties.
         if (command.id ~= "allow_pickup" or answering)
+            and (command.character == nil or command.character == friend.prefab)
             and (command.id ~= "stop_fish" or friend._my_friend_command ~= nil
                 and friend._my_friend_command.id == "fish")
             and (command.id ~= "revive" or friend:HasTag("playerghost")) then
@@ -215,7 +223,7 @@ local function FindCommand(friend, text)
     return id
 end
 
-function M.Dispatch(friend, player, message)
+function M.Dispatch(friend, player, message, from_wheel)
     if type(message) ~= "string" or not Policy.IsLocalPlayer(player)
         or friend == nil or not friend:IsValid() or friend.components.health == nil then return false end
     message = message:match("^%s*(.-)%s*$")
@@ -261,7 +269,7 @@ function M.Dispatch(friend, player, message)
     end
     local pet = require("my_friend_pets").Parse(text)
     if pet ~= nil then
-        if MaybeRefuseChinese(friend, addressed_message, "adopt_pet") then return true end
+        if not from_wheel and MaybeRefuseChinese(friend, addressed_message, "adopt_pet") then return true end
         return require("my_friend_pets").Request(friend, player, pet)
     end
     -- Parse names from the original case-preserving message, never from keywords.
@@ -274,13 +282,13 @@ function M.Dispatch(friend, player, message)
     end
     local affinity = friend.components.my_friend_affinity
     if rename ~= nil and affinity ~= nil then
-        if MaybeRefuseChinese(friend, addressed_message, "rename") then return true end
+        if not from_wheel and MaybeRefuseChinese(friend, addressed_message, "rename") then return true end
         if rename:sub(1, 1) == ":" then rename = rename:sub(2)
         elseif rename:sub(1, #"：") == "：" then rename = rename:sub(#"：" + 1) end
         return M.Rename(friend, player, rename)
     end
     local id = FindCommand(friend, text)
-    if MaybeRefuseChinese(friend, addressed_message, id) then return true end
+    if not from_wheel and MaybeRefuseChinese(friend, addressed_message, id) then return true end
     if friend:HasTag("playerghost") then
         local portal = Contains(text, "大门") or Contains(text, "绚丽之门")
             or Contains(text, "天体传送门") or Contains(text, "portal")
@@ -294,7 +302,7 @@ function M.Dispatch(friend, player, message)
     end
     local special = SpecialCommands.Parse(friend, addressed_message, id ~= nil)
     if special ~= nil then
-        if id == nil and MaybeRefuseChinese(friend, addressed_message, "special") then return true end
+        if not from_wheel and id == nil and MaybeRefuseChinese(friend, addressed_message, "special") then return true end
         if friend:HasTag("playerghost") or Policy.GetLeader(friend) ~= player then return false end
         M.Clear(friend)
         if special.special == "wendy_recall" then
@@ -479,6 +487,22 @@ function M.Dispatch(friend, player, message)
         Dialogue.Reply(friend, "describe_" .. id)
     end
     return true
+end
+
+-- The command wheel sends an id instead of chat text.  Resolve that id to the
+-- first reviewed keyword so all existing command behavior, permission checks,
+-- replies and action setup remain in one path.  Wheel commands intentionally
+-- skip the chat-only Chinese refusal roll.
+function M.DispatchWheel(friend, player, id)
+    if type(id) ~= "string" then return false end
+    for _, command in ipairs(COMMANDS) do
+        if command.id == id and command.words[1] ~= nil
+            and (command.character == nil or friend ~= nil and command.character == friend.prefab) then
+            local address = friend ~= nil and friend.prefab or "friend"
+            return M.Dispatch(friend, player, address .. " " .. command.words[1], true)
+        end
+    end
+    return false
 end
 
 function M.Commit(friend, action)

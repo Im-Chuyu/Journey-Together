@@ -6,7 +6,7 @@ description = simplified_chinese and "在这片永恒大陆，我会与你并肩
     or traditional_chinese and "在這片永恆大陸，我會與你並肩同行。"
     or "On this eternal continent, I will travel with you."
 author = "阮秀"
-version = "1.7.2"
+version = "1.7.3"
 forumthread = ""
 api_version = 10
 
@@ -34,5 +34,40 @@ configuration_options = {
             {description = chinese and "English" or "English", data = "en"},
         },
         default = traditional_chinese and "zh_tw" or simplified_chinese and "zh" or "en",
+    },
+    {
+        name = "voice_enabled",
+        label = simplified_chinese and "伙伴语音"
+            or traditional_chinese and "夥伴語音"
+            or "Companion Voice",
+        options = {
+            {description = simplified_chinese and "开启"
+                or traditional_chinese and "開啟" or "Enabled", data = true},
+            {description = simplified_chinese and "关闭"
+                or traditional_chinese and "關閉" or "Disabled", data = false},
+        },
+        default = true,
+    },
+    {
+        name = "command_wheel_key",
+        label = simplified_chinese and "指令轮盘 Alt 快捷键"
+            or traditional_chinese and "指令輪盤 Alt 快捷鍵"
+            or "Command Wheel Shortcut",
+        options = {
+            {description = "Alt+A", data = "a"}, {description = "Alt+B", data = "b"},
+            {description = "Alt+C", data = "c"}, {description = "Alt+D", data = "d"},
+            {description = "Alt+E", data = "e"}, {description = "Alt+F", data = "f"},
+            {description = "Alt+G", data = "g"}, {description = "Alt+H", data = "h"},
+            {description = "Alt+I", data = "i"}, {description = "Alt+J", data = "j"},
+            {description = "Alt+K", data = "k"}, {description = "Alt+L", data = "l"},
+            {description = "Alt+M", data = "m"}, {description = "Alt+N", data = "n"},
+            {description = "Alt+O", data = "o"}, {description = "Alt+P", data = "p"},
+            {description = "Alt+Q", data = "q"}, {description = "Alt+R", data = "r"},
+            {description = "Alt+S", data = "s"}, {description = "Alt+T", data = "t"},
+            {description = "Alt+U", data = "u"}, {description = "Alt+V", data = "v"},
+            {description = "Alt+W", data = "w"}, {description = "Alt+X", data = "x"},
+            {description = "Alt+Y", data = "y"}, {description = "Alt+Z", data = "z"},
+        },
+        default = "r",
     },
 }

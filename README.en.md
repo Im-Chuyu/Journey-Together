@@ -1,8 +1,6 @@
 # Journey Together
 
-Journey Together is a Don't Starve Together companion mod. Companions can
-follow players, assist in combat, survive independently, manage supplies, cook,
-and respond to chat commands.
+Journey Together is a Don't Starve Together companion mod. Companions can follow players, assist in combat, survive independently, manage supplies, cook, and respond to chat commands.
 
 ## Branches
 
@@ -10,28 +8,20 @@ and respond to chat commands.
 - `develop`: integration and testing branch for the next version.
 - `feature/*`: focused branches created from `develop`.
 
-## Language files
+## Command wheel
 
-Chinese is the default language. Keywords and dialogue are stored in two files
-under `scripts/languages/<code>/` for each language.
+Press `Alt` plus the configured shortcut (default `Alt+R`) to open the companion command wheel. Right-click a wheel button to replace it from the complete command catalogue. The catalogue is paginated and duplicate commands are allowed. The shortcut can be changed to any `Alt+A`–`Alt+Z` combination in the `Command Wheel Shortcut` option in `modinfo.lua`.
 
-Contributors only need to submit two files under
-`scripts/languages/<code>/`:
+Shared commands live in `scripts/languages/<code>/command_words.lua`. Character-specific commands live in `scripts/languages/<code>/characters/<character>_command_words.lua`, for example `characters/wickerbottom_command_words.lua`. Keep each command's stable `id` and provide localized `keywords` and a wheel `label`. The wheel combines shared and character-specific command files automatically, so adding a supported character command file adds it to the catalogue without changing the wheel widget.
 
-- `command_words.lua`
-- `dialogue_lines.lua`
+## Dialogue and voice
 
-They should not edit core code, pack manifests, or `modinfo.lua`. The maintainer
-reviews and merges the language files, then adds the language option to
-`modinfo.lua` before downloading the repository as a release mod. Missing files
-fall back to Chinese.
+Chinese is the default language. Default dialogue lives in `scripts/languages/<code>/dialogue_lines.lua`; character-specific dialogue lives in `scripts/languages/<code>/characters/<character>.lua`. Missing character dialogue falls back to Wendy's default set.
 
-The folder `scripts/languages/_template` is the starting point. Full formatting
-rules are described in
-[`CONTRIBUTING.en.md`](CONTRIBUTING.en.md).
+The simplified-Chinese `voice_order` table assigns global voice event numbers in order. Each sound bank contains 70 events and is stored as `sound/fsN.fev` plus `sound/fsN.fsb`; event paths use the form `fsN/fsN/fnK`, with `K` continuing across banks. The `Companion Voice` option controls custom voice playback. Custom voice events are currently used only for Simplified Chinese and Traditional Chinese; other languages keep the companion character's native voice.
+
+Language contributors only need to submit language files. They should not edit core code, sound banks, pack manifests, or `modinfo.lua`. The maintainer reviews language files and adds the language option to `modinfo.lua`. The `scripts/languages/_template` folder is the starting point; formatting and naming rules are described in [`CONTRIBUTING.en.md`](CONTRIBUTING.en.md). Missing language files fall back to Chinese.
 
 ## Local checks
 
-Run the project's Lua 5.1 syntax check, then test the affected commands,
-dialogue, language selection, and multiplayer chat display in a local DST
-world.
+Run the Lua 5.1 syntax check, then test the affected commands, dialogue, language selection, and multiplayer client display in a local DST world.

@@ -2,10 +2,15 @@
 
 ## Translation Pull Requests
 
-Create `scripts/languages/<language code>/` and add only:
+Create `scripts/languages/<language code>/` and add the shared files:
 
 - `command_words.lua`
 - `dialogue_lines.lua`
+
+Optional character-specific files use:
+
+- `characters/<character>.lua`
+- `characters/<character>_command_words.lua`
 
 Copy `scripts/languages/_template` to begin. Do not edit core code or
 `modinfo.lua` in a translation pull request. The maintainer reviews the files,
@@ -18,6 +23,10 @@ Use an existing command id:
 ```lua
 { id = "follow", keywords = { "come along" } },
 ```
+
+Character command files use the same entry format and are loaded from
+`scripts/languages/<code>/characters/`. Keep command ids stable and provide a
+localized `label` for the command wheel.
 
 ## Dialogue entries
 

@@ -4,6 +4,11 @@ require("my_friend_client_init").Install()
 local InventoryAI = require("my_friend_inventory")
 local Language = require("my_friend_strings")
 Language.language = GetModConfigData("language") or "zh"
+require("my_friend_voice").enabled = GetModConfigData("voice_enabled") ~= false
+local command_wheel_key = GetModConfigData("command_wheel_key") or "r"
+command_wheel_key = type(command_wheel_key) == "string" and command_wheel_key:lower() or "r"
+local command_wheel_key_code = command_wheel_key:match("^[a-z]$") ~= nil
+    and string.byte(command_wheel_key) or 114
 local Text = Language.Text
 -- Every companion line is registered in STRINGS on both the server and the
 -- clients so the vanilla chatter channel can echo it into nearby chat windows.
@@ -22,6 +27,20 @@ local Characters = require("my_friend_characters")
 -- instead of being left behind as a lifeless player.
 -- scripts/prefabs/my_friend_characters.lua rebuilds the real character.
 PrefabFiles = { "my_friend_characters" }
+
+-- Each sound bank contains 70 dialogue events. Keep the banks registered as
+-- assets so additional friend_sN files can be added without changing the
+-- dialogue code. Missing future banks are harmless until their files are
+-- supplied in the mod's sound/ directory.
+Assets = Assets or {}
+-- The current simplified-Chinese catalogue has 601 entries (9 banks).
+-- Increase this upper bound when a later catalogue adds another bank.
+for sound_bank = 1, 9 do
+    table.insert(Assets, Asset("SOUNDPACKAGE",
+        "sound/fs" .. sound_bank .. ".fev"))
+    table.insert(Assets, Asset("SOUND",
+        "sound/fs" .. sound_bank .. ".fsb"))
+end
 
 if _G.SaveGame ~= nil then
     local OldSaveGame = _G.SaveGame
@@ -931,14 +950,14 @@ local function SpawnFriend(player, announce)
     end
 end
 
-local function CanManage(player, friend)
+local function CanManage(player, friend, ignore_distance)
     if player == nil or not player:IsValid() or friend == nil or not friend:IsValid()
         or not Characters.IsCharacter(friend.prefab) or not friend:HasTag("my_friend")
         or friend.components == nil or friend.components.inventory == nil
         or not require("my_friend_policy").IsLocalPlayer(player) then return false end
     local fx, _, fz = friend.Transform:GetWorldPosition()
     local px, _, pz = player.Transform:GetWorldPosition()
-    if (fx - px)^2 + (fz - pz)^2 > 100 then return false end
+    if not ignore_distance and (fx - px)^2 + (fz - pz)^2 > 100 then return false end
     local leader = friend.components.follower ~= nil and friend.components.follower:GetLeader() or nil
     return leader == nil or leader == player
 end
@@ -1188,6 +1207,11 @@ AddModRPCHandler("MyFriends", "PanelOpen", function(player, friend)
     end
 end)
 
+AddModRPCHandler("MyFriends", "WheelCommand", function(player, friend, command_id)
+    if not CanManage(player, friend, true) or type(command_id) ~= "string" then return end
+    require("my_friend_commands").DispatchWheel(friend, player, command_id)
+end)
+
 AddModRPCHandler("MyFriends", "PanelClose", function(player)
     player._my_friend_panel_target = nil
 end)
@@ -1418,6 +1442,33 @@ AddClassPostConstruct("widgets/controls", function(self)
     local Panel = require("widgets/my_friend_panel")
     self.my_friend_panel = self:AddChild(Panel(self.owner))
     self.my_friend_panel:Hide()
+    local Wheel = require("widgets/my_friend_command_wheel")
+    self.my_friend_command_wheel = self:AddChild(Wheel(self.owner))
+    self.my_friend_command_wheel:Hide()
+    if not self._my_friend_wheel_key_registered and _G.TheInput ~= nil then
+        self._my_friend_wheel_key_registered = true
+        self._my_friend_wheel_key_handler = _G.TheInput:AddKeyDownHandler(
+            command_wheel_key_code, function()
+                -- The wheel is always opened with Alt plus the configured
+                -- letter.  Requiring the modifier here keeps the shortcut
+                -- from consuming the normal letter key in chat/gameplay.
+                if not _G.TheInput:IsKeyDown(_G.KEY_ALT) then return end
+                -- Keyboard repeat generates multiple key-down events while a
+                -- key is held.  Treat one physical press as one toggle and
+                -- unlock it only after the key is released.
+                if self._my_friend_wheel_key_held then return end
+                self._my_friend_wheel_key_held = true
+                if self.owner ~= nil and self.owner.HUD ~= nil
+                    and self.owner.HUD.controls == self
+                    and self.my_friend_command_wheel ~= nil then
+                    self.my_friend_command_wheel:Toggle()
+                end
+            end)
+        self._my_friend_wheel_key_up_handler = _G.TheInput:AddKeyUpHandler(
+            command_wheel_key_code, function()
+                self._my_friend_wheel_key_held = nil
+            end)
+    end
     local Skins = require("my_friend_skins")
     self.owner:DoTaskInTime(2, function() Skins.Report() end)
     self.owner:DoTaskInTime(8, function() Skins.Report() end)

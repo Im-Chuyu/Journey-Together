@@ -101,7 +101,7 @@ local function BookCommand(text, has_general_command)
     -- Inspect the verb before the title, since titles may contain verbs too
     -- (for example the character for "build" in applied silviculture).
     local prefix = position ~= nil and text:sub(1, position - 1) or text
-    if Has(prefix, "读") then
+    if Any(prefix, {"读", "讀", "read"}) then
         -- "读书" is intentionally a valid generic request.  The action
         -- module chooses the best available book when no title was supplied.
         return {special = "read", target = book ~= nil and book.recipe or nil}
@@ -119,16 +119,21 @@ end
 function M.Parse(friend, text, has_general_command)
     if friend == nil or type(text) ~= "string" then return end
     text = text:lower()
-    if friend.prefab == "wendy" and Any(text, {"收回", "回去", "藏"}) then
+    if friend.prefab == "wendy" and Any(text,
+        {"收回", "回去", "藏", "recall abigail", "recall"}) then
         return {special = "wendy_recall"}
     end
     if friend.prefab == "wickerbottom" then
-        if Any(text, {"书架", "书房"}) and Any(text, {"造", "做", "制作", "制做", "放"}) then
+        if Any(text, {"书架", "書架", "书房", "bookshelf", "bookcase"})
+            and Any(text, {"造", "做", "制作", "制做", "放", "build", "make", "place"}) then
             return {special = "build", recipe = "bookstation"}
         end
         local result = BookCommand(text, has_general_command)
         if result ~= nil then return result end
     elseif friend.prefab == "warly" then
+        if Any(text, {"做菜", "cook food", "cook", "烹饪", "烹飪"}) then
+            return {special = "cook", recipe = nil}
+        end
         local device = Find(text, DEVICES)
         if device ~= nil and Any(text, {"造", "做", "制作", "制做"}) then
             return {special = "build", recipe = device.recipe}
