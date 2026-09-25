@@ -29,14 +29,14 @@ function WheelButton:OnMouseButton(button, down, x, y)
 end
 
 local LABELS = {
-    follow = {"跟随", "跟隨", "Follow"},
-    stop_follow = {"停止跟随", "停止跟隨", "Stop Following"},
-    hold_position = {"原地待命", "原地待命", "Hold Position"},
-    set_base = {"设置基地", "設定基地", "Set Base"},
-    backpack = {"捡包", "撿包", "Pick Up Backpack"},
-    hoe = {"锄地", "鋤地", "Hoe"},
-    water = {"浇水", "澆水", "Water"},
-    harvest = {"收农作物", "收農作物", "Harvest Crops"},
+    follow = {"跟随", "跟隨", "Follow", "Следовать"},
+    stop_follow = {"停止跟随", "停止跟隨", "Stop Following", "Прекратить следовать"},
+    hold_position = {"原地待命", "原地待命", "Hold Position", "Оставаться на месте"},
+    set_base = {"设置基地", "設定基地", "Set Base", "Установить базу"},
+    backpack = {"捡包", "撿包", "Pick Up Backpack", "Поднять рюкзак"},
+    hoe = {"锄地", "鋤地", "Hoe", "Вскопать землю"},
+    water = {"浇水", "澆水", "Water", "Полить"},
+    harvest = {"收农作物", "收農作物", "Harvest Crops", "Собрать урожай"},
 }
 
 local DEFAULT_COMMANDS = {
@@ -47,6 +47,7 @@ local PICKER_PAGE_SIZE = 32
 
 local function CurrentText(entry)
     if Language.language == "en" then return entry[3] end
+    if Language.language == "ru" then return entry[4] end
     if Language.language == "zh_tw" then return entry[2] end
     return entry[1]
 end
@@ -97,7 +98,8 @@ local MyFriendCommandWheel = Class(Widget, function(self, owner)
     self.center:SetSize(132, 132)
     self.center:SetTint(.18, .15, .08, .98)
     self.center:SetClickable(false)
-    self.center_label = self:AddChild(Text(DEFAULTFONT, 22, Language.Text("伙伴指令", "Companion")))
+    self.center_label = self:AddChild(Text(DEFAULTFONT, 22,
+        Language.Text("伙伴指令", "Companion", "Команды спутника")))
     self.center_label:SetColour(1, .84, .38, 1)
     self.center_label:SetClickable(false)
 
@@ -120,7 +122,7 @@ local MyFriendCommandWheel = Class(Widget, function(self, owner)
     self.picker_bg:SetTint(.012, .018, .028, .97)
     self.picker_bg:SetClickable(false)
     self.picker_title = self.picker:AddChild(Text(DEFAULTFONT, 28,
-        Language.Text("选择要替换的指令", "Choose a command")))
+        Language.Text("选择要替换的指令", "Choose a command", "Выберите команду")))
     self.picker_title:SetPosition(0, 315)
     self.picker_title:SetColour(1, .84, .38, 1)
     self.picker_title:SetClickable(false)
@@ -149,8 +151,8 @@ local MyFriendCommandWheel = Class(Widget, function(self, owner)
         button:SetOnClick(function() self:ChangePickerPage(delta) end)
         return button
     end
-    self.picker_prev = PickerNav(Language.Text("上一页", "Previous"), -180, -1)
-    self.picker_next = PickerNav(Language.Text("下一页", "Next"), 180, 1)
+    self.picker_prev = PickerNav(Language.Text("上一页", "Previous", "Назад"), -180, -1)
+    self.picker_next = PickerNav(Language.Text("下一页", "Next", "Вперёд"), 180, 1)
     self.picker_page_label = self.picker:AddChild(Text(DEFAULTFONT, 18, ""))
     self.picker_page_label:SetPosition(0, -315)
     self.picker_page_label:SetColour(1, .84, .38, 1)

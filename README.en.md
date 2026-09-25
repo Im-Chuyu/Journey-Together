@@ -16,7 +16,7 @@ Shared commands live in `scripts/languages/<code>/command_words.lua`. Character-
 
 ## Dialogue and voice
 
-Chinese is the default language. Default dialogue lives in `scripts/languages/<code>/dialogue_lines.lua`; character-specific dialogue lives in `scripts/languages/<code>/characters/<character>.lua`. Missing character dialogue falls back to Wendy's default set.
+Chinese is the default language. Simplified Chinese, Traditional Chinese, English, and Russian are currently included. Default dialogue lives in `scripts/languages/<code>/dialogue_lines.lua`; character-specific dialogue lives in `scripts/languages/<code>/characters/<character>.lua`. Missing character dialogue falls back to Wendy's default set.
 
 The simplified-Chinese `voice_order` table assigns global voice event numbers in order. Each sound bank contains 70 events and is stored as `sound/fsN.fev` plus `sound/fsN.fsb`; event paths use the form `fsN/fsN/fnK`, with `K` continuing across banks. The `Companion Voice` option controls custom voice playback. Custom voice events are currently used only for Simplified Chinese and Traditional Chinese; other languages keep the companion character's native voice.
 

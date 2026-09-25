@@ -12,7 +12,9 @@ Optional character-specific files use:
 - `characters/<character>.lua`
 - `characters/<character>_command_words.lua`
 
-Copy `scripts/languages/_template` to begin. Keep existing command ids and
+Copy `scripts/languages/_template` to begin. The Russian files under
+`scripts/languages/ru/` are also a complete reference for Cyrillic keywords.
+Keep existing command ids and
 dialogue keys unchanged. Do not modify core code or `modinfo.lua`; the
 maintainer handles review and release registration.
 

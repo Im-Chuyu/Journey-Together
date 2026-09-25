@@ -12,7 +12,9 @@ Optional character-specific files use:
 - `characters/<character>.lua`
 - `characters/<character>_command_words.lua`
 
-Copy `scripts/languages/_template` to begin. Do not edit core code or
+Copy `scripts/languages/_template` to begin. The Russian files under
+`scripts/languages/ru/` are also a complete reference for Cyrillic keywords.
+Do not edit core code or
 `modinfo.lua` in a translation pull request. The maintainer reviews the files,
 registers the language, and publishes the next mod version.
 

@@ -10,9 +10,9 @@ scripts/languages/<code>/characters/<character>.lua
 scripts/languages/<code>/characters/<character>_command_words.lua
 ```
 
-Use `zh` and `en` as references. Keep command `id` values and dialogue keys
-unchanged. A language file contains only one language. Chinese is the fallback
-when a file is missing.
+Use `zh`, `en`, and `ru` as references. Keep command `id` values and dialogue
+keys unchanged. A language file contains only one language. Chinese is the
+fallback when a file is missing.
 
 Character command files use stable command `id` values plus localized
 `keywords` and a wheel `label`. Contributors should submit these files through

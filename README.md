@@ -16,7 +16,7 @@
 
 ## 台词与语音
 
-中文是默认语言。默认台词位于 `scripts/languages/<语言代码>/dialogue_lines.lua`，角色专属台词位于 `scripts/languages/<语言代码>/characters/<角色>.lua`；缺少专属台词时回退到温蒂的默认台词。
+中文是默认语言。当前提供简体中文、繁体中文、英文和俄语。默认台词位于 `scripts/languages/<语言代码>/dialogue_lines.lua`，角色专属台词位于 `scripts/languages/<语言代码>/characters/<角色>.lua`；缺少专属台词时回退到温蒂的默认台词。
 
 简体中文角色台词中的 `voice_order` 按顺序对应自定义语音事件编号。每个音频银行包含 70 个事件，资源放在 `sound/fsN.fev` 和 `sound/fsN.fsb`，引用路径形如 `fsN/fsN/fnK`，`K` 在不同银行间连续编号。模组设置中的“伙伴语音”选项控制自定义语音；自定义语音目前只用于简体中文和繁体中文，其他语言使用角色原生声音。
 

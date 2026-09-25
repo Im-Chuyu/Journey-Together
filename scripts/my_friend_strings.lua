@@ -3,8 +3,10 @@
 -- files; missing dialogue falls back to Chinese.
 local M = {language = "zh"}
 
-function M.Text(zh, en)
-    return M.language == "en" and en or zh
+function M.Text(zh, en, ru)
+    if M.language == "en" then return en end
+    if M.language == "ru" then return ru or en or zh end
+    return zh
 end
 
 local ENGLISH_NAMES = {

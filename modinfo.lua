@@ -1,9 +1,14 @@
 local simplified_chinese = locale == "zh" or locale == "zhr"
 local traditional_chinese = locale == "zht" or locale == "zh_tw" or locale == "zh-tw"
+local russian = locale == "ru" or locale == "ru_ru" or locale == "ru-ru"
 local chinese = simplified_chinese or traditional_chinese
-name = chinese and "一路同行" or "Journey Together"
+name = simplified_chinese and "一路同行"
+    or traditional_chinese and "一路同行"
+    or russian and "Путь вместе"
+    or "Journey Together"
 description = simplified_chinese and "在这片永恒大陆，我会与你并肩同行。"
     or traditional_chinese and "在這片永恆大陸，我會與你並肩同行。"
+    or russian and "На этом вечном континенте я буду путешествовать вместе с тобой."
     or "On this eternal continent, I will travel with you."
 author = "阮秀"
 version = "1.7.3"
@@ -23,28 +28,47 @@ configuration_options = {
         name = "language",
         label = simplified_chinese and "伙伴语言"
             or traditional_chinese and "夥伴語言"
+            or russian and "Язык спутника"
             or "Companion Language",
         options = {
             -- Add a new {description = "...", data = "xx"} entry after the
             -- reviewed files are added under scripts/languages/xx/.
             {description = simplified_chinese and "中文"
-                or traditional_chinese and "簡體中文" or "Chinese", data = "zh"},
+                or traditional_chinese and "簡體中文"
+                or russian and "Китайский"
+                or "Chinese", data = "zh"},
             {description = simplified_chinese and "繁体中文"
-                or traditional_chinese and "繁體中文" or "Traditional Chinese", data = "zh_tw"},
-            {description = chinese and "English" or "English", data = "en"},
+                or traditional_chinese and "繁體中文"
+                or russian and "Традиционный китайский"
+                or "Traditional Chinese", data = "zh_tw"},
+            {description = chinese and "English"
+                or russian and "Английский"
+                or "English", data = "en"},
+            {description = simplified_chinese and "俄语"
+                or traditional_chinese and "俄語"
+                or russian and "Русский"
+                or "Russian", data = "ru"},
         },
-        default = traditional_chinese and "zh_tw" or simplified_chinese and "zh" or "en",
+        default = traditional_chinese and "zh_tw"
+            or simplified_chinese and "zh"
+            or russian and "ru"
+            or "en",
     },
     {
         name = "voice_enabled",
         label = simplified_chinese and "伙伴语音"
             or traditional_chinese and "夥伴語音"
+            or russian and "Голос спутника"
             or "Companion Voice",
         options = {
             {description = simplified_chinese and "开启"
-                or traditional_chinese and "開啟" or "Enabled", data = true},
+                or traditional_chinese and "開啟"
+                or russian and "Включён"
+                or "Enabled", data = true},
             {description = simplified_chinese and "关闭"
-                or traditional_chinese and "關閉" or "Disabled", data = false},
+                or traditional_chinese and "關閉"
+                or russian and "Выключен"
+                or "Disabled", data = false},
         },
         default = true,
     },
@@ -52,6 +76,7 @@ configuration_options = {
         name = "command_wheel_key",
         label = simplified_chinese and "指令轮盘 Alt 快捷键"
             or traditional_chinese and "指令輪盤 Alt 快捷鍵"
+            or russian and "Клавиша колеса команд с Alt"
             or "Command Wheel Shortcut",
         options = {
             {description = "Alt+A", data = "a"}, {description = "Alt+B", data = "b"},
