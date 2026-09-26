@@ -762,6 +762,16 @@ local function ConfigureFriend(inst)
             Backpacks.MarkOwned(inst, item)
         end
     end)
+    inst:ListenForEvent("unequip", function(_, data)
+        local item = data ~= nil and data.item or nil
+        if item ~= nil and item == inst._my_friend_carrying_statue then
+            inst._my_friend_carrying_statue = nil
+            local command = inst._my_friend_command
+            if command ~= nil and command.id == "carry_statue" then
+                Commands.Clear(inst)
+            end
+        end
+    end)
     require("my_friend_carry_backpack").Configure(inst)
     inst:ListenForEvent("attacked", function(_, data)
         require("my_friend_riding").OnAttacked(inst)

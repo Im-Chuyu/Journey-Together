@@ -51,11 +51,25 @@ end
 
 local function FinishWalking(inst)
     Dialogue.Reply(inst, "carry_statue_follow")
-    require("my_friend_commands").Clear(inst)
+    local command = inst._my_friend_command
+    if command ~= nil and command.id == "carry_statue" then
+        -- Keep a lightweight carry command alive after pickup.  Clearing it
+        -- immediately lets the loadout and riding systems treat the heavy
+        -- item as ordinary equipment and it can be dropped a few seconds
+        -- later.  A held command still yields movement to follow/riding.
+        command.phase = "carrying"
+        command.deadline = math.huge
+    end
 end
 
 function M.GetAction(inst, command)
     local carried = Carrying(inst)
+    if carried == nil and command.phase == "carrying" then
+        -- The player may have taken the statue off manually.  Start a fresh
+        -- search on the next planner pass instead of retaining a stale hold
+        -- phase that can never produce an action.
+        command.phase = nil
+    end
     if carried == nil and command.phase == nil then
         if IsRiding(inst) then
             -- A previous failed pickup may have left the companion mounted.
@@ -121,12 +135,20 @@ function M.GetAction(inst, command)
         return Policy.GuardAction(inst, action, 32)
     end
 
+    if command.phase == "carrying" then
+        -- The command is intentionally retained as a carry lock while the
+        -- companion follows.  No new action is needed until the player gives
+        -- another command or removes the heavy item.
+        return
+    end
+
     if command.phase == "mount" then
         if IsRiding(inst) then
             -- The statue is already secured and the mount action is complete.
-            -- Clearing this command hands movement back to the normal riding
-            -- behaviour instead of trying to mount the same beefalo again.
-            require("my_friend_commands").Clear(inst)
+            -- Retain the carry lock so the normal riding behaviour cannot
+            -- release the heavy item during its next reevaluation.
+            command.phase = "carrying"
+            command.deadline = math.huge
             return
         end
         local mount = Riding.GetBeefalo(inst)
@@ -142,9 +164,10 @@ function M.GetAction(inst, command)
         action._my_friend_dialogue_kind = "carry_statue_mount"
         action:AddSuccessAction(function()
             if inst.components.rider ~= nil and inst.components.rider:IsRiding() then
-                -- The normal ride node now owns mounted movement and keeps the
-                -- heavy body item equipped while the companion follows.
-                require("my_friend_commands").Clear(inst)
+                -- The normal ride node now owns mounted movement. Keep the
+                -- command as a carry lock while it follows the player.
+                command.phase = "carrying"
+                command.deadline = math.huge
             end
         end)
         return Policy.GuardAction(inst, action, 32)

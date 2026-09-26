@@ -199,7 +199,20 @@ end
 
 local function KeepHeavyCarryMounted(inst)
     local carried = require("my_friend_equip_slots").GetHeavy(inst.components.inventory)
-    return carried ~= nil and inst._my_friend_carrying_statue == carried
+    if carried == nil then
+        inst._my_friend_carrying_statue = nil
+        return false
+    end
+    -- The marker is set by the carry command and survives command handoff to
+    -- ordinary follow/riding movement.  If an item was manually removed,
+    -- clear the stale marker so later rides can make their normal decision.
+    if inst._my_friend_carrying_statue == nil then
+        local command = inst._my_friend_command
+        if command ~= nil and command.id == "carry_statue" then
+            inst._my_friend_carrying_statue = carried
+        end
+    end
+    return inst._my_friend_carrying_statue == carried
 end
 
 local RideToLeader = Class(BehaviourNode, function(self, inst)

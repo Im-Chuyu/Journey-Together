@@ -5,6 +5,13 @@ local CHANNEL = "my_friend_talk"
 local LINE_CHANNEL = "my_friend_line"
 local EVENTS_PER_BANK = 70
 
+local function NativeSound(inst, ghost)
+    return inst.talksoundoverride
+        or (inst.talker_path_override or "dontstarve/characters/")
+            .. (inst.soundsname or inst.prefab)
+            .. (ghost and "/ghost_LP" or "/talk_LP")
+end
+
 local function UsesCustomVoice()
     return M.enabled and (Language.language == "zh" or Language.language == "zh_tw")
 end
@@ -35,7 +42,16 @@ function M.PlayLine(inst, key, index)
         -- Leave the event at the engine's normal volume.  The PlaySound
         -- volume argument is a mix multiplier, not a gain stage; values above
         -- 1 can be clamped or interact poorly with the FEV attenuation.
-        inst.SoundEmitter:PlaySound(event, LINE_CHANNEL)
+        local ok = pcall(inst.SoundEmitter.PlaySound, inst.SoundEmitter, event, LINE_CHANNEL)
+        if not ok then
+            -- Keep a native voice available if the event bank is not loaded
+            -- on this shard/client. The dialogue text has already been sent
+            -- and must not be affected by an audio bank failure.
+            M.Stop(inst, true)
+            local ghost = inst:HasTag("playerghost")
+            pcall(inst.SoundEmitter.PlaySound, inst.SoundEmitter,
+                NativeSound(inst, ghost), CHANNEL)
+        end
     end
 end
 
@@ -77,10 +93,7 @@ function M.Play(inst, data)
     -- that instance and avoid layering a second copy on the companion.
     if inst.SoundEmitter:PlayingSound("talk") then return end
     M.Stop(inst, true)
-    local sound = inst.talksoundoverride
-        or (inst.talker_path_override or "dontstarve/characters/")
-            .. (inst.soundsname or inst.prefab)
-            .. (ghost and "/ghost_LP" or "/talk_LP")
+    local sound = NativeSound(inst, ghost)
     inst.SoundEmitter:PlaySound(sound, CHANNEL)
     inst._my_friend_voice_task = inst:DoTaskInTime(
         math.min(data ~= nil and data.duration or 2, 2),
