@@ -1,6 +1,7 @@
 local M = {}
 local EquipSlots = require("my_friend_equip_slots")
-local SYNC_PERIOD = 0.75
+local SYNC_PERIOD = 1
+local FULL_REFRESH_PERIOD = 10
 
 -- NPC inventories have no owning client. Publish their read-only replicas;
 -- all transfers still pass the existing server-side distance/affinity checks.
@@ -20,14 +21,31 @@ function M.Sync(inst)
     inst._my_friend_replication_next = now + SYNC_PERIOD
     local inventory = inst.components.inventory
     if inventory == nil then return end
+    local items = inventory:ReferenceAllItems()
+    local overflow = EquipSlots.BackpackContainer(inventory)
+    local signature_parts = {}
+    for _, item in ipairs(items) do
+        signature_parts[#signature_parts + 1] = tostring(item.GUID or item)
+    end
+    signature_parts[#signature_parts + 1] =
+        "overflow:" .. tostring(overflow ~= nil and overflow.inst.GUID or 0)
+    local signature = table.concat(signature_parts, ",")
+    -- Inventory contents are the expensive part of this operation. Reuse the
+    -- existing classified targets while the item set is unchanged, with an
+    -- occasional refresh in case the engine recreated a classified entity.
+    if signature == inst._my_friend_replication_signature
+        and now < (inst._my_friend_replication_refresh or 0) then
+        return
+    end
+    inst._my_friend_replication_signature = signature
+    inst._my_friend_replication_refresh = now + FULL_REFRESH_PERIOD
     local replica = inst.replica.inventory
     if replica ~= nil and replica.classified ~= nil then
         replica.classified.Network:SetClassifiedTarget(nil)
     end
-    for _, item in ipairs(inventory:ReferenceAllItems()) do
+    for _, item in ipairs(items) do
         M.PublishItem(item)
     end
-    local overflow = EquipSlots.BackpackContainer(inventory)
     if overflow ~= nil then
         M.PublishItem(overflow.inst)
         for _, item in pairs(overflow.slots) do M.PublishItem(item) end

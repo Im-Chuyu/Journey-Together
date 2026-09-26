@@ -551,22 +551,32 @@ local function PushPanelData(inst)
         or inst._my_friend_panel_net == nil or inst.components == nil then return end
     FriendReplication.Sync(inst)
     local health, hunger, sanity = inst.components.health, inst.components.hunger, inst.components.sanity
-    local inv = inst.components.inventory
     -- The trailing field carries panel state the client cannot work out on
     -- its own: whether the shared free character change is still unspent.
-    inst._my_friend_panel_net:set(string.format("%.2f,%.2f|%.2f,%.2f|%.2f,%.2f|%s|%d",
+    local panel = string.format("%.2f,%.2f|%.2f,%.2f|%.2f,%.2f|%s|%d",
         health ~= nil and health.currenthealth or 0, health ~= nil and health.maxhealth or 0,
         hunger ~= nil and hunger.current or 0, hunger ~= nil and hunger.max or 0,
         sanity ~= nil and sanity.current or 0, sanity ~= nil and sanity.max or 0,
         string.format("%.2f,%.2f", inst.components.moisture ~= nil and inst.components.moisture:GetMoisture() or 0,
             inst.components.moisture ~= nil and inst.components.moisture:GetMaxMoisture() or 100),
-        require("my_friend_farewell").IsFreeChangeAvailable(inst) and 1 or 0))
+        require("my_friend_farewell").IsFreeChangeAvailable(inst) and 1 or 0)
+    -- Avoid dirtying the net string when no panel value changed. The task
+    -- still runs regularly so a newly joined client receives the current
+    -- value, but steady-state play produces no repeated panel packets.
+    if inst._my_friend_panel_payload ~= panel then
+        inst._my_friend_panel_payload = panel
+        inst._my_friend_panel_net:set(panel)
+    end
     local skinner = inst.components.skinner
     if inst._my_friend_skin_net ~= nil and skinner ~= nil then
         local skins = skinner:GetClothing()
-        inst._my_friend_skin_net:set(string.format("%s|%s|%s|%s|%s",
+        local skin_payload = string.format("%s|%s|%s|%s|%s",
             skins.base or (inst.prefab .. "_none"), skins.body or "", skins.hand or "",
-            skins.legs or "", skins.feet or ""))
+            skins.legs or "", skins.feet or "")
+        if inst._my_friend_skin_payload ~= skin_payload then
+            inst._my_friend_skin_payload = skin_payload
+            inst._my_friend_skin_net:set(skin_payload)
+        end
     end
 end
 
@@ -720,7 +730,7 @@ local function ConfigureFriend(inst)
         inst._my_friend_save_hooks_added = true
     end
     PushPanelData(inst)
-    inst._my_friend_panel_task = inst:DoPeriodicTask(.25, PushPanelData)
+    inst._my_friend_panel_task = inst:DoPeriodicTask(.5, PushPanelData)
     inst._my_friend_greeting_task = inst:DoPeriodicTask(.5, CoreAI.UpdateGreetings)
     inst._my_friend_inventory_task = inst:DoPeriodicTask(1, CoreAI.MergeOneStack)
     Dialogue.Configure(inst)
