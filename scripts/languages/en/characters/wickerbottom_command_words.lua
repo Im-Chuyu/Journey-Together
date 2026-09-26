@@ -1,4 +1,22 @@
 return {
-    {id = "read_book", keywords = {"read a book"}, label = "Read a Book"},
+    {id = "read_book", keywords = {"read a book"}, label = "Read a Book", book_aliases = {
+        book_rain = {"applied rain", "rain book", "rain", "rain ritual"},
+        book_horticulture = {"horticulture", "horticulture book", "gardening", "plants"},
+        book_horticulture_upgraded = {"advanced horticulture", "advanced gardening"},
+        book_silviculture = {"silviculture", "forest book", "tree book", "trees", "forestry"},
+        book_research_station = {"the everything encyclopedia", "everything encyclopedia", "encyclopedia", "everything", "research book", "research"},
+        book_birds = {"bird book", "birds"},
+        book_fish = {"fish book", "fishing book", "fish", "fishing"},
+        book_bees = {"bee book", "bees", "beekeeping"},
+        book_sleep = {"sleep book", "sleep", "bedtime"},
+        book_brimstone = {"brimstone book", "lightning book", "lightning", "thunder"},
+        book_fire = {"fire book", "fire", "ignite"},
+        book_tentacles = {"tentacle book", "tentacles"},
+        book_web = {"spider book", "web book", "spiders", "web"},
+        book_moon = {"lunar grimoire", "moon book", "moon", "lunar", "moonlight"},
+        book_light = {"light book", "illumination book", "light", "glow"},
+        book_light_upgraded = {"advanced light book", "advanced illumination", "advanced light"},
+        book_temperature = {"temperature book", "warmth book", "cooling book", "temperature", "warmth", "cooling"},
+    }},
     {id = "bookstation", keywords = {"build a bookshelf"}, label = "Build Bookshelf"},
 }

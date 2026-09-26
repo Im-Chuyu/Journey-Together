@@ -1,4 +1,22 @@
 return {
-    {id = "read_book", keywords = {"讀書"}, label = "讀書"},
+    {id = "read_book", keywords = {"讀書"}, label = "讀書", book_aliases = {
+        book_rain = {"求雨儀式", "雨書", "雨之書", "下雨", "求雨", "雨"},
+        book_horticulture = {"園藝書", "園藝", "種植", "植物", "花園"},
+        book_horticulture_upgraded = {"高級園藝書", "高級園藝", "高級種植"},
+        book_silviculture = {"森林學", "森林書", "樹木書", "長樹", "應用造林學", "造林學", "造林"},
+        book_research_station = {"萬物百科", "百科書", "百科", "萬物", "研究書", "研究", "知識"},
+        book_birds = {"鳥書", "鳥類書", "鳥類", "鳥"},
+        book_fish = {"魚書", "釣魚書", "魚類書", "釣魚", "魚"},
+        book_bees = {"蜜蜂書", "養蜂書", "蜜蜂", "養蜂", "蜂"},
+        book_sleep = {"睡眠書", "睡眠", "睡覺"},
+        book_brimstone = {"雷書", "雷電書", "雷電", "閃電", "雷"},
+        book_fire = {"火書", "生火書", "生火", "火"},
+        book_tentacles = {"觸手書", "觸手"},
+        book_web = {"蜘蛛書", "蛛網書", "蜘蛛", "蛛網"},
+        book_moon = {"月之魔典", "月魔典", "月亮書", "月之書", "月光", "月書"},
+        book_light = {"光書", "發光書", "照明書", "發光", "照明"},
+        book_light_upgraded = {"高級光書", "高級發光書", "高級照明", "高級發光"},
+        book_temperature = {"溫度書", "保暖書", "降溫書", "溫度", "保暖", "降溫"},
+    }},
     {id = "bookstation", keywords = {"製作書架"}, label = "製作書架"},
 }

@@ -54,7 +54,8 @@ function M.CharacterCommandWords(language, character)
             local words = entry.keywords or entry[code] or entry.zh or entry.en
             if type(words) == "table" then
                 result[#result + 1] = {id = entry.id, keywords = words,
-                    label = entry.label or entry[code .. "_label"]}
+                    label = entry.label or entry[code .. "_label"],
+                    book_aliases = entry.book_aliases}
             end
         end
     end

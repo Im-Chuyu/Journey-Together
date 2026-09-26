@@ -1,4 +1,6 @@
 local Cooking = require("cooking")
+local Language = require("my_friend_strings")
+local LanguageFiles = require("my_friend_language")
 
 local M = {}
 
@@ -23,6 +25,15 @@ local function Any(text, words)
     for _, word in ipairs(words) do if Has(text, word) then return true end end
 end
 
+local function AddAlias(entries, prefab, alias)
+    for _, entry in ipairs(entries) do
+        if entry.recipe == prefab then
+            entry.aliases[#entry.aliases + 1] = alias
+            return
+        end
+    end
+end
+
 local BOOKS = {
     {recipe = "book_rain", aliases = {"求雨仪式", "雨书", "下雨", "求雨", "雨"}},
     {recipe = "book_horticulture", aliases = {"园艺书", "园艺", "种植"}},
@@ -45,17 +56,30 @@ local BOOKS = {
     {recipe = "book_temperature", aliases = {"温度书", "保暖", "降温"}},
 }
 
+-- Book titles and their short forms are language data, rather than parser
+-- logic.  Wickerbottom's command file may provide aliases keyed by prefab;
+-- keep the built-in list as a fallback for older language files.
+do
+    local configured = LanguageFiles.CharacterCommandWords(
+        Language.language, "wickerbottom")
+    for _, entry in ipairs(configured or {}) do
+        if entry.id == "read_book" and type(entry.book_aliases) == "table" then
+            for recipe, aliases in pairs(entry.book_aliases) do
+                for _, alias in ipairs(type(aliases) == "table" and aliases or {}) do
+                    if type(alias) == "string" and #alias > 0 then
+                        AddAlias(BOOKS, recipe, alias:lower())
+                    end
+                end
+            end
+        end
+    end
+end
+
 local DEVICES = {
     {recipe = "portablecookpot_item", aliases = {"便携烹饪锅", "便携锅", "随身锅"}},
     {recipe = "portableblender_item", aliases = {"便携研磨器", "研磨器", "研磨机"}},
     {recipe = "portablespicer_item", aliases = {"便携香料站", "香料站", "调味站"}},
 }
-
-local function AddAlias(entries, prefab, alias)
-    for _, entry in ipairs(entries) do
-        if entry.recipe == prefab then entry.aliases[#entry.aliases + 1] = alias return end
-    end
-end
 
 AddAlias(DEVICES, "portablecookpot_item", "便携烹饪锅")
 
@@ -101,7 +125,8 @@ local function BookCommand(text, has_general_command)
     -- Inspect the verb before the title, since titles may contain verbs too
     -- (for example the character for "build" in applied silviculture).
     local prefix = position ~= nil and text:sub(1, position - 1) or text
-    if Any(prefix, {"读", "讀", "read"}) then
+    if Any(prefix, {"读", "讀", "read", "прочитай", "прочитать",
+        "читать", "читай", "прочесть"}) then
         -- "读书" is intentionally a valid generic request.  The action
         -- module chooses the best available book when no title was supplied.
         return {special = "read", target = book ~= nil and book.recipe or nil}
