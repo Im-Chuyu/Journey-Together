@@ -781,7 +781,8 @@ function MyFriendBrain:OnStart()
         local threat = not ghost and not hurt_evade
             and BehaviourAI.FindThreat(inst) or nil
         inst._my_friend_under_threat = threat ~= nil
-        if Fishing.IsWaiting(inst) and (ghost or threat ~= nil or hurt_evade or LightAI.IsDark(inst)) then
+        local dark = not ghost and LightAI.IsDark(inst)
+        if Fishing.IsWaiting(inst) and (ghost or threat ~= nil or hurt_evade or dark) then
             Fishing.Cancel(inst, inst._my_friend_command)
         end
         if inst._my_friend_container_target ~= nil and (ghost or threat ~= nil
@@ -794,14 +795,13 @@ function MyFriendBrain:OnStart()
                 and not ContainerAI.IsOwnFoodContainer(inst, inst._my_friend_container_target)
                 and not require("my_friend_inventory").CanReachContainer(inst, inst._my_friend_container_target)
             or inst._my_friend_meal ~= nil and GetTime() > inst._my_friend_meal.deadline
-            or LightAI.IsDark(inst)) then ContainerAI.Cancel(inst) end
+            or dark) then ContainerAI.Cancel(inst) end
         if not Policy.IsBusy(inst) then
             inst._my_friend_can_fight = threat ~= nil and Policy.InRange(inst, threat, 7)
                 and BehaviourAI.CanCounterAttack(inst, threat) or false
         end
         if inst.components.combat.target ~= nil and threat == nil
             and inst._my_friend_assist_target == nil then inst.components.combat:SetTarget(nil) end
-        local dark = not ghost and LightAI.IsDark(inst)
         if not ghost and (not Policy.IsBusy(inst) or dark) then
             BaseAI.RefreshWorkTarget(inst)
             -- Light first: it owns whichever slot is lighting the way, and the

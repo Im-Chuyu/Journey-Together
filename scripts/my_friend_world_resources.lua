@@ -3,6 +3,7 @@ local Memory = require("my_friend_resource_memory")
 local Behaviour = require("my_friend_behavior_ai")
 local Navigation = require("my_friend_navigation")
 local M = {}
+local CACHE_PERIOD = 5
 
 function M.RegionAtPoint(x, z)
     local map, topology = TheWorld.Map, TheWorld.topology
@@ -128,7 +129,7 @@ function M.Find(inst, needs, blocked)
     for _, candidate in ipairs(candidates) do
         if not Behaviour.IsTargetUnsafe(inst, candidate.entity) then best = candidate.entity break end
     end
-    queries[key] = { target = best, untiltime = now + 3 }
+    queries[key] = { target = best, untiltime = now + CACHE_PERIOD }
     for oldkey, query in pairs(queries) do
         if now >= query.untiltime then queries[oldkey] = nil end
     end

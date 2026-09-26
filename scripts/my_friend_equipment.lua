@@ -1,5 +1,6 @@
 local M = {}
 local LOADOUT_PERIOD = .5
+local REPAIR_STATUS_PERIOD = 1
 local EquipSlots = require("my_friend_equip_slots")
 
 function M.Removed(inst, slot, item)
@@ -396,7 +397,7 @@ function M.GetRepairStatus(inst)
         return inst._my_friend_repair_has == true, inst._my_friend_repair_urgent == true
     end
     if now < (inst._my_friend_repair_after or 0) then
-        inst._my_friend_repair_status_until = now + .5
+        inst._my_friend_repair_status_until = now + REPAIR_STATUS_PERIOD
         inst._my_friend_repair_has, inst._my_friend_repair_urgent = false, false
         return false, false
     end
@@ -419,7 +420,7 @@ function M.GetRepairStatus(inst)
             end
         end
     end
-    inst._my_friend_repair_status_until = now + .5
+    inst._my_friend_repair_status_until = now + REPAIR_STATUS_PERIOD
     inst._my_friend_repair_has, inst._my_friend_repair_urgent = has, urgent
     return has, urgent
 end

@@ -11,6 +11,7 @@ M.MANUAL_LIGHT_MAX_TIME = 300
 M.DARK_ENTER_DELAY = 1.5
 M.DARK_EXIT_DELAY = .4
 M.LIGHT_STORE_DELAY = .75
+M.LIGHT_CHECK_CACHE = .2
 
 local LIGHT_PREFABS = {
     alterguardianhat = 8,
@@ -51,6 +52,10 @@ end
 local function IsFuelUsable(item)
     local fueled = item.components ~= nil and item.components.fueled or nil
     return fueled == nil or not fueled:IsEmpty()
+end
+
+function M.InvalidateLightCache(inst)
+    if inst ~= nil then inst._my_friend_light_cache = nil end
 end
 
 function M.IsLightEquipment(item)
@@ -222,6 +227,7 @@ function M.EquipLight(inst, item)
             actual._my_friend_manual_light_until = nil
             actual._my_friend_ai_light = true
         end
+        M.InvalidateLightCache(inst)
         return true
     end
     return false
@@ -310,8 +316,15 @@ function M.IsPointExternallyLit(inst, point)
 end
 
 function M.IsExternallyLit(inst)
+    local now = GetTime()
+    local cached = inst ~= nil and inst._my_friend_light_cache or nil
+    if cached ~= nil and cached.external ~= nil
+        and now - (cached.time or 0) < M.LIGHT_CHECK_CACHE then
+        return cached.external
+    end
     if TheWorld ~= nil and TheWorld.state ~= nil and TheWorld.state.isday
         and not TheWorld:HasTag("cave") then
+        inst._my_friend_light_cache = {time = now, external = true}
         return true
     end
     if M.CanSeeInDark(inst) then
@@ -322,21 +335,33 @@ function M.IsExternallyLit(inst)
                 break
             end
         end
-        if not supplied_by_equipment then return true end
+        if not supplied_by_equipment then
+            inst._my_friend_light_cache = {time = now, external = true}
+            return true
+        end
     end
-    if TheSim == nil then return true end
+    if TheSim == nil then
+        inst._my_friend_light_cache = {time = now, external = true}
+        return true
+    end
 
     local x, y, z = inst.Transform:GetWorldPosition()
     local self_lit = M.HasUsableEquippedLight(inst)
     for _, light in ipairs(TheSim:FindEntities(x, y, z,
         M.EXTERNAL_LIGHT_SCAN_RANGE, nil, LIGHT_CANT_TAGS)) do
         if LightReachesPoint(light, x, z) then
-            if IsOwnedLight(inst, light) then self_lit = true else return true end
+            if IsOwnedLight(inst, light) then
+                self_lit = true
+            else
+                inst._my_friend_light_cache = {time = now, external = true}
+                return true
+            end
         end
     end
     -- The light watcher can remain stale while a follower is outside the
     -- player's active area.  The nearby-light scan above is authoritative in
     -- that case: if no external light reaches this point, it is dark here.
+    inst._my_friend_light_cache = {time = now, external = false}
     return false
 end
 
@@ -362,6 +387,7 @@ local function StoreEquippedLight(inst, item)
     if removed == nil then return false end
     M.ClearLightOwnership(removed)
     inventory:GiveItem(removed, nil, inst:GetPosition())
+    M.InvalidateLightCache(inst)
     return true
 end
 
@@ -381,6 +407,7 @@ end
 
 function M.UpdateEquipment(inst)
     if not IsAlive(inst) or inst:HasTag("playerghost") then return false end
+    inst._my_friend_light_ai_last_update = GetTime()
     EnsureEquippedLightActive(inst)
     if not CanAct(inst) then return false end
     local dark = M.IsDark(inst)

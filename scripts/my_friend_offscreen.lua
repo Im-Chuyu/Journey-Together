@@ -7,7 +7,7 @@ local M = {}
 -- need the same small safety net because their pets can otherwise remain in
 -- an unloaded area indefinitely.
 M.PET_RETURN_DISTANCE = 32
-M.UPDATE_PERIOD = .5
+M.UPDATE_PERIOD = 1
 
 local function IsAlive(inst)
     return inst ~= nil and inst:IsValid()
@@ -43,7 +43,12 @@ function M.Update(inst)
 
     -- This runs independently of the companion brain, which may be paused
     -- while the owner is outside the normal player loading range.
-    LightAI.UpdateEquipment(inst)
+    -- The active brain already checks lighting every quarter second. Only
+    -- provide the fallback when that brain has not run recently, which keeps
+    -- offscreen companions safe without duplicating the normal scan.
+    if GetTime() - (inst._my_friend_light_ai_last_update or -math.huge) >= .75 then
+        LightAI.UpdateEquipment(inst)
+    end
 
     local leash = inst.components ~= nil and inst.components.petleash or nil
     if leash == nil or leash.GetPets == nil then return end

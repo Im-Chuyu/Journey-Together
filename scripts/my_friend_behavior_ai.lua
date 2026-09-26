@@ -375,6 +375,11 @@ end
 function M.FindAssistTarget(inst)
     local leader = Policy.GetLeader(inst)
     if leader == nil or not Policy.InRange(inst, inst, 32) then return end
+    local now = GetTime()
+    local cached = inst._my_friend_assist_scan
+    if cached ~= nil and cached.leader == leader and now < cached.untiltime then
+        return cached.target
+    end
     local x, y, z = leader.Transform:GetWorldPosition()
     local function ValidTarget(entity)
         return entity ~= nil and entity ~= inst and entity ~= leader and IsAlive(entity)
@@ -384,7 +389,12 @@ function M.FindAssistTarget(inst)
     end
     local leader_target = leader.components ~= nil and leader.components.combat ~= nil
         and leader.components.combat.target or nil
-    if ValidTarget(leader_target) then return leader_target end
+    if ValidTarget(leader_target) then
+        inst._my_friend_assist_scan = {
+            leader = leader, target = leader_target, untiltime = now + .5,
+        }
+        return leader_target
+    end
 
     local best, distance
     for _, entity in ipairs(TheSim:FindEntities(x, y, z, 32, {"_combat"}, THREAT_CANT_TAGS)) do
@@ -396,6 +406,9 @@ function M.FindAssistTarget(inst)
             if distance == nil or d < distance then best, distance = entity, d end
         end
     end
+    inst._my_friend_assist_scan = {
+        leader = leader, target = best, untiltime = now + .5,
+    }
     return best
 end
 
@@ -411,6 +424,7 @@ function M.StartHurtRetreat(inst, source)
     inst._my_friend_hurt_until = GetTime() + 3
     inst._my_friend_hurt_evade_until = GetTime() + 3.5
     inst._my_friend_assist_target = nil
+    inst._my_friend_assist_scan = nil
     inst.components.combat:SetTarget(nil)
     require("my_friend_container_ai").Cancel(inst)
     -- Let the utility selector cancel its old node after the hit animation.
