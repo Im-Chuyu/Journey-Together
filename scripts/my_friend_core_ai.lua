@@ -27,7 +27,7 @@ local function GetCarriedSlots(inst)
     local slots = {}
     for index = 1, inventory.maxslots do
         local item = inventory:GetItemInSlot(index)
-        if item ~= nil then
+        if item ~= nil and not InventoryAI.IsPlayerProtected(item) then
             slots[#slots + 1] = { storage = inventory, slot = index, item = item }
         end
     end
@@ -35,7 +35,7 @@ local function GetCarriedSlots(inst)
     if overflow ~= nil then
         for index = 1, overflow:GetNumSlots() do
             local item = overflow:GetItemInSlot(index)
-            if item ~= nil then
+            if item ~= nil and not InventoryAI.IsPlayerProtected(item) then
                 slots[#slots + 1] = { storage = overflow, slot = index, item = item }
             end
         end

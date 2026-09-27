@@ -5,6 +5,12 @@ local DECISION_PERIOD = .4
 local BUSY_PERIOD = .15
 local WORK_CHECK_PERIOD = 1.5
 local SNAPSHOT_PERIOD = .6
+local COMBAT_PERIOD = .1
+
+local function ActivePeriod(entry)
+    return entry ~= nil and (entry.id == "combat" or entry.id == "assist")
+        and COMBAT_PERIOD or DECISION_PERIOD
+end
 
 local Utility = Class(BehaviourNode, function(self, inst, entries, snapshot)
     local children = {}
@@ -209,7 +215,7 @@ function Utility:Visit()
                     self.inst._my_friend_decision = { task = entry.id, score = prepared.score,
                         mode = context.leader ~= nil and "follow" or "free" }
                     self.status = RUNNING
-                    self:Sleep(DECISION_PERIOD)
+                    self:Sleep(ActivePeriod(prepared))
                     return
                 end
                 self:ReleaseNode(entry.node, entry.passive)
@@ -219,7 +225,7 @@ function Utility:Visit()
             self.active.node:Visit()
             if self.active.node.status == RUNNING then
                 self.status = RUNNING
-                self:Sleep(DECISION_PERIOD)
+                self:Sleep(ActivePeriod(self.active))
                 return
             end
             if Policy.IsBusy(self.inst) then
@@ -244,7 +250,7 @@ function Utility:Visit()
             self.inst._my_friend_decision = { task = entry.id, score = candidate.score,
                 mode = context.leader ~= nil and "follow" or "free" }
             self.status = RUNNING
-            self:Sleep(DECISION_PERIOD)
+            self:Sleep(ActivePeriod(self.active))
             return
         end
         if not candidate.unavailable then

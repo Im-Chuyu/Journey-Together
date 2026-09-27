@@ -1,4 +1,21 @@
 local M = {}
+M.PLAYER_ORGANIZE_DELAY = 480
+
+function M.MarkPlayerAdded(item)
+    if item ~= nil and item:IsValid() then
+        item._my_friend_player_organize_until = GetTime() + M.PLAYER_ORGANIZE_DELAY
+    end
+end
+
+function M.ClearPlayerAdded(item)
+    if item ~= nil and item:IsValid() then
+        item._my_friend_player_organize_until = nil
+    end
+end
+
+function M.IsPlayerProtected(item)
+    return item ~= nil and GetTime() < (item._my_friend_player_organize_until or 0)
+end
 
 local function PruneInvalidStorage(storage, seen)
     if storage == nil then return end

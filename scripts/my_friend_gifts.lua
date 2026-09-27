@@ -24,6 +24,7 @@ function M.Record(friend, player, item, count)
     if affinity == nil or not Policy.IsLocalPlayer(player)
         or friend:HasTag("playerghost") or not IsOwned(friend, item)
         or (count or 0) <= 0 then return false end
+    require("my_friend_inventory").MarkPlayerAdded(item)
     friend._my_friend_food_supply_cache = nil
     if item.prefab ~= "beargerfur_sack" and item.components.equippable ~= nil then
         local recorded = affinity:RecordEquipmentGift(player, item)
@@ -47,13 +48,33 @@ function M.Configure(friend)
         local stack = item.components.stackable
         local offered = math.min(count or 1, stack ~= nil and stack:StackSize() or 1)
         local before = CountStored(self.inst, prefab)
+        local previous = {}
+        for _, stored in ipairs(require("my_friend_food_storage").ReferenceItems(self.inst)) do
+            if stored.prefab == prefab and IsOwned(self.inst, stored) then
+                previous[stored] = stored.components.stackable ~= nil
+                    and stored.components.stackable:StackSize() or 1
+            end
+        end
         local accepted, reason = accept(self, giver, item, count, ...)
         if accepted then
             -- GiveItem may merge and remove the offered entity. Inspect the
             -- recipient after the native transfer and retain its real callbacks.
             local after, received = CountStored(self.inst, prefab)
             local given = math.min(offered, after - before)
-            if received ~= nil and given > 0 then M.Record(self.inst, giver, received, given) end
+            if received ~= nil and given > 0 then
+                M.Record(self.inst, giver, received, given)
+                -- Native trades can merge into any existing stack. Protect the
+                -- actual destination, even when the gift representative differs.
+                for _, stored in ipairs(require("my_friend_food_storage").ReferenceItems(self.inst)) do
+                    if stored.prefab == prefab and IsOwned(self.inst, stored) then
+                        local size = stored.components.stackable ~= nil
+                            and stored.components.stackable:StackSize() or 1
+                        if size > (previous[stored] or 0) then
+                            require("my_friend_inventory").MarkPlayerAdded(stored)
+                        end
+                    end
+                end
+            end
         end
         return accepted, reason
     end

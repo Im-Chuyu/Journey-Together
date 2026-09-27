@@ -1079,6 +1079,7 @@ local function NoteInventoryGift(friend, player, item, count)
 end
 
 local function NotePlayerTake(friend, player, item)
+    require("my_friend_inventory").ClearPlayerAdded(item)
     local reactions = require("my_friend_item_reactions")
     reactions.Say(friend, player, reactions.Kind(item))
 end
@@ -1213,7 +1214,9 @@ AddModRPCHandler("MyFriends", "QuickMoveFriendSlot", function(player, friend, sl
         local reactions = require("my_friend_item_reactions")
         local kind = reactions.Kind(moved)
         moved.prevcontainer, moved.prevslot = nil, nil
+        require("my_friend_inventory").ClearPlayerAdded(item)
         if inv:GiveItem(moved, nil, friend:GetPosition()) then
+            require("my_friend_inventory").ClearPlayerAdded(moved)
             reactions.Say(friend, player, kind)
         end
         PushPanelData(friend)
@@ -1284,6 +1287,7 @@ AddModRPCHandler("MyFriends", "EquipSlot", function(player, friend, equipslot)
         local accepted = finv:Equip(oldactive, true, false, true)
         friend._my_friend_player_equipping = nil
         if old ~= nil then require("my_friend_equipment").Removed(friend, equipslot, old) end
+        require("my_friend_inventory").ClearPlayerAdded(old)
         if accepted ~= true then
             inv:GiveActiveItem(oldactive)
             return
@@ -1304,6 +1308,7 @@ AddModRPCHandler("MyFriends", "EquipSlot", function(player, friend, equipslot)
             if old ~= nil then inv:GiveActiveItem(old) end
         end
         require("my_friend_equipment").Removed(friend, equipslot, equipped)
+        require("my_friend_inventory").ClearPlayerAdded(equipped)
     end
     PushPanelData(friend)
 end)

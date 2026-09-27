@@ -3002,6 +3002,7 @@ local function IsStorableItem(inst, item, equipment)
     local inventoryitem = item ~= nil and item.components ~= nil
         and item.components.inventoryitem or nil
     if inventoryitem == nil or inventoryitem.islockedinslot then return false end
+    if require("my_friend_inventory").IsPlayerProtected(item) then return false end
     if equipment[item] ~= nil or IsEquippedItem(inst, item) then return false end
     if Storage.IsCargo(inst, item) then return false end
     if item:HasTag("irreplaceable") or item:HasTag("heavy") then return false end
@@ -3163,6 +3164,7 @@ function M.GetInventoryReliefAction(inst)
         local c = item.components
         if c ~= nil and c.inventoryitem ~= nil and not c.inventoryitem.cannotdrop
             and equipment[item] == nil
+            and not require("my_friend_inventory").IsPlayerProtected(item)
             and not Storage.IsCargo(inst, item)
             and not IsEquippedItem(inst, item) and not item:HasAnyTag("irreplaceable", "heavy", "backpack") then
             local removable = CountInventory(inst, item.prefab) - StackSize(item)

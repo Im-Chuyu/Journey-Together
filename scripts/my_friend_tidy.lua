@@ -72,6 +72,7 @@ end
 
 local function IsTidyItem(inst, item, pressure)
     if item == nil or not item:IsValid() or IsEquipped(inst, item)
+        or Inventory.IsPlayerProtected(item)
         or item:HasAnyTag("irreplaceable", "heavy", "backpack", "heatrock") then return false end
     if item.components.edible ~= nil and not IsMaterial(item) then return false end
     return item.components.equippable ~= nil or item.components.tool ~= nil
