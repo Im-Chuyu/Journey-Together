@@ -26,7 +26,7 @@ local Affinity = Class(function(self, inst)
     self.equipment_gifts = {}
     self.sack_gifts = {}
     self.last_proximity_tick = GetTime()
-    self.proximity_task = inst:DoPeriodicTask(1, function()
+    self.proximity_task = inst:DoPeriodicTask(2, function()
         self:UpdateProximity()
         self:UpdateGifts()
     end)

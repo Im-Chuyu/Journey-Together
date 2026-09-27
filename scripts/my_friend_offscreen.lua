@@ -1,5 +1,3 @@
-local LightAI = require("my_friend_light_ai")
-
 local M = {}
 
 -- Keep companion-owned critters in the same loaded area as their owner. The
@@ -7,7 +5,7 @@ local M = {}
 -- need the same small safety net because their pets can otherwise remain in
 -- an unloaded area indefinitely.
 M.PET_RETURN_DISTANCE = 32
-M.UPDATE_PERIOD = 1
+M.UPDATE_PERIOD = 2
 
 local function IsAlive(inst)
     return inst ~= nil and inst:IsValid()
@@ -41,15 +39,10 @@ end
 function M.Update(inst)
     if not IsAlive(inst) then return end
 
-    -- This runs independently of the companion brain, which may be paused
-    -- while the owner is outside the normal player loading range.
-    -- The active brain already checks lighting every quarter second. Only
-    -- provide the fallback when that brain has not run recently, which keeps
-    -- offscreen companions safe without duplicating the normal scan.
-    if GetTime() - (inst._my_friend_light_ai_last_update or -math.huge) >= .75 then
-        LightAI.UpdateEquipment(inst)
-    end
-
+    -- Do not run lighting or inventory scans while the companion is outside
+    -- the player's active area. The engine cannot make those resources behave
+    -- like a real player camera, and this task must stay limited to the
+    -- inexpensive pet leash recovery.
     local leash = inst.components ~= nil and inst.components.petleash or nil
     if leash == nil or leash.GetPets == nil then return end
     for pet in pairs(leash:GetPets()) do ReturnPet(inst, pet) end

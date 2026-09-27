@@ -802,12 +802,16 @@ function MyFriendBrain:OnStart()
         end
         if inst.components.combat.target ~= nil and threat == nil
             and inst._my_friend_assist_target == nil then inst.components.combat:SetTarget(nil) end
-        if not ghost and (not Policy.IsBusy(inst) or dark) then
-            BaseAI.RefreshWorkTarget(inst)
-            -- Light first: it owns whichever slot is lighting the way, and the
-            -- loadout arbiter reads that as a lock.
+        if not ghost then
+            if not Policy.IsBusy(inst) or dark then
+                BaseAI.RefreshWorkTarget(inst)
+            end
+            -- Lighting is checked independently of the slower loadout pass so
+            -- a carried AI light can be stored after entering a lit area.
             LightAI.UpdateEquipment(inst)
-            if not dark then require("my_friend_equipment").UpdateLoadout(inst) end
+            if not dark and not Policy.IsBusy(inst) then
+                require("my_friend_equipment").UpdateLoadout(inst)
+            end
         end
         local repair, urgent_repair = false, false
         if not ghost then

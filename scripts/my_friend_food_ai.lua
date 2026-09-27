@@ -13,6 +13,28 @@ local function Clamp(value, minimum, maximum)
     return math.max(minimum, math.min(maximum, value))
 end
 
+local function IsSeedFood(food)
+    if food == nil then return false end
+    local prefab = type(food) == "string" and food or food.prefab
+    if type(prefab) == "string" and string.find(prefab, "seeds", 1, true) ~= nil then
+        return true
+    end
+    return type(food) ~= "string" and food.HasTag ~= nil and food:HasTag("seed")
+end
+
+function M.IsSeedFood(food)
+    return IsSeedFood(food)
+end
+
+function M.IsUsableFood(inst, food)
+    return food ~= nil and not IsSeedFood(food)
+        and food.components ~= nil and food.components.edible ~= nil
+        and food.components.inventoryitem ~= nil
+        and inst.components ~= nil and inst.components.eater ~= nil
+        and inst.components.eater:CanEat(food)
+        and inst.components.eater:PrefersToEat(food)
+end
+
 local function GetMaximum(component, fallback)
     return component.GetMaxWithPenalty ~= nil and component:GetMaxWithPenalty()
         or component.max or component.maxhealth or fallback
@@ -98,6 +120,7 @@ end
 function M.Evaluate(inst, food, stats)
     if food == nil or not food:IsValid() or food.components == nil
         or food.components.edible == nil or food.components.inventoryitem == nil
+        or IsSeedFood(food)
         or food.components.inventoryitem.islockedinslot
         or not inst.components.eater:CanEat(food)
         or not inst.components.eater:PrefersToEat(food) then return end
@@ -139,6 +162,26 @@ function M.Evaluate(inst, food, stats)
     if routine_need and not (needhealth and health > 0
         or needhunger and hunger > 0 or needsanity and sanity > 0) then return end
 
+    local healthdeficit = math.max(0, stats.healthmax - stats.health)
+    local hungerdeficit = math.max(0, stats.hungermax - stats.hunger)
+    local sanitydeficit = math.max(0, stats.sanitymax - stats.sanity)
+    local usefulhealth = math.min(math.max(0, health), healthdeficit)
+    local usefulhunger = math.min(math.max(0, hunger), hungerdeficit)
+    local usefulsanity = math.min(math.max(0, sanity), sanitydeficit)
+
+    -- Do not consume a large meal for a tiny single-stat benefit. This is
+    -- especially important for meatballs: they add a lot of hunger but only
+    -- five sanity, so repeatedly eating them while nearly full wastes food.
+    if needsanity and not needhealth and not needhunger
+        and usefulsanity < math.min(8, math.max(3, sanitydeficit * .12))
+        and usefulhunger <= 8 then return end
+    if needhunger and not needhealth and not needsanity
+        and usefulhunger < math.min(12, math.max(6, hungerdeficit * .12))
+        and usefulsanity > usefulhunger * 1.5 then return end
+    if needhealth and not needhunger and not needsanity
+        and usefulhealth < math.min(8, math.max(3, healthdeficit * .12))
+        and usefulhunger > usefulhealth * 2 then return end
+
     local healthgain = 2.8 + 8.5 * (1 - stats.healthpercent)^2
     local hungergain = 2.2 + 7.5 * (1 - stats.hungerpercent)^2
     local sanitygain = 1.5 + 5 * (1 - stats.sanitypercent)^2
@@ -150,9 +193,19 @@ function M.Evaluate(inst, food, stats)
             routine_need and not needsanity and 0 or sanitygain, 4 + 6 * (1 - stats.sanitypercent)^2)
         + (routine_need and 0 or perishbonus)
 
-    local useful = math.min(math.max(0, health), math.max(0, stats.healthmax - stats.health))
-        + math.min(math.max(0, hunger), math.max(0, stats.hungermax - stats.hunger))
-        + math.min(math.max(0, sanity), math.max(0, stats.sanitymax - stats.sanity))
+    local wastehealth = math.max(0, health) - usefulhealth
+    local wastehunger = math.max(0, hunger) - usefulhunger
+    local wastesanity = math.max(0, sanity) - usefulsanity
+    score = score - wastehealth / stats.healthmax * 15
+        - wastehunger / stats.hungermax * 35
+        - wastesanity / stats.sanitymax * 15
+    if needsanity and not needhealth and not needhunger then
+        score = score - wastehunger / stats.hungermax * 35
+    elseif needhunger and not needhealth and not needsanity then
+        score = score - wastesanity / stats.sanitymax * 20
+    end
+
+    local useful = usefulhealth + usefulhunger + usefulsanity
     if useful <= 0 or score <= 0 then return end
     return score, perishdays, health, hunger, sanity
 end
@@ -178,6 +231,7 @@ end
 function M.CommandScore(inst, food, positive_only)
     if food == nil or not food:IsValid() or food.components.edible == nil
         or food.components.inventoryitem == nil or food.components.inventoryitem.islockedinslot
+        or IsSeedFood(food)
         or not inst.components.eater:CanEat(food)
         or not inst.components.eater:PrefersToEat(food) then return end
     if M.IsEmergency(inst) then
@@ -205,6 +259,7 @@ end
 function M.GetEatAction(inst, commanded_food)
     if commanded_food == nil and inst._my_friend_command ~= nil
         and inst._my_friend_command.id == "food" then return end
+    if commanded_food ~= nil and IsSeedFood(commanded_food) then return end
     if inst.sg == nil or inst.sg:HasStateTag("busy") or inst:HasTag("playerghost")
         or inst.components.health == nil or inst.components.health:IsDead()
         or inst._my_friend_backpack_target ~= nil or inst._my_friend_backpack_action then return end
@@ -239,6 +294,7 @@ function M.GetFoodSupply(inst)
     local supply = 0
     for _, item in ipairs(require("my_friend_food_storage").ReferenceItems(inst)) do
         if item.components ~= nil and item.components.edible ~= nil
+            and not IsSeedFood(item)
             and eater:CanEat(item) and eater:PrefersToEat(item) then
             local health, calories = GetFoodDeltas(inst, item)
             if health >= 0 then
@@ -248,7 +304,7 @@ function M.GetFoodSupply(inst)
             end
         end
     end
-    inst._my_friend_food_supply_cache = {supply = supply, untiltime = GetTime() + .75}
+    inst._my_friend_food_supply_cache = {supply = supply, untiltime = GetTime() + 1.5}
     return supply
 end
 

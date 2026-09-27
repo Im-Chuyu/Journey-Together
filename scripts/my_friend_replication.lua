@@ -1,7 +1,7 @@
 local M = {}
 local EquipSlots = require("my_friend_equip_slots")
-local SYNC_PERIOD = 1
-local FULL_REFRESH_PERIOD = 10
+local SYNC_PERIOD = 1.5
+local FULL_REFRESH_PERIOD = 15
 
 -- NPC inventories have no owning client. Publish their read-only replicas;
 -- all transfers still pass the existing server-side distance/affinity checks.

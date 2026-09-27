@@ -1,9 +1,10 @@
 local Policy = require("my_friend_policy")
 local Memory = require("my_friend_resource_memory")
 local Behaviour = require("my_friend_behavior_ai")
+local FoodAI = require("my_friend_food_ai")
 local Navigation = require("my_friend_navigation")
 local M = {}
-local CACHE_PERIOD = 5
+local CACHE_PERIOD = 8
 
 function M.RegionAtPoint(x, z)
     local map, topology = TheWorld.Map, TheWorld.topology
@@ -77,8 +78,7 @@ local function Available(inst, entity, needs, blocked)
         or inst.components.inventory:CanAcceptCount(entity, 1) <= 0) then return end
     if needs.food then
         if Policy.IsBaseCacheItem(inst, entity) and inst.components.hunger:GetPercent() >= .4 then return end
-        if c.edible ~= nil and c.inventoryitem ~= nil
-            and inst.components.eater:CanEat(entity)
+        if FoodAI.IsUsableFood(inst, entity)
             and inst.components.inventory:CanAcceptCount(entity, 1) > 0 then return { food = 1 } end
         if c.pickable ~= nil and c.pickable.caninteractwith and c.pickable:CanBePicked()
             and Behaviour.IsFoodProduct(c.pickable.product) then return { food = 1 } end

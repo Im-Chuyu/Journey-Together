@@ -1,6 +1,10 @@
 local Policy = require("my_friend_policy")
 local BaseAI = require("my_friend_base_ai")
 local Progress = require("my_friend_progress")
+local DECISION_PERIOD = .4
+local BUSY_PERIOD = .15
+local WORK_CHECK_PERIOD = 1.5
+local SNAPSHOT_PERIOD = .6
 
 local Utility = Class(BehaviourNode, function(self, inst, entries, snapshot)
     local children = {}
@@ -32,7 +36,7 @@ function Utility:RepeatWork(previous)
     -- A stale greeting snapshot must not suppress every subsequent work swing.
     if GetTime() >= (self.work_check_at or 0) then
         self.context = self.snapshot(inst)
-        self.work_check_at = GetTime() + 1
+        self.work_check_at = GetTime() + WORK_CHECK_PERIOD
     end
     if self.context == nil or self.context.ghost or self.context.threat ~= nil
         or self.context.dark or self.context.thermal
@@ -55,7 +59,7 @@ function Utility:RepeatWork(previous)
         if node.action == action then node.pendingstatus = FAILED end
     end)
     inst:PushBufferedAction(action)
-    self:Sleep(.1)
+    self:Sleep(BUSY_PERIOD)
 end
 
 function Utility:WatchAction(retry_only)
@@ -106,6 +110,7 @@ function Utility:ReleaseNode(node, passive)
 end
 
 function Utility:CancelActive()
+    self.snapshot_at = nil
     if self.active == nil then return end
     self:ReleaseNode(self.active.node, self.active.passive)
     self.motion, self.work_check_at = nil, nil
@@ -125,7 +130,7 @@ function Utility:Visit()
     if Policy.IsBusy(self.inst) then
         self.motion = nil
         self.status = RUNNING
-        self:Sleep(.1)
+        self:Sleep(BUSY_PERIOD)
         return
     end
     if self.inst._my_friend_replan_requested then
@@ -139,7 +144,14 @@ function Utility:Visit()
         or active.status == FAILED or active.status == SUCCESS) then
         self:CancelActive()
     end
-    local context = self.snapshot(self.inst)
+    local now = GetTime()
+    local leader = Policy.GetLeader(self.inst)
+    local context = self.context
+    if context == nil or now >= (self.snapshot_at or 0)
+        or self.leader ~= leader or self.inst._my_friend_replan_requested then
+        context = self.snapshot(self.inst)
+        self.snapshot_at = now + SNAPSHOT_PERIOD
+    end
     self.context = context
     self:WatchAction(context.leader == nil)
     local ranked = {}
@@ -197,7 +209,7 @@ function Utility:Visit()
                     self.inst._my_friend_decision = { task = entry.id, score = prepared.score,
                         mode = context.leader ~= nil and "follow" or "free" }
                     self.status = RUNNING
-                    self:Sleep(.25)
+                    self:Sleep(DECISION_PERIOD)
                     return
                 end
                 self:ReleaseNode(entry.node, entry.passive)
@@ -207,12 +219,12 @@ function Utility:Visit()
             self.active.node:Visit()
             if self.active.node.status == RUNNING then
                 self.status = RUNNING
-                self:Sleep(.25)
+                self:Sleep(DECISION_PERIOD)
                 return
             end
             if Policy.IsBusy(self.inst) then
                 self.status = RUNNING
-                self:Sleep(.1)
+                self:Sleep(BUSY_PERIOD)
                 return
             end
             self:CancelActive()
@@ -232,7 +244,7 @@ function Utility:Visit()
             self.inst._my_friend_decision = { task = entry.id, score = candidate.score,
                 mode = context.leader ~= nil and "follow" or "free" }
             self.status = RUNNING
-            self:Sleep(.25)
+            self:Sleep(DECISION_PERIOD)
             return
         end
         if not candidate.unavailable then
@@ -242,7 +254,7 @@ function Utility:Visit()
         end
     end
     self.status = RUNNING
-    self:Sleep(.25)
+    self:Sleep(DECISION_PERIOD)
 end
 
 function Utility:Step()

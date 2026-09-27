@@ -1,6 +1,6 @@
 local M = {}
-local LOADOUT_PERIOD = .5
-local REPAIR_STATUS_PERIOD = 1
+local LOADOUT_PERIOD = 1.25
+local REPAIR_STATUS_PERIOD = 2
 local EquipSlots = require("my_friend_equip_slots")
 
 function M.Removed(inst, slot, item)

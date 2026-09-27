@@ -292,8 +292,8 @@ function M.GetFoodOrResourceAction(inst)
                 and IsPickableProduct(item, RESOURCE_PRODUCTS)
                 and HasRoomForPrefab(inst.components.inventory, pickable.product)
         end
-        if needs_food and CanPickUp(inst, item) and item.components.edible ~= nil
-            and inst.components.eater:CanEat(item) then
+        if needs_food and CanPickUp(inst, item)
+            and FoodAI.IsUsableFood(inst, item) then
             return true
         end
         if state[item.prefab] and CanPickUp(inst, item) then return true end
@@ -336,8 +336,8 @@ function M.GetFoodAction(inst, commanded)
         return HasRoomForPrefab(inventory, prefab)
     end
     local target = FindClosest(inst, function(item)
-        if CanPickUp(inst, item) and item.components.edible ~= nil
-            and inst.components.eater:CanEat(item) and HasFoodRoom(item.prefab) then
+        if CanPickUp(inst, item) and FoodAI.IsUsableFood(inst, item)
+            and HasFoodRoom(item.prefab) then
             return true
         end
         local pickable = item.components ~= nil and item.components.pickable or nil
@@ -391,7 +391,7 @@ function M.FindAssistTarget(inst)
         and leader.components.combat.target or nil
     if ValidTarget(leader_target) then
         inst._my_friend_assist_scan = {
-            leader = leader, target = leader_target, untiltime = now + .5,
+            leader = leader, target = leader_target, untiltime = now + 1,
         }
         return leader_target
     end
@@ -407,7 +407,7 @@ function M.FindAssistTarget(inst)
         end
     end
     inst._my_friend_assist_scan = {
-        leader = leader, target = best, untiltime = now + .5,
+        leader = leader, target = best, untiltime = now + 1,
     }
     return best
 end
@@ -425,6 +425,7 @@ function M.StartHurtRetreat(inst, source)
     inst._my_friend_hurt_evade_until = GetTime() + 3.5
     inst._my_friend_assist_target = nil
     inst._my_friend_assist_scan = nil
+    inst._my_friend_threat_scan = nil
     inst.components.combat:SetTarget(nil)
     require("my_friend_container_ai").Cancel(inst)
     -- Let the utility selector cancel its old node after the hit animation.
@@ -432,6 +433,9 @@ function M.StartHurtRetreat(inst, source)
 end
 
 function M.ObservePlayerAttack(inst)
+    local now = GetTime()
+    if now < (inst._my_friend_attack_observe_next or 0) then return end
+    inst._my_friend_attack_observe_next = now + .3
     if inst:HasTag("playerghost") or inst.components.health:IsDead() then
         inst._my_friend_attack_intents = nil
         return
@@ -520,9 +524,16 @@ function M.GetLeaderAttackCount(inst, target)
 end
 
 function M.FindThreat(inst, range)
+    local now = GetTime()
+    local wanted_range = range or M.THREAT_RANGE
+    local cached = inst._my_friend_threat_scan
+    if cached ~= nil and cached.range == wanted_range and now < cached.untiltime
+        and (cached.target == nil or IsAlive(cached.target)) then
+        return cached.target
+    end
     local x, y, z = inst.Transform:GetWorldPosition()
     local closest, closestscore
-    for _, entity in ipairs(TheSim:FindEntities(x, y, z, range or M.THREAT_RANGE,
+    for _, entity in ipairs(TheSim:FindEntities(x, y, z, wanted_range,
         {"_combat"}, THREAT_CANT_TAGS)) do
         local ignored_attacker = GetTime() < (inst._my_friend_hurt_until or 0)
             and entity == inst._my_friend_hurt_attacker
@@ -540,6 +551,9 @@ function M.FindThreat(inst, range)
             end
         end
     end
+    inst._my_friend_threat_scan = {
+        range = wanted_range, target = closest, untiltime = now + .6,
+    }
     return closest
 end
 
