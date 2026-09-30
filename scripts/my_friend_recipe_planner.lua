@@ -16,6 +16,7 @@ end
 function M.Available(inst, item)
     local inv = item ~= nil and item:IsValid() and item.components.inventoryitem or nil
     if inv == nil or inv.islockedinslot or Storage.IsReserved(inst, item)
+        or Food.IsForbiddenFood(item)
         or item:HasAnyTag("spoiled", "irreplaceable") then return false end
     local owner = inv.owner
     local c = owner ~= nil and owner.components.container or nil
@@ -104,6 +105,7 @@ function M.Pool(inst, fridges, grounds)
     end
     local function Add(item, external)
         if seen[item] or not M.Available(inst, item) or item:HasTag("preparedfood")
+            or Food.IsForbiddenFood(item)
             or not Cooking.IsCookingIngredient(item.prefab) then return end
         seen[item] = true
         local count = M.Size(item)

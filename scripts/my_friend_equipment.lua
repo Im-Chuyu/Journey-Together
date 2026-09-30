@@ -315,6 +315,18 @@ local function IsCombatHandItem(item)
         and (item.components.weapon ~= nil or item.components.tool ~= nil)
 end
 
+local function IsOrdinaryThermalGear(item)
+    local components = item ~= nil and item.components or nil
+    if components == nil or components.equippable == nil
+        or not item:HasTag("needssewing")
+        or components.insulator == nil and components.waterproofer == nil then
+        return false
+    end
+    return not item:HasAnyTag("forgerepairable_lunarplant",
+        "forgerepairable_voidcloth", "forgerepairable_wagpunk_bits",
+        "forgerepairable_dreadstone")
+end
+
 local function IsUrgentRepairItem(item)
     if item == nil or item.components == nil then return false end
     local equippable = item.components.equippable
@@ -382,7 +394,7 @@ local function FindRepairKit(inst, item, items)
             return kit, ACTIONS.REPAIR
         end
         if material == nil and kit.components ~= nil and kit.components.sewing ~= nil
-            and (item:HasTag("needssewing")
+            and (item:HasTag("needssewing") or IsOrdinaryThermalGear(item)
                 or item.prefab == "heatstone" or item.prefab == "heatrock") then
             return kit, ACTIONS.SEW
         end

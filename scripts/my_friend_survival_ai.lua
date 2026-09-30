@@ -20,6 +20,7 @@ M.THERMAL_SEARCH_RANGE = 20
 M.MATERIAL_SEARCH_RANGE = 15
 M.FIRE_CLEARANCE = 4
 M.FIRE_POINT_SEARCH_RANGE = 14
+M.FEATHERFAN_TEMPERATURE = 65
 
 local THERMAL_CANT_TAGS = {
     "INLIMBO", "burnt", "playerghost",
@@ -71,6 +72,27 @@ end
 
 function M.NeedsTemperatureHelp(inst)
     return M.GetThermalNeed(inst) ~= nil
+        or M.HasUsableFeatherfan(inst)
+end
+
+function M.HasUsableFeatherfan(inst)
+    local temperature = inst ~= nil and inst.components ~= nil
+        and inst.components.temperature or nil
+    if temperature == nil or temperature.current <= M.FEATHERFAN_TEMPERATURE then
+        return false
+    end
+    local inventory = inst ~= nil and inst.components ~= nil
+        and inst.components.inventory or nil
+    if inventory == nil then return false end
+    for _, item in ipairs(inventory:ReferenceAllItems()) do
+        if item.prefab == "featherfan" and item.components ~= nil
+            and item.components.fan ~= nil
+            and item.components.finiteuses ~= nil
+            and item.components.finiteuses:GetUses() > 0 then
+            return true
+        end
+    end
+    return false
 end
 
 function M.GetTemperatureEquipmentNeed(current)
@@ -372,6 +394,38 @@ end
 
 function M.GetTemperatureAction(inst)
     if not CanAct(inst) or inst._my_friend_under_threat then return end
+    local temperature = inst.components.temperature
+    if temperature ~= nil and temperature.current > M.FEATHERFAN_TEMPERATURE then
+        local fan
+        for _, item in ipairs(inst.components.inventory:ReferenceAllItems()) do
+            if item.prefab == "featherfan" and item.components ~= nil
+                and item.components.fan ~= nil
+                and item.components.finiteuses ~= nil
+                and item.components.finiteuses:GetUses() > 0 then
+                fan = item
+                break
+            end
+        end
+        if fan ~= nil then
+            local equippable = fan.components.equippable
+            if equippable ~= nil and not equippable:IsEquipped() then
+                local action = BufferedAction(inst, nil, ACTIONS.EQUIP, fan)
+                action.validfn = function()
+                    return inst.components.temperature ~= nil
+                        and inst.components.temperature.current > M.FEATHERFAN_TEMPERATURE
+                        and fan:IsValid() and fan.components.finiteuses:GetUses() > 0
+                end
+                return action
+            end
+            local action = BufferedAction(inst, inst, ACTIONS.FAN, fan)
+            action.validfn = function()
+                return fan:IsValid() and fan.components.finiteuses:GetUses() > 0
+                    and inst.components.temperature ~= nil
+                    and inst.components.temperature.current > M.FEATHERFAN_TEMPERATURE
+            end
+            return action
+        end
+    end
     local need = M.GetThermalNeed(inst)
     if need == nil then return end
     if need == "hot" and inst.components.temperature.current >= inst.components.temperature.overheattemp then

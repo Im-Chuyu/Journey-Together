@@ -1,6 +1,6 @@
 local M = {}
 
-local HEALTH_THRESHOLD = .80
+local HEALTH_THRESHOLD = .90
 local HUNGER_THRESHOLD = .65
 local SANITY_THRESHOLD = .60
 local EXPIRING_DAYS = .35
@@ -8,6 +8,7 @@ local PERISH_BONUS_DAYS = .75
 local FOOD_SUPPLY_HUNGER_THRESHOLD = .85
 local FOOD_SUPPLY_MIN_COUNT = 4
 local EMERGENCY_THRESHOLD = .15
+local GetFoodDeltas
 
 local function Clamp(value, minimum, maximum)
     return math.max(minimum, math.min(maximum, value))
@@ -26,13 +27,32 @@ function M.IsSeedFood(food)
     return IsSeedFood(food)
 end
 
+local FORBIDDEN_FOOD_PREFABS = {
+    glommerfuel = true,
+    mandrake = true,
+    royaljelly = true,
+}
+
+function M.IsForbiddenFood(food)
+    if food == nil then return false end
+    local prefab = type(food) == "string" and food or food.prefab
+    return FORBIDDEN_FOOD_PREFABS[prefab] == true
+end
+
+local function HasMeaningfulRecovery(health, hunger, sanity)
+    return math.max(0, health or 0) >= 5
+        or math.max(0, hunger or 0) >= 5
+        or math.max(0, sanity or 0) >= 5
+end
+
 function M.IsUsableFood(inst, food)
-    return food ~= nil and not IsSeedFood(food)
-        and food.components ~= nil and food.components.edible ~= nil
-        and food.components.inventoryitem ~= nil
-        and inst.components ~= nil and inst.components.eater ~= nil
-        and inst.components.eater:CanEat(food)
-        and inst.components.eater:PrefersToEat(food)
+    if food == nil or IsSeedFood(food) or M.IsForbiddenFood(food) then return false end
+    if food.components == nil or food.components.edible == nil
+        or food.components.inventoryitem == nil or inst.components == nil
+        or inst.components.eater == nil or not inst.components.eater:CanEat(food)
+        or not inst.components.eater:PrefersToEat(food) then return false end
+    local health, hunger, sanity = GetFoodDeltas(inst, food)
+    return HasMeaningfulRecovery(health, hunger, sanity)
 end
 
 local function GetMaximum(component, fallback)
@@ -67,7 +87,7 @@ function M.IsEmergency(inst, stats)
         or stats.healthpercent <= EMERGENCY_THRESHOLD)
 end
 
-local function GetFoodDeltas(inst, food)
+GetFoodDeltas = function(inst, food)
     local eater = inst.components.eater
     local edible = food.components.edible
     local memorymult = inst.components.foodmemory ~= nil
@@ -128,6 +148,10 @@ function M.Evaluate(inst, food, stats)
     stats = stats or GetStats(inst)
     if stats == nil then return end
     local health, hunger, sanity = GetFoodDeltas(inst, food)
+    -- Tiny recovery items such as ice and light bulbs are never worth an
+    -- eating action. This rule also applies during emergencies.
+    if not HasMeaningfulRecovery(health, hunger, sanity) then return end
+    if M.IsForbiddenFood(food) then return end
     if M.IsEmergency(inst, stats) then
         -- Actual eater deltas include spoilage, food memory and character
         -- absorption. In an emergency only a lethal serving is vetoed.
@@ -138,6 +162,9 @@ function M.Evaluate(inst, food, stats)
         local score = healing * (stats.healthpercent <= EMERGENCY_THRESHOLD and 8 or 2)
             + calories * (stats.hungerpercent <= EMERGENCY_THRESHOLD and 5 or 1)
             + math.min(0, health) * 8 + math.min(0, hunger) * 3 + math.min(0, sanity)
+        if stats.healthpercent < .90 and healing > 0 then
+            score = score + healing * 100
+        end
         return math.max(1, 100 + score), perishdays, health, hunger, sanity
     end
     if require("my_friend_pets").IsIngredient(inst, food) then return end
@@ -193,6 +220,13 @@ function M.Evaluate(inst, food, stats)
             routine_need and not needsanity and 0 or sanitygain, 4 + 6 * (1 - stats.sanitypercent)^2)
         + (routine_need and 0 or perishbonus)
 
+    -- Below 90% health, healing is the primary reason to eat. This keeps a
+    -- high-calorie but weak healing food from winning over a proper healing
+    -- meal just because hunger is also below its routine threshold.
+    if stats.healthpercent < .90 and usefulhealth > 0 then
+        score = score + usefulhealth / stats.healthmax * 600
+    end
+
     local wastehealth = math.max(0, health) - usefulhealth
     local wastehunger = math.max(0, hunger) - usefulhunger
     local wastesanity = math.max(0, sanity) - usefulsanity
@@ -232,6 +266,7 @@ function M.CommandScore(inst, food, positive_only)
     if food == nil or not food:IsValid() or food.components.edible == nil
         or food.components.inventoryitem == nil or food.components.inventoryitem.islockedinslot
         or IsSeedFood(food)
+        or M.IsForbiddenFood(food)
         or not inst.components.eater:CanEat(food)
         or not inst.components.eater:PrefersToEat(food) then return end
     if M.IsEmergency(inst) then
@@ -239,6 +274,7 @@ function M.CommandScore(inst, food, positive_only)
         return score, score ~= nil
     end
     local health, hunger, sanity = GetFoodDeltas(inst, food)
+    if not HasMeaningfulRecovery(health, hunger, sanity) then return end
     if health < 0 and inst.components.health.currenthealth + health <= 1 then return end
     if hunger < 0 and inst.components.hunger.current + hunger <= 0 then return end
     local positive = health >= 0 and hunger >= 0 and sanity >= 0
@@ -260,6 +296,7 @@ function M.GetEatAction(inst, commanded_food)
     if commanded_food == nil and inst._my_friend_command ~= nil
         and inst._my_friend_command.id == "food" then return end
     if commanded_food ~= nil and IsSeedFood(commanded_food) then return end
+    if commanded_food ~= nil and M.IsForbiddenFood(commanded_food) then return end
     if inst.sg == nil or inst.sg:HasStateTag("busy") or inst:HasTag("playerghost")
         or inst.components.health == nil or inst.components.health:IsDead()
         or inst._my_friend_backpack_target ~= nil or inst._my_friend_backpack_action then return end
@@ -295,9 +332,10 @@ function M.GetFoodSupply(inst)
     for _, item in ipairs(require("my_friend_food_storage").ReferenceItems(inst)) do
         if item.components ~= nil and item.components.edible ~= nil
             and not IsSeedFood(item)
+            and not M.IsForbiddenFood(item)
             and eater:CanEat(item) and eater:PrefersToEat(item) then
-            local health, calories = GetFoodDeltas(inst, item)
-            if health >= 0 then
+            local health, calories, sanity = GetFoodDeltas(inst, item)
+            if HasMeaningfulRecovery(health, calories, sanity) and health >= 0 then
                 supply = supply + math.max(0, calories)
                     * (not eater.eatwholestack and item.components.stackable ~= nil
                         and item.components.stackable:StackSize() or 1)
