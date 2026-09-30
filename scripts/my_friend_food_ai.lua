@@ -195,19 +195,31 @@ function M.Evaluate(inst, food, stats)
     local usefulhealth = math.min(math.max(0, health), healthdeficit)
     local usefulhunger = math.min(math.max(0, hunger), hungerdeficit)
     local usefulsanity = math.min(math.max(0, sanity), sanitydeficit)
+    local wastedhealth = math.max(0, health) - usefulhealth
+    local wastedhunger = math.max(0, hunger) - usefulhunger
+    local wastedsanity = math.max(0, sanity) - usefulsanity
 
     -- Do not consume a large meal for a tiny single-stat benefit. This is
     -- especially important for meatballs: they add a lot of hunger but only
     -- five sanity, so repeatedly eating them while nearly full wastes food.
     if needsanity and not needhealth and not needhunger
-        and usefulsanity < math.min(8, math.max(3, sanitydeficit * .12))
-        and usefulhunger <= 8 then return end
+        and (usefulsanity < 10
+            and (wastedhunger > math.max(10, usefulsanity * 3)
+                or wastedhealth > math.max(10, usefulsanity * 3))
+            or usefulsanity < 6
+                and (wastedhunger > 4 or wastedhealth > 4)) then return end
     if needhunger and not needhealth and not needsanity
-        and usefulhunger < math.min(12, math.max(6, hungerdeficit * .12))
-        and usefulsanity > usefulhunger * 1.5 then return end
+        and (usefulhunger < 12
+            and (wastedhealth > math.max(10, usefulhunger * 3)
+                or wastedsanity > math.max(10, usefulhunger * 3))
+            or usefulhunger < 6
+                and (wastedhealth > 4 or wastedsanity > 4)) then return end
     if needhealth and not needhunger and not needsanity
-        and usefulhealth < math.min(8, math.max(3, healthdeficit * .12))
-        and usefulhunger > usefulhealth * 2 then return end
+        and (usefulhealth < 10
+            and (wastedhunger > math.max(10, usefulhealth * 3)
+                or wastedsanity > math.max(10, usefulhealth * 3))
+            or usefulhealth < 6
+                and (wastedhunger > 4 or wastedsanity > 4)) then return end
 
     local healthgain = 2.8 + 8.5 * (1 - stats.healthpercent)^2
     local hungergain = 2.2 + 7.5 * (1 - stats.hungerpercent)^2
@@ -227,16 +239,13 @@ function M.Evaluate(inst, food, stats)
         score = score + usefulhealth / stats.healthmax * 600
     end
 
-    local wastehealth = math.max(0, health) - usefulhealth
-    local wastehunger = math.max(0, hunger) - usefulhunger
-    local wastesanity = math.max(0, sanity) - usefulsanity
-    score = score - wastehealth / stats.healthmax * 15
-        - wastehunger / stats.hungermax * 35
-        - wastesanity / stats.sanitymax * 15
+    score = score - wastedhealth / stats.healthmax * 15
+        - wastedhunger / stats.hungermax * 35
+        - wastedsanity / stats.sanitymax * 15
     if needsanity and not needhealth and not needhunger then
-        score = score - wastehunger / stats.hungermax * 35
+        score = score - wastedhunger / stats.hungermax * 35
     elseif needhunger and not needhealth and not needsanity then
-        score = score - wastesanity / stats.sanitymax * 20
+        score = score - wastedsanity / stats.sanitymax * 20
     end
 
     local useful = usefulhealth + usefulhunger + usefulsanity
