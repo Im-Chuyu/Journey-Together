@@ -199,6 +199,18 @@ function M.Evaluate(inst, food, stats)
     local wastedhunger = math.max(0, hunger) - usefulhunger
     local wastedsanity = math.max(0, sanity) - usefulsanity
 
+    -- Health takes precedence over ordinary hunger recovery. When health is
+    -- below 90% and hunger is not critical, reject meals that heal only a
+    -- small amount while spending a large amount of hunger value. This is
+    -- the hard guard that keeps meatballs and similar foods from being used
+    -- as emergency healing when a better healing food is available.
+    local health_priority = needhealth and stats.hungerpercent > .35
+    if health_priority then
+        local required_healing = math.min(20, healthdeficit)
+        if usefulhealth < required_healing
+            and wastedhunger > math.max(12, usefulhealth * 2) then return end
+    end
+
     -- Do not consume a large meal for a tiny single-stat benefit. This is
     -- especially important for meatballs: they add a lot of hunger but only
     -- five sanity, so repeatedly eating them while nearly full wastes food.
@@ -235,7 +247,7 @@ function M.Evaluate(inst, food, stats)
     -- Below 90% health, healing is the primary reason to eat. This keeps a
     -- high-calorie but weak healing food from winning over a proper healing
     -- meal just because hunger is also below its routine threshold.
-    if stats.healthpercent < .90 and usefulhealth > 0 then
+    if health_priority and usefulhealth > 0 then
         score = score + usefulhealth / stats.healthmax * 600
     end
 
