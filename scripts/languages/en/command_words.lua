@@ -5,7 +5,7 @@ return {
     { id = "farewell_gift", en = {"take it with you", "take them with you", "it's yours", "keep it"} },
     { id = "farewell_keep", en = {"leave it behind", "leave your things", "don't take it"} },
     { id = "stop_follow", en = {"don't follow me", "stop following", "leave me alone", "go away",
-              "play on your own"} },
+              "play on your own", "cancel following"} },
     { id = "stop_task", en = {"stop working", "stop now", "take a break", "stop"} },
     { id = "hold_position", en = {"wait here", "stay here", "hold position", "stay put",
               "don't move", "hold still"} },
