@@ -1,7 +1,6 @@
 local M = {}
 local EquipSlots = require("my_friend_equip_slots")
 local SYNC_PERIOD = 1.5
-local FULL_REFRESH_PERIOD = 15
 
 -- NPC inventories have no owning client. Publish their read-only replicas;
 -- all transfers still pass the existing server-side distance/affinity checks.
@@ -12,6 +11,13 @@ function M.PublishItem(item)
     local replica = item.replica.inventoryitem
     if replica ~= nil and replica.classified ~= nil then
         replica.classified.Network:SetClassifiedTarget(nil)
+    end
+end
+
+function M.ForceRefresh(inst)
+    if inst ~= nil and inst:IsValid() then
+        inst._my_friend_replication_signature = nil
+        inst._my_friend_replication_next = 0
     end
 end
 
@@ -31,14 +37,13 @@ function M.Sync(inst)
         "overflow:" .. tostring(overflow ~= nil and overflow.inst.GUID or 0)
     local signature = table.concat(signature_parts, ",")
     -- Inventory contents are the expensive part of this operation. Reuse the
-    -- existing classified targets while the item set is unchanged, with an
-    -- occasional refresh in case the engine recreated a classified entity.
-    if signature == inst._my_friend_replication_signature
-        and now < (inst._my_friend_replication_refresh or 0) then
+    -- existing classified targets while the item set is unchanged. Refreshes
+    -- are requested explicitly when a panel opens or inventory ownership
+    -- changes, so steady-state play does not emit periodic updates.
+    if signature == inst._my_friend_replication_signature then
         return
     end
     inst._my_friend_replication_signature = signature
-    inst._my_friend_replication_refresh = now + FULL_REFRESH_PERIOD
     local replica = inst.replica.inventory
     if replica ~= nil and replica.classified ~= nil then
         replica.classified.Network:SetClassifiedTarget(nil)

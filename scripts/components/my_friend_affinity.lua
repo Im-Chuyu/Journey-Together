@@ -90,7 +90,11 @@ end
 
 function Affinity:SyncPlayer(player)
     if player ~= nil and player._my_friend_affinity_net ~= nil then
-        player._my_friend_affinity_net:set(self:Get(player))
+        local value = self:Get(player)
+        if player._my_friend_affinity_net_value ~= value then
+            player._my_friend_affinity_net_value = value
+            player._my_friend_affinity_net:set(value)
+        end
     end
 end
 

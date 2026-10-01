@@ -863,6 +863,7 @@ AddPlayerPostInit(function(inst)
     inst._my_friend_affinity_net = _G.net_float(inst.GUID,
         "my_friends.affinity", "my_friends_affinity_dirty")
     inst._my_friend_affinity_net:set_local(20)
+    inst._my_friend_affinity_net_value = 20
     if not _G.TheWorld.ismastersim then return end
     inst:ListenForEvent("onattackother", require("my_friend_behavior_ai").RecordPlayerAttack)
     require("my_friend_migration").Attach(inst, ConfigureFriend)
@@ -1234,6 +1235,7 @@ end)
 AddModRPCHandler("MyFriends", "PanelOpen", function(player, friend)
     if CanManage(player, friend) then
         player._my_friend_panel_target = friend
+        FriendReplication.ForceRefresh(friend)
         PushPanelData(friend)
     end
 end)
