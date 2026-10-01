@@ -71,23 +71,12 @@ function M.BuildStrings()
     local voice_index = {}
     local lines = LanguageFiles.DialogueLines(Language.language, "wendy")
     Register(strings, "", lines)
-    -- Traditional Chinese uses the same voice catalogue as simplified
-    -- Chinese; only the displayed text is translated separately.
-    local voice_source = lines
-    if Language.language == "zh_tw" then
-        voice_source = LanguageFiles.DialogueLines("zh", "wendy") or lines
-    end
-    RegisterVoiceIndex(voice_index, "", voice_source)
+    RegisterVoiceIndex(voice_index, "", lines)
     for _, character in ipairs({"wendy", "wickerbottom", "warly"}) do
         local source = LanguageFiles.DialogueLines(Language.language, character)
         Register(strings, character .. CHARACTER_SEPARATOR, source)
-        local character_voice_source = source
-        if Language.language == "zh_tw" then
-            character_voice_source = LanguageFiles.DialogueLines("zh", character)
-                or source
-        end
         RegisterVoiceIndex(voice_index, character .. CHARACTER_SEPARATOR,
-            character_voice_source)
+            source)
     end
     STRINGS[M.TABLE] = strings
     STRINGS.MY_FRIEND_VOICE_INDEX = voice_index

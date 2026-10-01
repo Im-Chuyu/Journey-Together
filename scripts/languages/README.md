@@ -14,9 +14,12 @@ Use `zh`, `en`, and `ru` as references. Keep command `id` values and dialogue
 keys unchanged. A language file contains only one language. Chinese is the
 fallback when a file is missing.
 
-For Chinese voice lines, `dialogue_lines.lua` keeps the legacy
-`voice_order = {{"key", line_index}}` format for existing audio. New entries
-may use `{"key", line_index, fn_number}` to bind a line to a permanent audio
+For Chinese voice lines, both `zh/dialogue_lines.lua` and
+`zh_tw/dialogue_lines.lua` contain their own `voice_order` table. The two
+tables must keep the same `fn_number` for matching lines because the audio
+catalogue is shared, while their text remains independent. The legacy
+`voice_order = {{"key", line_index}}` format is supported; new entries should
+use `{"key", line_index, fn_number}` to bind a line to a permanent audio
 number. The `fn_number` is global across all sound banks, must never be reused,
 and should be increased when a new audio file is added. Changing the text of
 an existing line does not require changing its voice number.
