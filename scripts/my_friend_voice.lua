@@ -24,7 +24,8 @@ local function VoiceIndex(key, index)
         number = bare ~= nil and map ~= nil
             and map[bare .. ":" .. tostring(index)] or number
     end
-    if type(number) ~= "number" then return end
+    if type(number) ~= "number" or number < 1
+        or number ~= math.floor(number) then return end
     local bank = math.floor((number - 1) / EVENTS_PER_BANK) + 1
     -- fn numbers are global across all banks: fs2 starts at fn71.
     return "fs" .. bank .. "/fs" .. bank .. "/fn" .. number

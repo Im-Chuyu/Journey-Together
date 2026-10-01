@@ -47,6 +47,21 @@ local function Register(strings, prefix, source)
     end
 end
 
+local function RegisterVoiceIndex(voice_index, prefix, source)
+    local order = type(source.voice_order) == "table" and source.voice_order or {}
+    for sequence, entry in ipairs(order) do
+        if type(entry) == "table" and type(entry[1]) == "string"
+            and type(entry[2]) == "number" then
+            -- The third field is an optional permanent fn number. Older
+            -- two-field entries keep their historical sequential numbering.
+            local number = type(entry[3]) == "number" and entry[3] or sequence
+            if number > 0 and number == math.floor(number) then
+                voice_index[prefix .. entry[1] .. ":" .. tostring(entry[2])] = number
+            end
+        end
+    end
+end
+
 -- Resolved once per language so the networked id stays a plain array index.
 --
 -- All shared and character-specific keys are kept in the selected language
@@ -62,11 +77,7 @@ function M.BuildStrings()
     if Language.language == "zh_tw" then
         voice_source = LanguageFiles.DialogueLines("zh", "wendy") or lines
     end
-    local order = type(voice_source.voice_order) == "table"
-        and voice_source.voice_order or {}
-    for number, entry in ipairs(order) do
-        voice_index[entry[1] .. ":" .. tostring(entry[2])] = number
-    end
+    RegisterVoiceIndex(voice_index, "", voice_source)
     for _, character in ipairs({"wendy", "wickerbottom", "warly"}) do
         local source = LanguageFiles.DialogueLines(Language.language, character)
         Register(strings, character .. CHARACTER_SEPARATOR, source)
@@ -75,11 +86,8 @@ function M.BuildStrings()
             character_voice_source = LanguageFiles.DialogueLines("zh", character)
                 or source
         end
-        for number, entry in ipairs(type(character_voice_source.voice_order) == "table"
-            and character_voice_source.voice_order or {}) do
-            voice_index[character .. CHARACTER_SEPARATOR .. entry[1] .. ":"
-                .. tostring(entry[2])] = number
-        end
+        RegisterVoiceIndex(voice_index, character .. CHARACTER_SEPARATOR,
+            character_voice_source)
     end
     STRINGS[M.TABLE] = strings
     STRINGS.MY_FRIEND_VOICE_INDEX = voice_index
