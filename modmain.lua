@@ -2,6 +2,7 @@ local _G = GLOBAL
 local TheNet = _G.TheNet
 require("my_friend_client_init").Install()
 local InventoryAI = require("my_friend_inventory")
+local Characters = require("my_friend_characters")
 local Language = require("my_friend_strings")
 Language.language = GetModConfigData("language") or "zh"
 require("my_friend_voice").enabled = GetModConfigData("voice_enabled") ~= false
@@ -10,6 +11,14 @@ command_wheel_key = type(command_wheel_key) == "string" and command_wheel_key:lo
 local command_wheel_key_code = command_wheel_key:match("^[a-z]$") ~= nil
     and string.byte(command_wheel_key) or 114
 local Text = Language.Text
+
+local function IsActualCompanion(inst)
+    return inst ~= nil and inst:IsValid()
+        and inst.isplayer == true
+        and inst:HasTag("my_friend")
+        and not inst:HasTag("playerghost")
+        and Characters.IsCharacter(inst.prefab)
+end
 -- Every companion line is registered in STRINGS on both the server and the
 -- clients so the vanilla chatter channel can echo it into nearby chat windows.
 local Speech = require("my_friend_speech")
@@ -18,7 +27,6 @@ Speech.BuildStrings()
 -- picked up for characters added by mods that load after this one.
 AddSimPostInit(function() Speech.BuildStrings() end)
 local Home = require("my_friend_home")
-local Characters = require("my_friend_characters")
 
 -- The companion is a real vanilla character at runtime, but the world save
 -- groups entities by prefab name, so it is written out under a mod owned name
@@ -972,7 +980,7 @@ end
 
 local function CanManage(player, friend, ignore_distance)
     if player == nil or not player:IsValid() or friend == nil or not friend:IsValid()
-        or not Characters.IsCharacter(friend.prefab) or not friend:HasTag("my_friend")
+        or not IsActualCompanion(friend)
         or friend.components == nil or friend.components.inventory == nil
         or not require("my_friend_policy").IsLocalPlayer(player) then return false end
     local fx, _, fz = friend.Transform:GetWorldPosition()
@@ -1513,7 +1521,7 @@ AddComponentPostInit("playercontroller", function(self, inst)
             and _G.TheInput:GetHUDEntityUnderMouse() == nil then
             local active = inst.replica.inventory ~= nil and inst.replica.inventory:GetActiveItem() or nil
             local target = _G.TheInput:GetWorldEntityUnderMouse()
-            if active == nil and target ~= nil and target:IsValid() and target:HasTag("my_friend") then
+            if active == nil and IsActualCompanion(target) then
                 inst.HUD.controls.my_friend_panel:ShowFriend(target)
                 controller._my_friend_panel_rmb = true
                 return true

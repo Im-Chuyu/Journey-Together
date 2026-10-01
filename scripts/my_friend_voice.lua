@@ -32,7 +32,11 @@ end
 
 function M.PlayLine(inst, key, index)
     if not UsesCustomVoice() then return end
-    if not TheWorld.ismastersim or inst == nil or inst.SoundEmitter == nil then return end
+    if not TheWorld.ismastersim or inst == nil or not inst:IsValid()
+        or inst._my_friend_is_companion ~= true
+        or inst:HasTag("playerghost") and inst.components.health ~= nil
+            and not inst.components.health:IsDead()
+        or inst.SoundEmitter == nil then return end
     local event = VoiceIndex(key, index)
     if event ~= nil then
         -- Replace the vanilla looping talk voice for this line. The custom
@@ -42,7 +46,10 @@ function M.PlayLine(inst, key, index)
         -- Leave the event at the engine's normal volume.  The PlaySound
         -- volume argument is a mix multiplier, not a gain stage; values above
         -- 1 can be clamped or interact poorly with the FEV attenuation.
-        local ok = pcall(inst.SoundEmitter.PlaySound, inst.SoundEmitter, event, LINE_CHANNEL)
+        -- Play through the companion's own emitter. The entity transform is
+        -- the spatial anchor used by the engine for every connected client.
+        local ok = pcall(inst.SoundEmitter.PlaySound, inst.SoundEmitter,
+            event, nil, 1, false)
         if not ok then
             -- Keep a native voice available if the event bank is not loaded
             -- on this shard/client. The dialogue text has already been sent

@@ -239,12 +239,18 @@ function MyFriendCommandWheel:CloseCommandPicker()
 end
 
 function MyFriendCommandWheel:FindFriend()
+    local function IsCompanion(entity)
+        return entity ~= nil and entity:IsValid()
+            and entity.isplayer == true
+            and entity:HasTag("my_friend")
+            and entity.prefab ~= "abigail"
+    end
     local controls = self.owner ~= nil and self.owner.HUD ~= nil and self.owner.HUD.controls or nil
     local panel = controls ~= nil and controls.my_friend_panel or nil
     if panel ~= nil and panel.friend ~= nil and panel.friend:IsValid()
-        and panel.friend:HasTag("my_friend") then return panel.friend end
+        and IsCompanion(panel.friend) then return panel.friend end
     local target = TheInput ~= nil and TheInput:GetWorldEntityUnderMouse() or nil
-    if target ~= nil and target:IsValid() and target:HasTag("my_friend") then return target end
+    if IsCompanion(target) then return target end
     if self.owner == nil or not self.owner:IsValid() then return nil end
     local px, py, pz = self.owner.Transform:GetWorldPosition()
     -- Selecting a target is a client convenience only.  The server still
@@ -253,7 +259,7 @@ function MyFriendCommandWheel:FindFriend()
     -- target one even when it is farther away than the normal command range.
     local entities = {}
     for _, entity in pairs(Ents or {}) do
-        if entity ~= nil and entity:IsValid() and entity:HasTag("my_friend") then
+        if IsCompanion(entity) then
             entities[#entities + 1] = entity
         end
     end
@@ -269,7 +275,8 @@ function MyFriendCommandWheel:FindFriend()
 end
 
 function MyFriendCommandWheel:ShowFor(friend)
-    if friend ~= nil and (not friend:IsValid() or not friend:HasTag("my_friend")) then return false end
+    if friend ~= nil and (not friend:IsValid() or friend.isplayer ~= true
+        or not friend:HasTag("my_friend") or friend.prefab == "abigail") then return false end
     self.friend = friend
     self:CloseCommandPicker()
     self:Show()

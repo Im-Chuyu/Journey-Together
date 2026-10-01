@@ -339,7 +339,9 @@ function MyFriendPanel:RebuildSlots()
 end
 
 function MyFriendPanel:ShowFriend(friend)
-    if friend == nil or not friend:IsValid() or not friend:HasTag("my_friend") then return end
+    if friend == nil or not friend:IsValid() or not friend:HasTag("my_friend")
+        or friend.isplayer ~= true
+        or friend.prefab == "abigail" then return end
     self.friend = friend
     SendModRPCToServer(GetModRPC("MyFriends", "PanelOpen"), friend)
     self:CreateStatusBadges()
