@@ -3690,6 +3690,9 @@ function M.GetCommandAction(inst)
     if command ~= nil and command.id == "touch_tower" then
         return require("my_friend_command_tower").GetAction(inst, command)
     end
+    if command ~= nil and command.id == "squeeze_heart" then
+        return require("my_friend_character_actions").GetSqueezeAction(inst)
+    end
     if command == nil or leader == nil or command.player ~= leader
         or GetTime() > (command.deadline or 0) then
         if command ~= nil then inst._my_friend_command = nil end

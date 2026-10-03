@@ -18,12 +18,7 @@ local PAID = {
     wurt = true,
 }
 
--- Paid characters are offered to nobody, so the server never has to reason
--- about another player's entitlements.
---
--- The static table wins: skin data is not always populated when the prefab
--- file is loaded, and a missing is_restricted flag would otherwise read as
--- "free". The live check can only ever add to the list, never remove from it.
+-- Informational classification only; it does not restrict companion selection.
 function M.IsPaid(name)
     if PAID[name] then return true end
     if IsRestrictedCharacter ~= nil then
@@ -100,11 +95,9 @@ function M.IsSupported(prefab)
         and Prefabs ~= nil and Prefabs[M.SavePrefab(prefab)] ~= nil
 end
 
--- What the panel may offer and the server will accept. Paid characters are
--- filtered here rather than in List(), so existing entities keep working
--- while nobody can pick one.
+-- Companion selection includes the vanilla unlockable characters.
 function M.IsSelectable(prefab)
-    return M.IsSupported(prefab) and not M.IsPaid(prefab)
+    return M.IsSupported(prefab)
         and Prefabs[prefab] ~= nil
 end
 

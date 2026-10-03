@@ -235,6 +235,10 @@ function M.Dispatch(friend, player, message, from_wheel)
     if require("my_friend_carry_backpack").Answer(friend, player, addressed_message or message) then
         return true
     end
+    -- Tower requests are public commands; a bare keyword is also accepted.
+    if addressed_message == nil and FindCommand(friend, message:lower()) == "touch_tower" then
+        addressed_message = message
+    end
     if addressed_message == nil then return false end
     local text = addressed_message:lower()
     -- The rock-fruit command has a short follow-up question. Handle it before
@@ -302,7 +306,8 @@ function M.Dispatch(friend, player, message, from_wheel)
         or friend._my_friend_sitting ~= nil or friend._my_friend_seat_request ~= nil) then
         id = "stop_sit"
     end
-    local special = id ~= "touch_tower" and SpecialCommands.Parse(friend, addressed_message, id ~= nil) or nil
+    local special = id ~= "touch_tower" and id ~= "squeeze_heart"
+        and SpecialCommands.Parse(friend, addressed_message, id ~= nil) or nil
     if special ~= nil then
         if not from_wheel and id == nil and MaybeRefuseChinese(friend, addressed_message, "special") then return true end
         if friend:HasTag("playerghost") or Policy.GetLeader(friend) ~= player then return false end
@@ -326,16 +331,16 @@ function M.Dispatch(friend, player, message, from_wheel)
         return true
     end
     -- Visiting a portal/tower is a one-shot autonomous request. It does not
-    -- require a leader or a follower relationship, so any addressed player
-    -- can issue it while the companion is free or at its base.
+    -- require a particular leader; public chat and the wheel work in both
+    -- following and independent modes.
     if id == "touch_tower" then
-        if friend:HasTag("playerghost") or Policy.GetLeader(friend) ~= nil then return false end
+        if friend:HasTag("playerghost") then return false end
         M.Clear(friend)
         friend._my_friend_command = {
             id = "touch_tower", player = player, started = GetTime(),
             origin = friend:GetPosition(), deadline = GetTime() + 180,
         }
-        Reply(friend, "special_command_ok")
+        Dialogue.RandomReply(friend, "tower_start")
         return true
     end
     if id == "ask_activity" then
@@ -496,7 +501,7 @@ function M.Dispatch(friend, player, message, from_wheel)
                 or id == "dig_sapling" or id == "dig_stump") and 600 or 180),
         charge_pending = WORK[id] == true}
     if id == "fish" then require("my_friend_fishing").Configure(friend) end
-    if id == "monkeytail" or id == "banana" then
+    if id == "monkeytail" or id == "banana" or id == "squeeze_heart" then
         Dialogue.RandomReply(friend, "describe_" .. id)
     else
         Dialogue.Reply(friend, "describe_" .. id)

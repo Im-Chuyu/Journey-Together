@@ -10,6 +10,8 @@ local command_wheel_key = GetModConfigData("command_wheel_key") or "r"
 command_wheel_key = type(command_wheel_key) == "string" and command_wheel_key:lower() or "r"
 local command_wheel_key_code = command_wheel_key:match("^[a-z]$") ~= nil
     and string.byte(command_wheel_key) or 114
+local wheel_extra_key = GetModConfigData("command_wheel_extra_key") or "F5"
+local panel_extra_key = GetModConfigData("companion_panel_extra_key") or "F6"
 local Text = Language.Text
 
 local function IsActualCompanion(inst)
@@ -705,6 +707,7 @@ local function ConfigureFriend(inst)
                 local clothing = self.components.skinner:GetClothing()
                 data.my_friend_skin = {
                     skin_name = self.components.skinner.skin_name,
+                    owner = self._my_friend_skin_owner,
                     clothing = clothing,
                     skin_mode = self.components.skinner.skintype,
                 }
@@ -1561,6 +1564,37 @@ AddClassPostConstruct("widgets/controls", function(self)
                 self._my_friend_wheel_key_held = nil
             end)
     end
+    local extra_handlers = {}
+    local function AddExtraKey(value, callback)
+        local code = type(value) == "string" and _G["KEY_" .. value] or nil
+        if code == nil or _G.TheInput == nil then return end
+        local held = false
+        extra_handlers[#extra_handlers + 1] = _G.TheInput:AddKeyDownHandler(code, function()
+            if held then return end
+            held = true
+            if self.owner ~= _G.ThePlayer or self.owner.HUD == nil
+                or self.owner.HUD.controls ~= self or not self.owner.HUD:IsVisible()
+                or self.owner.HUD:HasInputFocus() then return end
+            callback()
+        end)
+        extra_handlers[#extra_handlers + 1] = _G.TheInput:AddKeyUpHandler(code, function() held = false end)
+    end
+    AddExtraKey(wheel_extra_key, function() self.my_friend_command_wheel:Toggle() end)
+    -- If both extra shortcuts are set to one key, the wheel keeps priority.
+    if panel_extra_key ~= wheel_extra_key or wheel_extra_key == "DISABLED" then
+        AddExtraKey(panel_extra_key, function()
+            local panel = self.my_friend_panel
+            if panel:IsVisible() then panel:Hide() return end
+            local target = _G.TheInput:GetWorldEntityUnderMouse()
+            if not IsActualCompanion(target) then target = self.my_friend_command_wheel:FindFriend() end
+            if IsActualCompanion(target) then panel:ShowFriend(target) end
+        end)
+    end
+    self.inst:ListenForEvent("onremove", function()
+        for _, handler in ipairs(extra_handlers) do handler:Remove() end
+        if self._my_friend_wheel_key_handler ~= nil then self._my_friend_wheel_key_handler:Remove() end
+        if self._my_friend_wheel_key_up_handler ~= nil then self._my_friend_wheel_key_up_handler:Remove() end
+    end)
     local Skins = require("my_friend_skins")
     self.owner:DoTaskInTime(2, function() Skins.Report() end)
     self.owner:DoTaskInTime(8, function() Skins.Report() end)
@@ -1589,6 +1623,11 @@ AddComponentPostInit("playercontroller", function(self, inst)
         return old(controller, down)
     end
 end)
+
+AddComponentPostInit("skilltreeupdater", function(self, inst)
+    if _G.TheWorld.ismastersim then require("my_friend_skills").Attach(self, inst) end
+end)
+require("my_friend_character_actions").InstallSoulHealing()
 
 AddClassPostConstruct("components/combat_replica", function(self)
     local validtarget = self.IsValidTarget

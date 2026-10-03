@@ -204,6 +204,9 @@ function M.OnDecision(inst, task)
         construction_wait = "idle", light_wait = "idle", combat = "fight",
         assist = "fight", escape = "flee", vigil = "vigil"}
     local kind = kinds[task]
+    if task == "temperature" and require("my_friend_survival_ai").GetThermalNeed(inst) == "hot" then
+        kind = "cooling_seek"
+    end
     -- No dedicated vigil lines yet: fall back to the quiet idle chatter.
     if kind == "vigil" and Speech.CountFor(inst, "vigil") == 0 then kind = "idle" end
     if kind == "idle" then

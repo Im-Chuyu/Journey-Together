@@ -1,5 +1,4 @@
 local Policy = require("my_friend_policy")
-local Home = require("my_friend_home")
 local M = {}
 M.RANGE = 24
 
@@ -24,7 +23,7 @@ end
 
 function M.GetAction(inst, command)
     command = command or require("my_friend_commands").Get(inst)
-    if command == nil or Policy.IsBusy(inst) or Policy.GetLeader(inst) ~= nil then return end
+    if command == nil or command.id ~= "touch_tower" or Policy.IsBusy(inst) then return end
     if M.IsChanneling(inst) then return end
     if command.channel_started then
         require("my_friend_commands").Clear(inst)
@@ -39,8 +38,7 @@ function M.GetAction(inst, command)
         for _, entity in ipairs(TheSim:FindEntities(origin.x, 0, origin.z,
             atbase and 40 or M.RANGE, {"channelable"}, {"INLIMBO", "burnt", "fire"})) do
             if IsTower(entity) and entity.components.channelable:GetEnabled()
-                and not entity.components.channelable:IsChanneling()
-                and Home.IsPointInRange(inst, entity:GetPosition()) then
+                and not entity.components.channelable:IsChanneling() then
                 local distance = inst:GetDistanceSqToInst(entity)
                 if best == nil or distance < best then target, best = entity, distance end
             end
@@ -50,16 +48,24 @@ function M.GetAction(inst, command)
     if not IsTower(target) or not target.components.channelable:GetEnabled()
         or target.components.channelable:IsChanneling() then
         require("my_friend_commands").Clear(inst)
-        require("my_friend_dialogue").Reply(inst, "special_cannot_make")
+        require("my_friend_dialogue").RandomReply(inst, "tower_missing")
         return
     end
+    if inst.components.rider ~= nil and inst.components.rider:IsRiding() then
+        require("my_friend_riding").StopRide(inst)
+        return BufferedAction(inst, nil, ACTIONS.DISMOUNT)
+    end
     local action = BufferedAction(inst, target, ACTIONS.STARTCHANNELING)
+    action._my_friend_tower_command = command
     action.validfn = function()
         return inst._my_friend_command == command and IsTower(target)
             and target.components.channelable:GetEnabled()
             and not target.components.channelable:IsChanneling()
     end
-    action:AddSuccessAction(function() command.channel_started = true end)
+    action:AddSuccessAction(function()
+        command.channel_started = true
+        require("my_friend_dialogue").RandomReply(inst, "tower_channel")
+    end)
     action:AddFailAction(function()
         if not action._my_friend_cancelled then require("my_friend_commands").Clear(inst) end
     end)

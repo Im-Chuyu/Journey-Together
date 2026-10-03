@@ -124,6 +124,7 @@ function M.ApplyWardrobe(inst, player, base, clothing, owned)
     -- applies the outfit. A newly spawned companion has no player userid.
     inst.AnimState:AssignItemSkins(player.userid, base, clothing.body,
         clothing.hand, clothing.legs, clothing.feet)
+    inst._my_friend_skin_owner = player.userid
     M.ApplySkinMode(inst, inst:HasTag("playerghost"))
     skinner:SetSkinName(base, true)
     skinner:ClearAllClothing()
@@ -147,10 +148,30 @@ function M.RestoreSkin(inst, data)
     local skinner = inst.components.skinner
     local saved = data ~= nil and (data.my_friend_skin or data.skinner) or nil
     if skinner == nil or saved == nil then return end
+    if inst.userid ~= nil and not inst:HasTag("my_friend")
+        and inst._PostActivateHandshakeState_Server ~= POSTACTIVATEHANDSHAKE.READY then
+        inst._my_friend_pending_skin = saved
+        if inst._my_friend_skin_ready_fn == nil then
+            inst._my_friend_skin_ready_fn = function()
+                local pending = inst._my_friend_pending_skin
+                inst._my_friend_pending_skin = nil
+                inst:RemoveEventCallback("ms_skilltreeinitialized", inst._my_friend_skin_ready_fn)
+                inst._my_friend_skin_ready_fn = nil
+                if pending ~= nil then M.RestoreSkin(inst, {my_friend_skin = pending}) end
+            end
+            inst:ListenForEvent("ms_skilltreeinitialized", inst._my_friend_skin_ready_fn)
+        end
+    end
     local name = saved.skin_name
+    local clothing = saved.clothing or {}
+    inst._my_friend_skin_owner = saved.owner or inst._my_friend_skin_owner or inst.userid
     if type(name) == "string" and name ~= "" and not BelongsToCharacter(name, inst.prefab) then
         -- Left over from a character switch: fall back to this body's default.
         name = ""
+    end
+    if inst._my_friend_skin_owner ~= nil then
+        inst.AnimState:AssignItemSkins(inst._my_friend_skin_owner, name or (inst.prefab .. "_none"),
+            clothing.body or "", clothing.hand or "", clothing.legs or "", clothing.feet or "")
     end
     M.ApplySkinMode(inst, inst:HasTag("playerghost"))
     skinner:SetSkinName(type(name) == "string" and name or "", true)

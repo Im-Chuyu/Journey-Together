@@ -1495,5 +1495,79 @@ M.replies = {
     farewell_gift_cancel = {"Alright, I'll leave everything behind when I go."},
 }
 
+-- Added behavior replies; fn1-fn601 keep their permanent numbers.
+M.replies.tower_start = {
+    -- fn602
+    "I will touch the Lazy Deserter. Give me a moment.",
+    -- fn603
+    "Let us wake the magic in that tower.",
+    -- fn604
+    "All right, I will activate the tower.",
+}
+M.replies.tower_missing = {
+    -- fn605
+    "There is no usable Lazy Deserter nearby.",
+    -- fn606
+    "The tower cannot be used right now.",
+    -- fn607
+    "I could not find an available tower.",
+}
+M.replies.tower_channel = {
+    -- fn608
+    "The tower is awake. I will stay here.",
+    -- fn609
+    "I am channeling the tower now.",
+    -- fn610
+    "It answered. Come through when you need to.",
+}
+M.replies.describe_squeeze_heart = {
+    -- fn611
+    "All right, I will squeeze the Twintailed Heart.",
+    -- fn612
+    "Let me press this heart and see where it leads.",
+    -- fn613
+    "I will call to the souls inside this heart.",
+}
+M.replies.heart_unavailable = {
+    -- fn614
+    "I have no heart that I can squeeze right now.",
+    -- fn615
+    "The Twintailed Heart is not ready. Check its link first.",
+    -- fn616
+    "I could not find a usable Twintailed Heart.",
+}
+M.replies.heart_squeezed = {
+    -- fn617
+    "The heart has answered my call.",
+    -- fn618
+    "The souls will show me the way.",
+    -- fn619
+    "I squeezed it. I hope someone is waiting on the other side.",
+}
+M.replies.watch_heal = {
+    -- fn620
+    "Give me a moment. I can turn it back.",
+    -- fn621
+    "The Ageless Watch can still buy me some time.",
+    -- fn622
+    "The hands are turning back. I feel better already.",
+}
+
+M.replies.cooling_seek = {
+    -- fn623
+    "It is too hot. I need somewhere cool for a moment.",
+    -- fn624
+    "It is cooler over there. I will return once I cool down.",
+    -- fn625
+    "Let me cool off before I end up roasted.",
+}
+M.replies.body_exchanged = {
+    -- fn626
+    "All swapped. Let us take care of what we are carrying.",
+    -- fn627
+    "You can borrow this body. Remember to come back.",
+    -- fn628
+    "Same name, different body.",
+}
 return M
 

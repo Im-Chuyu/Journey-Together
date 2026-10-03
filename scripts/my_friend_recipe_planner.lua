@@ -38,6 +38,7 @@ function M.RecipeValue(inst, recipe)
         or recipe.foodtype == nil then return end
     local h, f, s = recipe.health or 0, recipe.hunger or 0, recipe.sanity or 0
     if h < 0 or f < 0 or s < 0 or h + f + s <= 0 then return end
+    if inst:HasTag("health_as_oldage") then h = 0 end
     local eater = inst.components.eater
     if eater == nil or not AcceptsType(eater.caneat, recipe.foodtype)
         or not AcceptsType(eater.preferseating, recipe.foodtype) then return end

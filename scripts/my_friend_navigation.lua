@@ -92,6 +92,10 @@ function M.InTravelRange(inst, point)
     if action ~= nil and action._my_friend_owned_recovery
         and GetTime() <= (inst._my_friend_backpack_deadline or 0) then return true end
     local command = inst._my_friend_command
+    if command ~= nil and command.id == "touch_tower" then
+        return command.target ~= nil and command.target:IsValid()
+            and DistanceSq(inst:GetPosition(), point) <= 64^2
+    end
     if command ~= nil and command.id == "chop" and action ~= nil
         and action._my_friend_chop_delivery then return true end
     if action ~= nil and action._my_friend_command_origin ~= nil
@@ -417,7 +421,7 @@ function M.Poll(search)
     if search.steps ~= nil then return search.steps end
     -- Incremental searches must yield back to survival decisions even when
     -- the destination is enclosed and the open set still has many cells.
-    if GetTime() - search.started >= M.SEARCH_TIMEOUT then
+    if GetTime() - search.started >= (search.allow_far and 60 or M.SEARCH_TIMEOUT) then
         M.Cancel(search)
         return false, false
     end
@@ -434,7 +438,7 @@ function M.Poll(search)
     end
     -- Incremental A* over land tiles. Every edge uses the engine's collision
     -- test, including diagonal edges at the coast; there is no water shortcut.
-    if search.lastpoll == GetTime() then return end
+    if search.lastpoll ~= nil and GetTime() - search.lastpoll < .09 then return end
     search.lastpoll = GetTime()
     for _ = 1, search.localgrid and 24 or 64 do
         local entry = Pop(search.heap)
@@ -449,8 +453,13 @@ function M.Poll(search)
         if not node.closed and entry.cost == node.cost then
             node.closed = true
             search.expanded = search.expanded + 1
-            local obstacles = search.obstacles or TheSim:FindEntities(node.x, 0, node.z,
-                15, nil, {"INLIMBO", "FX"})
+            -- Far-away terrain routing needs map geometry, not an entity
+            -- scan at every explored tile. Check live collisions as we arrive.
+            local obstacles = search.obstacles or {}
+            if not search.localgrid and DistanceSq(node, search.origin) <= 24^2 then
+                obstacles = TheSim:FindEntities(node.x, 0, node.z,
+                    15, nil, {"INLIMBO", "FX"})
+            end
             if DistanceSq(node, search.goal) <= 100
                 and M.IsWalkClear(search.inst, node, search.goal, search.caps, obstacles,
                     search.allow_far) then
@@ -619,7 +628,8 @@ function M.GetSteeringPoint(inst, goal, allow_far)
         return goal
     end
     local state = inst._my_friend_local_walk
-    if state ~= nil and (DistanceSq(state.goal, goal) > 1
+    local drift = allow_far and 32^2 or 4^2
+    if state ~= nil and (DistanceSq(state.goal, goal) > drift
         or state.allow_far ~= allow_far) then
         M.CancelSteering(inst)
         state = nil
@@ -630,27 +640,38 @@ function M.GetSteeringPoint(inst, goal, allow_far)
         inst._my_friend_local_walk = state
     end
     if state.failed then
-        if GetTime() > state.started + 5 then M.CancelSteering(inst) end
-        return
-    end
-    if GetTime() > state.started + 20 then
-        M.CancelSteering(inst)
+        if GetTime() > state.started + (allow_far and 30 or 5) then M.CancelSteering(inst) end
         return
     end
     if state.steps == nil then
         local steps = M.Poll(state.search)
         if steps == false then
             M.Cancel(state.search)
+            state.search = nil
             state.failed, state.started = true, GetTime()
             return
         end
         if steps == nil then return end
         state.steps, state.index = steps, 1
+        -- Release the explored tile graph as soon as only the route is needed.
+        M.Cancel(state.search)
+        state.search = nil
+        state.progress, state.progress_time = origin, GetTime()
     end
-    while state.index <= #state.steps and DistanceSq(origin, state.steps[state.index]) < .25^2 do
+    if DistanceSq(origin, state.progress) > 1 then
+        state.progress, state.progress_time = origin, GetTime()
+    elseif GetTime() - state.progress_time > 8 then
+        M.CancelSteering(inst)
+        return
+    end
+    while state.index <= #state.steps and DistanceSq(origin, state.steps[state.index]) < .75^2 do
         state.index = state.index + 1
     end
-    if state.index > #state.steps then return goal end
+    if state.index > #state.steps then
+        M.CancelSteering(inst)
+        if M.IsWalkClear(inst, origin, goal, caps, nil, allow_far) then return goal end
+        return
+    end
     local last = state.index
     for index = state.index, #state.steps do
         if DistanceSq(origin, state.steps[index]) > 12^2 then break end

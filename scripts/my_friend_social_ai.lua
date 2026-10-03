@@ -50,7 +50,8 @@ function M.UpdateCare(inst)
     for _, entry in ipairs({{"health", .5}, {"hunger", .3}, {"sanity", .3}}) do
         local kind, threshold = entry[1], entry[2]
         local component = leader.components[kind]
-        if component ~= nil and component:GetPercent() < threshold
+        if component ~= nil and not (kind == "health" and leader:HasTag("health_as_oldage"))
+            and component:GetPercent() < threshold
             and now >= (cooldowns[kind] or 0) then
             require("my_friend_speech").Random(inst, "care_" .. kind, 5,
                 leader:GetDisplayName())

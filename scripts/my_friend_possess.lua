@@ -121,44 +121,14 @@ end
 -- Skill-tree state is tied to the character prefab.  Seamless swaps transfer
 -- the player's tree automatically, so possession must explicitly apply the
 -- companion's compact vanilla skill blob to the controlled body.
-local function SaveSkillTree(inst)
-    local updater = inst ~= nil and inst.components ~= nil
-        and inst.components.skilltreeupdater or nil
-    if updater == nil or updater.OnSave == nil then return nil end
-    local data = updater:OnSave()
-    return data ~= nil and {
-        skilltreeblob = data.skilltreeblob,
-        skilltreeblobprefab = data.skilltreeblobprefab,
-    } or nil
-end
+local SaveSkillTree = require("my_friend_skills").Save
+local ApplySkillTree = require("my_friend_skills").Apply
 
-local function ApplySkillTree(inst, data)
-    local updater = inst ~= nil and inst.components ~= nil
-        and inst.components.skilltreeupdater or nil
-    if updater == nil or data == nil or data.skilltreeblob == nil
-        or updater.skilltree == nil then return end
-    local ok = _G.pcall(function()
-        -- Use the vanilla blob application path when available.  It replaces
-        -- the current selection, runs the skill activation hooks, and sends
-        -- the resulting state to the client, so the skill screen and the
-        -- server remain in agreement after the body swap.
-        if updater.SendFromSkillTreeBlob ~= nil then
-            updater.skilltreeblob = data.skilltreeblob
-            updater.skilltreeblobprefab = data.skilltreeblobprefab
-            updater:SendFromSkillTreeBlob()
-            return
-        end
-        updater.skilltree:RespecSkills(inst.prefab)
-        updater.skilltree:ApplyCharacterData(inst.prefab, data.skilltreeblob)
-        local activated = updater:GetActivatedSkills() or {}
-        for skill in pairs(activated) do
-            updater:ActivateSkill_Server(skill)
-        end
-    end)
-    if not ok then
-        _G.print("[MyFriends] Failed to transfer skill tree for "
-            .. tostring(inst.prefab))
-    end
+local function SaveSkin(inst)
+    local skinner = inst.components.skinner
+    if skinner == nil then return end
+    return {skin_name = skinner.skin_name, clothing = skinner:GetClothing(),
+        skin_mode = skinner.skintype, owner = inst._my_friend_skin_owner or inst.userid}
 end
 
 local function SaveAffinity(inst)
@@ -245,6 +215,7 @@ local function CaptureActiveSession(sess, player)
     sess.active_position = {x = x, z = z}
     sess.active_prefab = player.prefab
     sess.active_skin_data = skinner ~= nil and {
+        owner = player._my_friend_skin_owner or player.userid,
         skin_name = skinner.skin_name,
         clothing = skinner:GetClothing(),
         skin_mode = skinner.skintype,
@@ -282,11 +253,7 @@ function M.Rebind(player)
     if sess == nil or player == nil or not player:IsValid() then return false end
     if sess.portal_reroll and sess.phase == nil and not player._despawning then
         sess.companion_prefab = player.prefab
-        local skinner = player.components.skinner
-        sess.companion_skin_data = skinner ~= nil and {
-            skin_name = skinner.skin_name, clothing = skinner:GetClothing(),
-            skin_mode = skinner.skintype,
-        } or nil
+        sess.companion_skin_data = SaveSkin(player)
         sess.portal_reroll = nil
     end
     if sess.phase ~= "enter" and sess.phase ~= "exit" then
@@ -316,6 +283,7 @@ function M.SaveWorld(world, data)
         CaptureActiveSession(sess, FindPossessingPlayer(userid))
         local friend = sess.temporary_companion
         if friend ~= nil and friend:IsValid() then
+            sess.player_skin_data = SaveSkin(friend)
             sess.player_body.inv = CaptureInventory(friend)
             sess.player_body.meters = SaveMeters(friend)
             sess.player_body.skill_data = SaveSkillTree(friend)
@@ -415,11 +383,11 @@ RestoreCompanion = function(sess, body, x, z, record, is_player_body)
     end
     LoadInventory(friend, body ~= nil and body.inv or nil)
     LoadMeters(friend, body ~= nil and body.meters or nil)
-    ApplySkillTree(friend, body ~= nil and body.skill_data or nil)
     if M.ConfigureCompanion ~= nil then
         friend._my_friend_custom_name = body ~= nil and body.custom_name or nil
         M.ConfigureCompanion(friend)
     end
+    ApplySkillTree(friend, body ~= nil and body.skill_data or nil)
     LoadAffinity(friend, sess.restore_affinity or sess.companion_affinity)
     if is_player_body and sess.player_skin_data ~= nil then
         require("my_friend_replication").RestoreSkin(friend, {
@@ -551,6 +519,7 @@ local function FinishSwap(_, player)
                 sess.player_position.x, sess.player_position.z, nil, true)
             if sess.temporary_companion ~= nil then
                 RestoreCompanionPets(sess.temporary_companion, sess)
+                require("my_friend_dialogue").RandomReply(sess.temporary_companion, "body_exchanged")
                 sess.temporary_companion.persists = false
                 if sess.was_following and sess.temporary_companion.components ~= nil
                     and sess.temporary_companion.components.follower ~= nil then
@@ -567,6 +536,7 @@ local function FinishSwap(_, player)
             if not inst:IsValid() or SessionFor(inst) ~= sess then return end
             LoadInventory(inst, sess.player_body ~= nil and sess.player_body.inv or nil)
             LoadMeters(inst, sess.player_body ~= nil and sess.player_body.meters or nil)
+            require("my_friend_replication").RestoreSkin(inst, {my_friend_skin = sess.player_skin_data})
             ApplySkillTree(inst, sess.player_body ~= nil and sess.player_body.skill_data or nil)
             if sess.release_position ~= nil and inst.Physics ~= nil then
                 inst.Physics:Teleport(sess.release_position.x, 0, sess.release_position.z)
@@ -582,6 +552,9 @@ local function FinishSwap(_, player)
                     sess.player_position.z,
                 sess.companion_record, false)
             RestoreCompanionPets(sess.restored_companion, sess)
+            if sess.restored_companion ~= nil then
+                require("my_friend_dialogue").RandomReply(sess.restored_companion, "body_exchanged")
+            end
             if sess.restored_companion ~= nil and sess.restored_companion:IsValid()
                 and sess.was_following and sess.restored_companion.components ~= nil
                 and sess.restored_companion.components.follower ~= nil then
@@ -687,6 +660,7 @@ function M.Possess(player, friend)
         companion_id = friend._my_friend_id,
         companion_skin = skinner ~= nil and skinner.skin_name or nil,
         companion_skin_data = {
+            owner = friend._my_friend_skin_owner or player.userid,
             skin_name = skinner ~= nil and skinner.skin_name or nil,
             clothing = clothing,
             skin_mode = skinner ~= nil and skinner.skintype or nil,
@@ -723,6 +697,7 @@ function M.Possess(player, friend)
             mode = friend._my_friend_home.mode,
         } or nil,
         player_skin_data = player.components.skinner ~= nil and {
+            owner = player._my_friend_skin_owner or player.userid,
             skin_name = player.components.skinner.skin_name,
             clothing = player.components.skinner:GetClothing(),
             skin_mode = player.components.skinner.skintype,
@@ -761,6 +736,8 @@ function M.Release(player)
     end
     local x, _, z = player.Transform:GetWorldPosition()
     sess.companion_skill_data = SaveSkillTree(player)
+    sess.companion_skin_data = SaveSkin(player)
+    sess.companion_prefab = player.prefab
     local body = {inv = SaveInventory(player), meters = SaveMeters(player),
         skill_data = sess.companion_skill_data}
     local temporary = sess.temporary_companion
@@ -782,6 +759,7 @@ function M.Release(player)
         }
     end
     if temporary ~= nil and temporary:IsValid() then
+        sess.player_skin_data = SaveSkin(temporary)
         sess.player_body.inv = SaveInventory(temporary)
         sess.player_body.meters = SaveMeters(temporary)
         sess.player_body.skill_data = SaveSkillTree(temporary)

@@ -82,11 +82,10 @@ local function IsFriendWalking(inst)
 end
 
 local function StartFriendWalk(inst, target)
-    local goal = target
     if inst:GetCurrentPlatform() == nil then
         target = Navigation.GetSteeringPoint(inst, target, true)
     end
-    local detour = Navigation.Unstick(inst, goal)
+    local detour = target ~= nil and Navigation.Unstick(inst, target) or nil
     if detour ~= nil then target = detour end
     if target == nil then inst.components.locomotor:Stop() return end
     if inst.sg ~= nil then
@@ -114,17 +113,14 @@ local function StopFriendWalk(inst)
 end
 
 local function StartFriendRun(inst, target)
-    local goal = target
     if inst:GetCurrentPlatform() == nil then
         target = Navigation.GetSteeringPoint(inst, target, true)
     end
-    -- Independent of the local planner, which is skipped entirely once the
-    -- leader is past its range and returns nil while it is still thinking.
-    -- Either way the companion would otherwise stand still or push into the
-    -- obstacle; this notices that and goes round.
-    local detour = Navigation.Unstick(inst, goal)
+    -- Sidestep toward the next route point, never back across the sea toward
+    -- the leader while the terrain planner is still working.
+    local detour = target ~= nil and Navigation.Unstick(inst, target) or nil
     if detour ~= nil then target = detour end
-    if target == nil then return end
+    if target == nil then inst.components.locomotor:Stop() return end
     -- Do not bounce the stategraph between walk/idle while a nearby leader
     -- keeps moving. Locomotor can switch to running without cancelling itself.
     if IsFriendWalking(inst) and inst.sg ~= nil
@@ -484,17 +480,19 @@ function MyFriendBrain:OnStart()
                 and id ~= "emergency_fire" and id ~= "backpack_recovery" and id ~= "revive_return"
                 and id ~= "carry_backpack"
                 and id ~= "touch_tower"
+                and id ~= "squeeze_heart" and id ~= "watch_heal"
                 and not ((id == "food" or id == "container_food" or id == "cook")
                     and inst.components.hunger:GetPercent() < .2) then return end
             if command ~= nil and (command.id == "seeds" or command.id == "tidy" or command.id == "equipment")
                 and id ~= "farewell"
                 and id ~= "command" and id ~= "wormhole" and id ~= "revive" and id ~= "rescue" and id ~= "light"
                 and id ~= "hurt" and id ~= "eat" and id ~= "temperature"
-                and id ~= "seek_light" and id ~= "emergency_fire" and id ~= "revive_return" then return end
+                and id ~= "seek_light" and id ~= "emergency_fire" and id ~= "revive_return"
+                and id ~= "watch_heal" then return end
             if LightAI.IsDark(inst) and id ~= "farewell" and id ~= "light" and id ~= "seek_light"
                 and id ~= "emergency_light_supply" and id ~= "emergency_fire"
                 and id ~= "base_fire" and id ~= "hurt" and id ~= "eat"
-                and id ~= "revive" and id ~= "temperature" then return end
+                and id ~= "revive" and id ~= "temperature" and id ~= "watch_heal" then return end
             local action = getter(inst)
             if action ~= nil and Policy.IsRoaming(inst) then
                 action = require("my_friend_exploration_riding").PrepareAction(inst, action)
@@ -575,9 +573,16 @@ function MyFriendBrain:OnStart()
         CookingAI.GetCampfireAction, "正在制作应急营火")
     Action("eat", Alive(function(c) return c.emergency_food and 122 or c.hunger < .4 and 118 or 85 end),
         FoodAI.GetEatAction, "正在进食", 5)
+    Action("watch_heal", Alive(function()
+        return inst:HasTag("health_as_oldage") and inst.components.health:GetPercent() < .9 and 123 or 0
+    end), require("my_friend_character_actions").GetHealAction, "正在使用不老表", 8)
+    Action("squeeze_heart", Alive(function()
+        local command = Commands.Get(inst)
+        return command ~= nil and command.id == "squeeze_heart" and 117 or 0
+    end), require("my_friend_character_actions").GetSqueezeAction, "正在挤压双尾心", 15)
     Add("tower_channel_wait", Alive(function(c)
         return not c.thermal and c.threat == nil
-            and require("my_friend_command_tower").IsChanneling(inst) and 117 or 0
+            and require("my_friend_command_tower").IsChanneling(inst) and 118 or 0
     end), StandStill(inst))
     Action("temperature", Alive(function(c) return c.thermal and 115 or 0 end),
         SurvivalAI.GetTemperatureAction, "正在处理体温问题")
@@ -654,7 +659,7 @@ function MyFriendBrain:OnStart()
     Action("touch_tower", Alive(function(c)
         local command = Commands.Get(inst)
         return command ~= nil and command.id == "touch_tower"
-            and c.leader == nil and 116 or 0
+            and 117 or 0
     end), require("my_friend_command_tower").GetAction, "正在前往传送塔", 180)
     Action("backpack_recovery", Alive(function() return Backpacks.Priority(inst) end),
         Backpacks.GetAction, "正在找回自己的背包", 30)
@@ -693,6 +698,7 @@ function MyFriendBrain:OnStart()
         BaseAI.GetBackpackCraftAction, "正在准备自己的背包", 30)
     Action("command", Alive(function(c)
         local command = Commands.Get(inst)
+        if command ~= nil and (command.id == "touch_tower" or command.id == "squeeze_heart") then return 0 end
         if Policy.IsRoaming(inst) then return 0 end
         return c.leader ~= nil and command ~= nil
             and (command.special ~= nil and 132 or command.id == "carry_statue" and 117 or 104) or 0

@@ -1,6 +1,7 @@
 -- Language: zh_tw
 -- Chinese command keywords.
 return {
+    { id = "squeeze_heart", label = "擠壓雙尾心", keywords = {"擠", "壓", "按"} },
     { id = "revive", zh_tw = {"復活", "重生", "歸來", "活", "回來"} },
     { id = "farewell_gift", zh_tw = {"帶走吧","拿走吧","不要了","送你", "給你"} },
     { id = "farewell_keep", zh_tw = {"東西留下","留下東西","別帶走", "別帶走"} },

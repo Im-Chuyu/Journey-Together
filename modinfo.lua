@@ -23,7 +23,30 @@ server_filter_tags = {"companion", "伙伴"}
 icon_atlas = "friend.xml"
 icon = "friend.tex"
 
+local function ExtraKeyOptions()
+    local result = {{description = simplified_chinese and "关闭" or traditional_chinese and "關閉"
+        or russian and "Отключено" or "Disabled", data = "DISABLED"}}
+    for i = 1, 12 do result[#result + 1] = {description = "F" .. i, data = "F" .. i} end
+    return result
+end
+
 configuration_options = {
+    {
+        name = "command_wheel_extra_key",
+        label = simplified_chinese and "指令轮盘额外快捷键" or traditional_chinese and "指令輪盤額外快捷鍵"
+            or russian and "Доп. клавиша колеса команд" or "Additional Command Wheel Key",
+        hover = simplified_chinese and "保留原来的 Alt+字母快捷键。" or traditional_chinese and "保留原來的 Alt+字母快捷鍵。"
+            or russian and "Сочетание Alt+буква продолжает работать." or "The existing Alt+letter shortcut still works.",
+        options = ExtraKeyOptions(), default = "F5",
+    },
+    {
+        name = "companion_panel_extra_key",
+        label = simplified_chinese and "伙伴面板额外快捷键" or traditional_chinese and "夥伴面板額外快捷鍵"
+            or russian and "Доп. клавиша панели спутника" or "Additional Companion Panel Key",
+        hover = simplified_chinese and "保留 Alt+鼠标右键；优先打开鼠标下伙伴的面板。" or traditional_chinese and "保留 Alt+滑鼠右鍵；優先開啟滑鼠下夥伴的面板。"
+            or russian and "Alt+ПКМ также работает. Приоритет у спутника под курсором." or "Alt+right-click still works. Prefers the companion under the cursor.",
+        options = ExtraKeyOptions(), default = "F6",
+    },
     {
         name = "language",
         label = simplified_chinese and "伙伴语言"

@@ -1,6 +1,7 @@
 -- Language: en
 -- English command keywords.
 return {
+    { id = "squeeze_heart", label = "Squeeze Heart", keywords = {"squeeze", "press", "squeeze heart"} },
     { id = "revive", en = {"revive", "resurrect", "come back to life"} },
     { id = "farewell_gift", en = {"take it with you", "take them with you", "it's yours", "keep it"} },
     { id = "farewell_keep", en = {"leave it behind", "leave your things", "don't take it"} },

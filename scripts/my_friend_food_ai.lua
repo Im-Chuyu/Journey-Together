@@ -69,9 +69,9 @@ local function GetStats(inst)
     local hungermax = math.max(1, GetMaximum(hunger, hunger.current))
     local sanitymax = math.max(1, GetMaximum(sanity, sanity.current))
     return {
-        health = health.currenthealth,
+        health = inst:HasTag("health_as_oldage") and hpmax or health.currenthealth,
         healthmax = hpmax,
-        healthpercent = Clamp(health.currenthealth / hpmax, 0, 1),
+        healthpercent = inst:HasTag("health_as_oldage") and 1 or Clamp(health.currenthealth / hpmax, 0, 1),
         hunger = hunger.current,
         hungermax = hungermax,
         hungerpercent = Clamp(hunger.current / hungermax, 0, 1),
@@ -105,6 +105,7 @@ GetFoodDeltas = function(inst, food)
         health, hunger, sanity = eater.custom_stats_mod_fn(
             inst, health, hunger, sanity, food, inst)
     end
+    if inst:HasTag("health_as_oldage") then health = 0 end
     return health * stackmult, hunger * stackmult, sanity * stackmult
 end
 

@@ -2107,4 +2107,105 @@ M.replies = {
     farewell_gift_cancel = {"好，那我走的時候把東西留下。"},
 }
 
+-- Added behavior replies; fn1-fn601 keep their permanent numbers.
+M.replies.tower_start = {
+    -- fn602
+    "我去摸摸傳送塔，等我一會兒。",
+    -- fn603
+    "讓塔裡的魔法回應我們吧。",
+    -- fn604
+    "好，我去把傳送塔啟動。",
+}
+M.replies.tower_missing = {
+    -- fn605
+    "這附近沒有可以觸摸的傳送塔。",
+    -- fn606
+    "傳送塔現在用不了，等一等吧。",
+    -- fn607
+    "我找不到空閒的傳送塔。",
+}
+M.replies.tower_channel = {
+    -- fn608
+    "傳送塔亮起來了，我會守在這裡。",
+    -- fn609
+    "我正在引導傳送塔的力量。",
+    -- fn610
+    "塔已經回應了，需要時就過來吧。",
+}
+M.replies.describe_squeeze_heart = {
+    -- fn611
+    "好，我試著擠一下雙尾心。",
+    -- fn612
+    "讓我按下這顆心，看看它帶我去哪兒。",
+    -- fn613
+    "我來喚醒這顆心裡的靈魂。",
+}
+M.replies.heart_unavailable = {
+    -- fn614
+    "這顆心現在不能用，或者我身上沒有它。",
+    -- fn615
+    "還不能擠壓雙尾心，先檢查它的連結吧。",
+    -- fn616
+    "我沒找到現在可以擠壓的雙尾心。",
+}
+M.replies.heart_squeezed = {
+    -- fn617
+    "聽見了，這顆心回應了我的呼喚。",
+    -- fn618
+    "靈魂會為我指引方向。",
+    -- fn619
+    "已經擠下去了，希望另一頭有人等我。",
+}
+M.replies.watch_heal = {
+    -- fn620
+    "給我一點時間，我能把它撥回來。",
+    -- fn621
+    "別擔心，不老錶還能替我爭取時間。",
+    -- fn622
+    "指針往回走了，我感覺好多了。",
+}
+M.voice_order[#M.voice_order + 1] = {"tower_start", 1, 602}
+M.voice_order[#M.voice_order + 1] = {"tower_start", 2, 603}
+M.voice_order[#M.voice_order + 1] = {"tower_start", 3, 604}
+M.voice_order[#M.voice_order + 1] = {"tower_missing", 1, 605}
+M.voice_order[#M.voice_order + 1] = {"tower_missing", 2, 606}
+M.voice_order[#M.voice_order + 1] = {"tower_missing", 3, 607}
+M.voice_order[#M.voice_order + 1] = {"tower_channel", 1, 608}
+M.voice_order[#M.voice_order + 1] = {"tower_channel", 2, 609}
+M.voice_order[#M.voice_order + 1] = {"tower_channel", 3, 610}
+M.voice_order[#M.voice_order + 1] = {"describe_squeeze_heart", 1, 611}
+M.voice_order[#M.voice_order + 1] = {"describe_squeeze_heart", 2, 612}
+M.voice_order[#M.voice_order + 1] = {"describe_squeeze_heart", 3, 613}
+M.voice_order[#M.voice_order + 1] = {"heart_unavailable", 1, 614}
+M.voice_order[#M.voice_order + 1] = {"heart_unavailable", 2, 615}
+M.voice_order[#M.voice_order + 1] = {"heart_unavailable", 3, 616}
+M.voice_order[#M.voice_order + 1] = {"heart_squeezed", 1, 617}
+M.voice_order[#M.voice_order + 1] = {"heart_squeezed", 2, 618}
+M.voice_order[#M.voice_order + 1] = {"heart_squeezed", 3, 619}
+M.voice_order[#M.voice_order + 1] = {"watch_heal", 1, 620}
+M.voice_order[#M.voice_order + 1] = {"watch_heal", 2, 621}
+M.voice_order[#M.voice_order + 1] = {"watch_heal", 3, 622}
+
+M.replies.cooling_seek = {
+    -- fn623
+    "有些太熱了，我去陰涼的地方緩一緩。",
+    -- fn624
+    "那邊涼快些，等溫度降下來我就回來。",
+    -- fn625
+    "我得先降降溫，可不想被烤熟。",
+}
+M.replies.body_exchanged = {
+    -- fn626
+    "換好了，我們各自保管好身上的東西。",
+    -- fn627
+    "這副身體暫時交給你，別忘了回來。",
+    -- fn628
+    "名字還是我的名字，只是換了個身體。",
+}
+M.voice_order[#M.voice_order + 1] = {"cooling_seek", 1, 623}
+M.voice_order[#M.voice_order + 1] = {"cooling_seek", 2, 624}
+M.voice_order[#M.voice_order + 1] = {"cooling_seek", 3, 625}
+M.voice_order[#M.voice_order + 1] = {"body_exchanged", 1, 626}
+M.voice_order[#M.voice_order + 1] = {"body_exchanged", 2, 627}
+M.voice_order[#M.voice_order + 1] = {"body_exchanged", 3, 628}
 return M
