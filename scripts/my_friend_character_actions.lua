@@ -9,22 +9,7 @@ local function Carried(inst, item)
 end
 
 function M.GetHealAction(inst)
-    if not inst:HasTag("health_as_oldage") or Policy.IsBusy(inst)
-        or inst.components.health:GetPercent() >= .9
-        or GetTime() < (inst._my_friend_watch_retry or 0) then return end
-    inst._my_friend_watch_retry = GetTime() + 2
-    for _, item in ipairs(inst.components.inventory:ReferenceAllItems()) do
-        if item.prefab == "pocketwatch_heal" and Carried(inst, item)
-            and item.components.pocketwatch ~= nil and item.components.pocketwatch:CanCast(inst) then
-            local action = BufferedAction(inst, nil, ACTIONS.CAST_POCKETWATCH, item)
-            action.validfn = function()
-                return Carried(inst, item) and item.components.pocketwatch:CanCast(inst)
-                    and inst.components.health:GetPercent() < .9
-            end
-            action:AddSuccessAction(function() Dialogue.RandomReply(inst, "watch_heal") end)
-            return action
-        end
-    end
+    return require("my_friend_wanda").GetHealAction(inst)
 end
 
 local function CanSqueeze(inst, item)
@@ -65,34 +50,8 @@ function M.GetSqueezeAction(inst)
     return action
 end
 
--- Called only when a soul actually heals. Keep vanilla range, sharing, skill
--- modifiers and Wanda's exclusion; never add NPCs to the real-player registry.
 function M.InstallSoulHealing()
-    local common = require("prefabs/wortox_soul_common")
-    local original = common.DoHeal
-    common.DoHeal = function(soul, ...)
-        local friend = TheWorld._my_friend
-        if friend == nil or not friend:IsValid() or friend.components.health == nil
-            or friend.components.health:IsDead() or friend:HasTag("playerghost")
-            or not friend.entity:IsVisible()
-            or soul:GetDistanceSqToInst(friend) >= (TUNING.WORTOX_SOULHEAL_RANGE
-                + (soul.soul_heal_range_modifier or 0))^2 then return original(soul, ...) end
-        local targets = {}
-        for _, player in ipairs(AllPlayers) do
-            if player == friend then return original(soul, ...) end
-            targets[#targets + 1] = player
-        end
-        -- Invoke the native function in an isolated environment whose player
-        -- list also contains the companion, preserving the full heal formula.
-        targets[#targets + 1] = friend
-        local env = getfenv(original)
-        local wrapped = setmetatable({AllPlayers = targets}, {__index = env})
-        setfenv(original, wrapped)
-        local ok, result = pcall(original, soul, ...)
-        setfenv(original, env)
-        if not ok then error(result) end
-        return result
-    end
+    require("my_friend_wortox").InstallSoulHealing()
 end
 
 return M

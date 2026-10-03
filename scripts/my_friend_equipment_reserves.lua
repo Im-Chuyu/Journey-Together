@@ -66,6 +66,11 @@ function M.GetKeep(inst)
             if ii.islockedinslot or item:HasAnyTag("backpack", "heatrock", "irreplaceable") then
                 keep[item] = Size(item)
             end
+            if inst.prefab == "wanda" and (c.pocketwatch ~= nil
+                or item.prefab == "pocketwatch_weapon" or item.prefab == "nightmarefuel")
+                or inst.prefab == "wortox" and item.prefab == "wortox_soul" then
+                keep[item] = Size(item)
+            end
             if player_prefabs[item.prefab] then
                 Reserve("player_choice:" .. item.prefab, 1)
             end

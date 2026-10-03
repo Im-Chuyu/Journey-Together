@@ -1569,5 +1569,29 @@ M.replies.body_exchanged = {
     -- fn628
     "Same name, different body.",
 }
+M.replies.activity_wanda_fuel = {
+    -- fn629
+    "This Nightmare Fuel will keep the Alarming Clock ticking.",
+    -- fn630
+    "I will gather this. Time needs fuel, too.",
+    -- fn631
+    "Better keep it, so my clock will not stop when I need it.",
+}
+M.replies.activity_wanda_refuel = {
+    -- fn632
+    "The Alarming Clock can ring again.",
+    -- fn633
+    "A little nightmare buys a little more time.",
+    -- fn634
+    "That should keep it from stopping.",
+}
+M.replies.activity_wortox_heal = {
+    -- fn635
+    "Let this soul soothe your wounds.",
+    -- fn636
+    "Easy now. The souls will mend you, one by one.",
+    -- fn637
+    "Another soul set free, to ease your pain.",
+}
 return M
 

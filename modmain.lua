@@ -1628,6 +1628,7 @@ AddComponentPostInit("skilltreeupdater", function(self, inst)
     if _G.TheWorld.ismastersim then require("my_friend_skills").Attach(self, inst) end
 end)
 require("my_friend_character_actions").InstallSoulHealing()
+AddPrefabPostInit("wortox_soul_spawn", require("my_friend_wortox").InstallSoulAttraction)
 
 AddClassPostConstruct("components/combat_replica", function(self)
     local validtarget = self.IsValidTarget

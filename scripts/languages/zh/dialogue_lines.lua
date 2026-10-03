@@ -2204,5 +2204,38 @@ M.voice_order[#M.voice_order + 1] = {"cooling_seek", 3, 625}
 M.voice_order[#M.voice_order + 1] = {"body_exchanged", 1, 626}
 M.voice_order[#M.voice_order + 1] = {"body_exchanged", 2, 627}
 M.voice_order[#M.voice_order + 1] = {"body_exchanged", 3, 628}
+M.replies.activity_wanda_fuel = {
+    -- fn629
+    "这些噩梦燃料能让警钟继续走下去。",
+    -- fn630
+    "捡起来吧，时间的声音还需要燃料。",
+    -- fn631
+    "先收好，免得警钟在紧要关头停下来。",
+}
+M.replies.activity_wanda_refuel = {
+    -- fn632
+    "警钟又能响起来了。",
+    -- fn633
+    "添一点噩梦，换来更多时间。",
+    -- fn634
+    "现在它不会轻易停摆了。",
+}
+M.replies.activity_wortox_heal = {
+    -- fn635
+    "借这颗灵魂，替你抚平伤口。",
+    -- fn636
+    "别急，灵魂会一点一点治好你。",
+    -- fn637
+    "再放走一颗灵魂，你会好受些。",
+}
+M.voice_order[#M.voice_order + 1] = {"activity_wanda_fuel", 1, 629}
+M.voice_order[#M.voice_order + 1] = {"activity_wanda_fuel", 2, 630}
+M.voice_order[#M.voice_order + 1] = {"activity_wanda_fuel", 3, 631}
+M.voice_order[#M.voice_order + 1] = {"activity_wanda_refuel", 1, 632}
+M.voice_order[#M.voice_order + 1] = {"activity_wanda_refuel", 2, 633}
+M.voice_order[#M.voice_order + 1] = {"activity_wanda_refuel", 3, 634}
+M.voice_order[#M.voice_order + 1] = {"activity_wortox_heal", 1, 635}
+M.voice_order[#M.voice_order + 1] = {"activity_wortox_heal", 2, 636}
+M.voice_order[#M.voice_order + 1] = {"activity_wortox_heal", 3, 637}
 return M
 

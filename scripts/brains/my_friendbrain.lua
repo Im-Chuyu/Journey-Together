@@ -458,7 +458,8 @@ function MyFriendBrain:OnStart()
                 or id == "catch_up_mount" or id == "wormhole" or id == "assist"
                 or id == "vigil" or id == "sit") then return 0 end
             if c.hurt_evade and id ~= "hurt" and id ~= "hurt_wait"
-                and id ~= "light" and id ~= "farewell" and not c.ghost then return 0 end
+                and id ~= "light" and id ~= "farewell" and id ~= "watch_heal"
+                and not c.ghost then return 0 end
             return score(c)
         end
         entries[#entries + 1] = { id = id, score = ScopedScore, node = node,
@@ -574,8 +575,15 @@ function MyFriendBrain:OnStart()
     Action("eat", Alive(function(c) return c.emergency_food and 122 or c.hunger < .4 and 118 or 85 end),
         FoodAI.GetEatAction, "正在进食", 5)
     Action("watch_heal", Alive(function()
-        return inst:HasTag("health_as_oldage") and inst.components.health:GetPercent() < .9 and 123 or 0
+        return require("my_friend_wanda").NeedsHeal(inst) and 145 or 0
     end), require("my_friend_character_actions").GetHealAction, "正在使用不老表", 8)
+    Action("wanda_refuel", Alive(function(c)
+        return inst.prefab == "wanda" and not c.hurt and not c.hurt_evade and 130 or 0
+    end), require("my_friend_wanda").GetRefuelAction, "正在给警钟补充噩梦燃料", 8, true)
+    Action("wortox_heal_player", Alive(function(c)
+        return inst.prefab == "wortox" and not c.threat and not c.dark
+            and not c.thermal and c.hunger >= .4 and 108 or 0
+    end), require("my_friend_wortox").GetHealPlayerAction, "正在释放灵魂治疗玩家", 20)
     Action("squeeze_heart", Alive(function()
         local command = Commands.Get(inst)
         return command ~= nil and command.id == "squeeze_heart" and 117 or 0
@@ -683,6 +691,12 @@ function MyFriendBrain:OnStart()
     Action("food_return", Alive(function(c)
         return not c.threat and not c.dark and not c.thermal and 59 or 0
     end), ContainerAI.GetReturnFoodAction, nil)
+    Action("wanda_fuel_pickup", Alive(function(c)
+        return inst.prefab == "wanda" and not c.threat and not c.dark and not c.thermal
+            and not c.constructing and not c.leaderdead and c.hunger >= .5
+            and inst._my_friend_command == nil and inst._my_friend_work_target == nil
+            and not inst._my_friend_recover_death_drops and 39 or 0
+    end), require("my_friend_wanda").GetFuelPickupAction, "正在收集附近的噩梦燃料", 15)
     -- Finished items on the new container-based drying racks are collected
     -- during relaxed movement.  The low score keeps this behind survival,
     -- combat, lighting, meals and active work.

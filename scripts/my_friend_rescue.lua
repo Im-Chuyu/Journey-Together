@@ -1,5 +1,6 @@
 -- Reviving nearby dead players and thanking whoever revives the companion.
 local Policy = require("my_friend_policy")
+local Wanda = require("my_friend_wanda")
 
 local M = {}
 
@@ -84,11 +85,13 @@ function M.Score(inst)
     inst._my_friend_rescue_check_after = GetTime() + 1
     local has_heart = FindItem(inst, IsHeart) ~= nil
     local has_haunt = FindItem(inst, IsHauntRevival) ~= nil
-    if not has_heart and not has_haunt then return 0 end
+    local has_watch = Wanda.FindReviveWatch(inst) ~= nil
+    if not has_heart and not has_haunt and not has_watch then return 0 end
     local retry = Retry(inst)
     for _, ghost in ipairs(GhostPlayers(inst)) do
         if GetTime() >= (retry[ghost.userid] or 0)
-            and (has_heart or not HasRevivalNearby(ghost)) then
+            and (Wanda.FindReviveWatch(inst, ghost) ~= nil
+                or has_heart or has_haunt and not HasRevivalNearby(ghost)) then
             inst._my_friend_rescue_check_after = nil
             return M.SCORE
         end
@@ -101,11 +104,12 @@ function M.GetAction(inst)
     local retry = Retry(inst)
     local heart = FindItem(inst, IsHeart)
     local haunt = heart == nil and FindItem(inst, IsHauntRevival) or nil
-    if heart == nil and haunt == nil then return end
+    if heart == nil and haunt == nil and inst.prefab ~= "wanda" then return end
     for _, ghost in ipairs(GhostPlayers(inst)) do
         if GetTime() >= (retry[ghost.userid] or 0) then
-            local action
-            if heart ~= nil then
+            -- Prefer the rechargeable watch over consumable revival items.
+            local action = Wanda.GetReviveAction(inst, ghost)
+            if action == nil and heart ~= nil then
                 -- Same as a player pressing the heart on the ghost.
                 action = BufferedAction(inst, ghost, ACTIONS.GIVE, heart)
                 action.validfn = function()
@@ -117,7 +121,7 @@ function M.GetAction(inst)
                 action:AddSuccessAction(function()
                     require("my_friend_dialogue").Say(inst, "revive_player", ghost)
                 end)
-            elseif not HasRevivalNearby(ghost) then
+            elseif action == nil and haunt ~= nil and not HasRevivalNearby(ghost) then
                 -- One haunt revival item per ghost, dropped within reach.
                 local point = ghost:GetPosition()
                 local offset = FindWalkableOffset(point, math.random() * PI2, 1.5, 8, true, false)

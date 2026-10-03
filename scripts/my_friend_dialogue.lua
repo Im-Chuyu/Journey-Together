@@ -3,7 +3,8 @@ local M = {}
 local PERSONAL = {fed = true, fed_careful = true, gift = true,
     gift_food = true, gift_food_settled = true, gift_sack = true, pickup_allowed = true,
     ask_pickup = true, revived_thanks = true, revive_player = true, skin_changed = true,
-    revive_drop = true, player_attack = true, player_takes_food = true, player_takes_sack = true}
+    revive_drop = true, player_attack = true, player_takes_food = true, player_takes_sack = true,
+    activity_wortox_heal = true}
 
 local function Alive(inst)
     return inst:IsValid() and inst:HasTag("my_friend") and not inst:HasTag("playerghost")
