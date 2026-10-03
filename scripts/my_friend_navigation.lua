@@ -149,7 +149,13 @@ function M.IsStepClear(inst, a, b, caps, obstacles, allow_far)
     for _, entity in ipairs(entities) do
         if IsObstacle(inst, entity) then
             local p = entity:GetPosition()
-            local radius = entity.Physics:GetRadius() + inst.Physics:GetRadius() + .03
+            -- Physics:GetRadius() is a bounding radius. For structures it is
+            -- often a little wider than the actual collision shape, which
+            -- made two buildings with a usable gap look like one solid wall.
+            -- Keep a small safety margin, but do not reject a path merely
+            -- because the bounding circles overlap by a few centimetres.
+            local radius = math.max(0,
+                entity.Physics:GetRadius() + inst.Physics:GetRadius() - .08)
             local t = lengthsq > 0 and math.max(0, math.min(1,
                 ((p.x - a.x) * dx + (p.z - a.z) * dz) / lengthsq)) or 0
             local distance = (a.x + dx * t - p.x)^2 + (a.z + dz * t - p.z)^2
@@ -587,16 +593,22 @@ function M.Unstick(inst, goal)
     local caps = M.Caps(inst)
     local bounded = M.InTravelRange(inst, position)
     local heading = math.atan2(goal.z - position.z, goal.x - position.x)
-    for index = 1, 10 do
-        local offset = math.ceil(index / 2) * (index % 2 == 0 and 1 or -1)
-        local angle = heading + offset * math.pi / 6
-        local point = Vector3(position.x + math.cos(angle) * M.SIDESTEP_DISTANCE, 0,
-            position.z + math.sin(angle) * M.SIDESTEP_DISTANCE)
-        if M.IsLand(point) and M.IsStepClear(inst, position, point, caps)
-            and (not bounded or M.InTravelRange(inst, point)) then
-            state.detour, state.expires = point, now + M.SIDESTEP_COMMIT
-            state.since, state.mark = now, position
-            return point
+    -- Try nearer offsets as well as the old wide sidestep. A six-unit jump
+    -- can land behind the second building in a narrow passage and make the
+    -- companion keep pushing into the first one.
+    local distances = {2, 3.5, 5, M.SIDESTEP_DISTANCE}
+    for _, distance in ipairs(distances) do
+        for index = 1, 12 do
+            local offset = math.ceil(index / 2) * (index % 2 == 0 and 1 or -1)
+            local angle = heading + offset * math.pi / 8
+            local point = Vector3(position.x + math.cos(angle) * distance, 0,
+                position.z + math.sin(angle) * distance)
+            if M.IsLand(point) and M.IsStepClear(inst, position, point, caps)
+                and (not bounded or M.InTravelRange(inst, point)) then
+                state.detour, state.expires = point, now + M.SIDESTEP_COMMIT
+                state.since, state.mark = now, position
+                return point
+            end
         end
     end
     -- Boxed in on every side. Wait out another interval instead of rescanning

@@ -8,6 +8,7 @@
 local M = {}
 local RestoreCompanion
 local RestoreActiveSession
+local Characters = require("my_friend_characters")
 
 local function World()
     return _G.TheWorld
@@ -162,7 +163,10 @@ end
 local function StartSwap(player, prefab, skin)
     local sw = player ~= nil and player.components ~= nil
         and player.components.seamlessplayerswapper or nil
-    if sw == nil or sw._my_friend_swap_in_progress then return false end
+    if sw == nil or sw._my_friend_swap_in_progress
+        or type(sw._StartSwap) ~= "function" then return false end
+    if prefab ~= nil and not Characters.IsCharacter(prefab) then return false end
+    if player.userid == nil or player.userid == "" then return false end
     sw._my_friend_swap_in_progress = true
     if prefab ~= nil then
         sw.swap_data = sw.swap_data or {}
@@ -309,7 +313,8 @@ function M.SaveWorld(world, data)
         for key, value in pairs(sess) do
             if key ~= "temporary_companion" and key ~= "restored_companion"
                 and key ~= "companion_pets" and key ~= "_despawn_task"
-                and key ~= "_restore_pending" and key ~= "_needs_restore" then
+                and key ~= "_restore_pending" and key ~= "_needs_restore"
+                and key ~= "parked_friend" then
                 copy[key] = value
             end
         end
@@ -541,6 +546,11 @@ local function FinishSwap(_, player)
                     sess.temporary_companion.components.follower:SetLeader(inst)
                 end
             end
+            if sess.parked_friend ~= nil and sess.parked_friend:IsValid() then
+                sess.parked_friend.persists = false
+                sess.parked_friend:Remove()
+                sess.parked_friend = nil
+            end
             if world ~= nil then
                 world._my_friend_possession_active = nil
             end
@@ -724,11 +734,24 @@ function M.Possess(player, friend)
     }
     sessions[player.userid] = session
     world._my_friend_possession_active = true
+    -- Keep the old body valid until the native replacement event arrives.
+    -- Removing it first leaves remote clients with a target they can still
+    -- have selected for one or two frames.
     friend.persists = false
-    friend:Remove()
+    friend._my_friend_possess_parked = true
+    if friend.Physics ~= nil then friend.Physics:SetActive(false) end
+    if friend.DynamicShadow ~= nil then friend.DynamicShadow:Enable(false) end
+    if friend.MiniMapEntity ~= nil then friend.MiniMapEntity:SetEnabled(false) end
+    if friend.Hide ~= nil then friend:Hide() end
+    session.parked_friend = friend
     world._my_friend = nil
     if player.Physics ~= nil then player.Physics:Teleport(x, 0, z) end
     if not StartSwap(player, session.companion_prefab, session.companion_skin) then
+        if session.parked_friend ~= nil and session.parked_friend:IsValid() then
+            session.parked_friend.persists = false
+            session.parked_friend:Remove()
+            session.parked_friend = nil
+        end
         local restored = RestoreCompanion(session, session.companion_body, x, z,
             session.companion_record, false)
         AttachCompanionPets(restored, session.companion_pets)

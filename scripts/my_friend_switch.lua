@@ -113,6 +113,11 @@ function M.Switch(friend, character, configure, keep_items)
 
     local position = friend:GetPosition()
     local switch_used = friend._my_friend_switch_used
+    -- A character change creates a fresh companion, but the relationship with
+    -- each player carries over with the requested penalty. Only copy the
+    -- per-player values; follow requests and gift windows are transient.
+    local old_affinity = friend.components.my_friend_affinity ~= nil
+        and friend.components.my_friend_affinity:OnSave() or nil
     local base_data = {}
     local Base = require("my_friend_base_ai")
     Base.OnSave(friend, base_data)
@@ -138,6 +143,17 @@ function M.Switch(friend, character, configure, keep_items)
     configure(replacement)
     if base_data.my_friend_base ~= nil or base_data.my_friend_home ~= nil then
         Base.OnLoad(replacement, base_data)
+    end
+    local new_affinity = replacement.components ~= nil
+        and replacement.components.my_friend_affinity or nil
+    if new_affinity ~= nil and old_affinity ~= nil and new_affinity.OnLoad ~= nil then
+        local values = {}
+        for userid, value in pairs(old_affinity.values or {}) do
+            if type(userid) == "string" and type(value) == "number" and value == value then
+                values[userid] = value >= 20 and math.max(20, value - 20) or value
+            end
+        end
+        new_affinity:OnLoad({values = values})
     end
     replacement._my_friend_switch_used = switch_used
     replacement._my_friend_replan_requested = true
