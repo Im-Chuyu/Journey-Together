@@ -9,8 +9,41 @@ M.RANGE = 20
 M.SCORE = 116
 M.RETRY_DELAY = 15
 M.DROP_SPACING = 3
+M.GHOST_READY_DELAY = 3
 
 local GHOST_CANT_TAGS = { "INLIMBO", "my_friend" }
+
+function M.ConfigurePlayer(player)
+    if player._my_friend_rescue_player_configured then return end
+    player._my_friend_rescue_player_configured = true
+    local function BlockRescue()
+        player._my_friend_rescue_ready_after = math.huge
+    end
+    player:ListenForEvent("death", BlockRescue)
+    player:ListenForEvent("ms_becameghost", function()
+        -- This event follows the native ghost stategraph/physics conversion.
+        player._my_friend_rescue_ready_after = GetTime() + M.GHOST_READY_DELAY
+    end)
+    player:ListenForEvent("respawnfromghost", BlockRescue)
+    player:ListenForEvent("ms_respawnedfromghost", function()
+        player._my_friend_rescue_ready_after = nil
+    end)
+end
+
+function M.CanRevivePlayer(player)
+    if not Policy.IsLocalPlayer(player) or player.userid == nil
+        or not player:HasTag("playerghost") or player:HasTag("reviving")
+        or player.components.trader == nil or player.sg == nil
+        or player.sg.currentstate == nil
+        or player.sg:HasAnyStateTag("dead", "busy")
+        or player.sg.currentstate.name == "death"
+        or player.sg.currentstate.name == "appear" then return false end
+    if player._my_friend_rescue_ready_after == nil then
+        -- Also handle ghosts loaded before the listeners were installed.
+        player._my_friend_rescue_ready_after = GetTime() + M.GHOST_READY_DELAY
+    end
+    return GetTime() >= player._my_friend_rescue_ready_after
+end
 
 local function IsAlive(inst)
     return inst ~= nil and inst:IsValid() and not inst:HasTag("playerghost")
@@ -52,14 +85,12 @@ local function GhostPlayers(inst)
     local x, y, z = inst.Transform:GetWorldPosition()
     local ghosts = {}
     local leader = inst.prefab == "wortox" and Policy.GetLeader(inst) or nil
-    if Policy.IsLocalPlayer(leader) and leader:HasTag("playerghost")
-        and leader.userid ~= nil and leader.components.trader ~= nil then
+    if M.CanRevivePlayer(leader) then
         ghosts[#ghosts + 1] = leader
     end
     for _, entity in ipairs(TheSim:FindEntities(x, y, z, M.RANGE,
         { "playerghost" }, GHOST_CANT_TAGS)) do
-        if entity ~= leader and Policy.IsLocalPlayer(entity) and entity.userid ~= nil
-            and entity.components.trader ~= nil then
+        if entity ~= leader and M.CanRevivePlayer(entity) then
             ghosts[#ghosts + 1] = entity
         end
     end
@@ -73,8 +104,7 @@ end
 
 function M.IsRescueActionValid(inst, action)
     local ghost = action._my_friend_rescue_target
-    return inst.prefab == "wortox" and Policy.IsLocalPlayer(ghost)
-        and ghost:HasTag("playerghost") and ghost.components.trader ~= nil
+    return inst.prefab == "wortox" and M.CanRevivePlayer(ghost)
         and (ghost == Policy.GetLeader(inst) or ghost:GetDistanceSqToPoint(
             action._my_friend_rescue_origin) <= M.RANGE^2)
 end
@@ -167,6 +197,12 @@ function M.GetAction(inst)
                 action = Wortox.GetMakeHeartAction(inst, ghost)
             end
             if action ~= nil then
+                -- Recheck at execution, not just when choosing a target:
+                -- walking/casting can outlast another player's resurrection.
+                local validfn = action.validfn
+                action.validfn = function(act)
+                    return M.CanRevivePlayer(ghost) and (validfn == nil or validfn(act))
+                end
                 if inst.prefab == "wortox" then
                     action._my_friend_rescue_target = ghost
                     action._my_friend_rescue_origin = inst:GetPosition()

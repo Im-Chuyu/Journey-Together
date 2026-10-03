@@ -895,6 +895,7 @@ AddPlayerPostInit(function(inst)
     inst._my_friend_affinity_net:set_local(20)
     inst._my_friend_affinity_net_value = 20
     if not _G.TheWorld.ismastersim then return end
+    require("my_friend_rescue").ConfigurePlayer(inst)
     inst:ListenForEvent("onattackother", require("my_friend_behavior_ai").RecordPlayerAttack)
     require("my_friend_migration").Attach(inst, ConfigureFriend)
     inst._my_friend_affinity_net:set(20)
