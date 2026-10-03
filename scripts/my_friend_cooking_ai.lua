@@ -3,6 +3,49 @@ local SurvivalAI = require("my_friend_survival_ai")
 local Policy = require("my_friend_policy")
 local M = {}
 
+-- Outdoor cookers are deliberately discovered only when a cooking action is
+-- actually needed.  Once selected, the entity is kept for the rest of the
+-- cooking attempt instead of scanning the whole 24-unit area every brain
+-- pass.  The component check also covers modded fire structures.
+local function IsUsableCooker(source)
+    return source ~= nil and source:IsValid()
+        and not source:HasAnyTag("INLIMBO", "burnt")
+        and source.components ~= nil and source.components.cooker ~= nil
+end
+
+local COOKER_PRIORITY = {
+    dragonflyfurnace = 1,
+    firepit = 2,
+    campfire = 3,
+    coldfirepit = 4,
+    coldfire = 5,
+    portablecookpot = 6,
+    archive_cookpot = 7,
+    cookpot = 8,
+}
+
+local function FindNearbyCooker(inst, food)
+    local x, y, z = inst.Transform:GetWorldPosition()
+    local best, bestscore, fuel_candidate, fuel_score
+    for _, source in ipairs(TheSim:FindEntities(x, y, z, 24, nil,
+        {"INLIMBO", "burnt"})) do
+        if IsUsableCooker(source)
+            and GetTime() >= ((inst._my_friend_cooking_blocked or {})[source.GUID] or 0) then
+            local d = inst:GetDistanceSqToInst(source)
+            local rank = COOKER_PRIORITY[source.prefab] or 20
+            local score = d + rank * .01
+            if source.components.cooker:CanCook(food, inst)
+                and (bestscore == nil or score < bestscore) then
+                best, bestscore = source, score
+            elseif source.components.fueled ~= nil and source.components.fueled:IsEmpty()
+                and (fuel_score == nil or score < fuel_score) then
+                fuel_candidate, fuel_score = source, score
+            end
+        end
+    end
+    return best or fuel_candidate
+end
+
 function M.GetCampfireAction(inst)
     if Policy.IsBusy(inst) or GetTime() < (inst._my_friend_campfire_after or 0) then return end
     local recipe = GetValidRecipe("campfire")
@@ -58,23 +101,20 @@ function M.GetAction(inst)
             and not FoodAI.IsForbiddenFood(item)
             and NeedsCooking(inst, item)
     end)
-    local x, y, z, range = Policy.SearchOrigin(inst, 30)
-    local best, bestscore
-    for _, source in ipairs(TheSim:FindEntities(x, y, z, range, nil,
-        {"INLIMBO", "burnt"})) do
-        if source.prefab == "firepit" then M.Remember(inst, source) end
-        if (source.prefab == "firepit" or source.prefab == "campfire")
-            and source.components.cooker ~= nil
-            and GetTime() >= ((inst._my_friend_cooking_blocked or {})[source.GUID] or 0) then
-            local score = Policy.DistanceSq(inst, source)
-            if bestscore == nil or score < bestscore then best, bestscore = source, score end
-        end
-    end
     if food == nil then
         inst._my_friend_cook_until = nil
+        inst._my_friend_cooking_source = nil
         return
     end
+    local best = inst._my_friend_cooking_source
+    if not IsUsableCooker(best)
+        or inst:GetDistanceSqToInst(best) > 24 * 24
+        or GetTime() < ((inst._my_friend_cooking_blocked or {})[best.GUID] or 0) then
+        best = FindNearbyCooker(inst, food)
+        inst._my_friend_cooking_source = best
+    end
     if best ~= nil then
+        if best.prefab == "firepit" then M.Remember(inst, best) end
         if best.components.cooker:CanCook(food, inst) then
             local action = BufferedAction(inst, best, ACTIONS.COOK, food)
             action:AddSuccessAction(function()
@@ -86,6 +126,7 @@ function M.GetAction(inst)
                     inst._my_friend_cook_until = nil
                     inst._my_friend_cooking_blocked = inst._my_friend_cooking_blocked or {}
                     inst._my_friend_cooking_blocked[best.GUID] = GetTime() + 20
+                    inst._my_friend_cooking_source = nil
                 end
             end)
             return Policy.GuardAction(inst, action)
@@ -104,6 +145,7 @@ function M.GetAction(inst)
                 action:AddFailAction(function()
                     if not action._my_friend_cancelled then
                         inst._my_friend_cooking_blocked = {[best.GUID] = GetTime() + 20}
+                        inst._my_friend_cooking_source = nil
                     end
                 end)
                 return Policy.GuardAction(inst, action)
@@ -111,6 +153,10 @@ function M.GetAction(inst)
         end
         return
     end
+    -- Keep the selected cooker stable.  Only a missing/invalid cooker causes
+    -- another local scan; otherwise fall back to the existing campfire
+    -- creation path without repeatedly enumerating nearby entities.
+    local x, y, z, range = Policy.SearchOrigin(inst, 30)
     if Policy.GetLeader(inst) == nil then
         local nearest, distance
         for _, point in ipairs(inst._my_friend_fire_memory or {}) do
@@ -138,6 +184,7 @@ end
 
 function M.OnLoad(inst, data)
     inst._my_friend_fire_memory = {}
+    inst._my_friend_cooking_source = nil
     for _, point in ipairs(data ~= nil and data.my_friend_fire_memory or {}) do
         if type(point.x) == "number" and type(point.z) == "number"
             and point.x == point.x and point.z == point.z

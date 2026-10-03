@@ -22,10 +22,43 @@ function M.SelectWorldMemory(data)
     end
 end
 
+-- The moon portal drops follower inventories BEFORE ms_playerdespawnanddelete.
+function M.HoldCompanion(player)
+    local friend = TheWorld._my_friend
+    if player == nil or player:HasTag("my_friend") or friend == nil
+        or not friend:IsValid() or friend.components.follower == nil then return end
+    local follower = friend.components.follower
+    if follower:GetLeader() ~= player then return end
+    require("my_friend_commands").Clear(friend)
+    local root = friend.brain ~= nil and friend.brain.bt ~= nil and friend.brain.bt.root or nil
+    if root ~= nil and root.CancelActive ~= nil then root:CancelActive() end
+    friend:ClearBufferedAction()
+    if friend.components.locomotor ~= nil then
+        friend.components.locomotor:Clear()
+        friend.components.locomotor:Stop()
+    end
+    local affinity = friend.components.my_friend_affinity
+    if affinity ~= nil then
+        affinity.requests = {}
+        affinity.staying = true
+    end
+    follower:SetLeader(nil)
+    follower:ClearCachedPlayerLeader()
+    friend._my_friend_last_leader_userid = nil
+    require("my_friend_home").Set(friend, friend:GetPosition(), "hold")
+    friend._my_friend_replan_requested = true
+end
+
 function M.Attach(player, configure)
     if not TheWorld.ismastersim then return end
     M.ConfigureFriend = configure
     if player.components.my_friend_traveller == nil then player:AddComponent("my_friend_traveller") end
+    player:ListenForEvent("ms_playerreroll", function(inst)
+        local swapper = inst.components.seamlessplayerswapper
+        if swapper ~= nil and swapper._my_friend_swap_in_progress then return end
+        M.HoldCompanion(inst)
+        require("my_friend_possess").OnCharacterReroll(inst)
+    end)
     local old = player.OnDespawn
     player.OnDespawn = function(inst, migrationdata)
         -- While the world is still loading, DST restores every snapshot
@@ -49,6 +82,7 @@ function M.Attach(player, configure)
                 require("my_friend_shard_home").ReturnHome(friend)
             end
         end
+        if migrationdata == nil then M.HoldCompanion(inst) end
         if old ~= nil then return old(inst, migrationdata) end
     end
 end

@@ -392,6 +392,8 @@ local function FindStructure(inst, prefab)
     return closest
 end
 
+M.FindBaseStructure = FindStructure
+
 local function FindOwnedChests(inst)
     return FindStructures(inst, "treasurechest")
 end
@@ -2126,6 +2128,18 @@ function M.GetRemainsAction(inst, target)
         or inst.sg ~= nil and inst.sg:HasStateTag("busy")
         or target == nil or not target:IsValid()
         or not target:HasTag("my_friend_remains") or not Policy.InRange(inst, target) then return end
+    for _, point in ipairs(inst._my_friend_death_sites or {}) do
+        if point.expires ~= nil and GetTime() >= point.expires
+            and point.x ~= nil and point.z ~= nil then
+            local x, _, z = target.Transform:GetWorldPosition()
+            if (x - point.x)^2 + (z - point.z)^2 <= 4^2 then
+                if target.components.my_friend_remains ~= nil then
+                    target:RemoveComponent("my_friend_remains")
+                end
+                return
+            end
+        end
+    end
     local workable = target.components.workable
     if workable == nil or not workable:CanBeWorked()
         or workable:GetWorkAction() ~= ACTIONS.HAMMER then return end
@@ -2142,7 +2156,13 @@ function M.GetRemainsAction(inst, target)
     end
     if not M.CanUseHandToolInCurrentLight(inst) or not EquipTool(inst, tool) then return end
     M.SetTask(inst, "正在敲掉自己的遗骸")
-    return TimedAction(inst, target, ACTIONS.HAMMER, tool)
+    local action = TimedAction(inst, target, ACTIONS.HAMMER, tool)
+    local previous = action.validfn
+    action.validfn = function(act)
+        return target:IsValid() and target:HasTag("my_friend_remains")
+            and (previous == nil or previous(act))
+    end
+    return action
 end
 
 local RefreshGarden
@@ -3667,6 +3687,9 @@ function M.GetCommandAction(inst)
     -- pass that lock to queue EAT/return; unrelated work still waits.
     if not CanAct(inst, command) then return end
     local leader = Policy.GetLeader(inst)
+    if command ~= nil and command.id == "touch_tower" then
+        return require("my_friend_command_tower").GetAction(inst, command)
+    end
     if command == nil or leader == nil or command.player ~= leader
         or GetTime() > (command.deadline or 0) then
         if command ~= nil then inst._my_friend_command = nil end

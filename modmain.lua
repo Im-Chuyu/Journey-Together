@@ -447,6 +447,7 @@ local Dialogue = require("my_friend_dialogue")
 local Commands = require("my_friend_commands")
 local CookingAI = require("my_friend_cooking_ai")
 local ResourceMemory = require("my_friend_resource_memory")
+local Possess = require("my_friend_possess")
 AddStategraphPostInit("wilsonghost", Dialogue.ProtectStategraph)
 
 AddStategraphPostInit("wilson", function(sg)
@@ -483,13 +484,19 @@ AddPrefabPostInit("skeleton_player", function(inst)
     inst.OnSave = function(self, data)
         local refs = oldsave ~= nil and oldsave(self, data) or nil
         if self._my_friend_remains then data.my_friend_remains = true end
+        local remains = self.components.my_friend_remains
+        if remains ~= nil then data.my_friend_remains_remaining = math.max(0, remains.expires - _G.GetTime()) end
+        data.my_friend_remains_expired = self._my_friend_remains_expired or nil
         return refs
     end
     inst.OnLoad = function(self, data, ents)
         if oldload ~= nil then oldload(self, data, ents) end
+        self._my_friend_remains_expired = data ~= nil and data.my_friend_remains_expired or nil
         if data ~= nil and data.my_friend_remains
+            and not self._my_friend_remains_expired
             and self.components.my_friend_remains == nil then
             self:AddComponent("my_friend_remains")
+            self.components.my_friend_remains:SetLifetime(data.my_friend_remains_remaining or 120)
         end
     end
 end)
@@ -742,6 +749,7 @@ local function ConfigureFriend(inst)
     inst._my_friend_greeting_task = inst:DoPeriodicTask(.5, CoreAI.UpdateGreetings)
     inst._my_friend_inventory_task = inst:DoPeriodicTask(1, CoreAI.MergeOneStack)
     Dialogue.Configure(inst)
+    require("my_friend_survival_ai").ConfigureShelter(inst)
     require("my_friend_offscreen").Configure(inst)
     inst._my_friend_platform_task = inst:DoPeriodicTask(.1, require("my_friend_platforms").Observe)
     inst._my_friend_care_task = inst:DoPeriodicTask(2, require("my_friend_social_ai").UpdateCare)
@@ -858,6 +866,11 @@ local function FindFriend()
     return actual
 end
 
+-- The possession helper rebuilds the player's old body as an autonomous
+-- companion. Keep the normal companion setup in one place so the rebuilt
+-- entity receives the same AI, replication and save hooks as the original.
+Possess.ConfigureCompanion = ConfigureFriend
+
 AddPlayerPostInit(function(inst)
     require("my_friend_emotes").ConfigurePlayer(inst)
     inst._my_friend_affinity_net = _G.net_float(inst.GUID,
@@ -868,6 +881,14 @@ AddPlayerPostInit(function(inst)
     inst:ListenForEvent("onattackother", require("my_friend_behavior_ai").RecordPlayerAttack)
     require("my_friend_migration").Attach(inst, ConfigureFriend)
     inst._my_friend_affinity_net:set(20)
+    -- A vanilla character change creates a new player entity. Reattach an
+    -- active possession session immediately so the command wheel still
+    -- exposes Release instead of treating the parked body as a fresh target.
+    inst:DoStaticTaskInTime(0, function(player)
+        if player:IsValid() and Possess.Rebind ~= nil then
+            Possess.Rebind(player)
+        end
+    end)
     inst:DoPeriodicTask(1, function(player)
         local friend = _G.TheWorld._my_friend
         if friend ~= nil and friend:IsValid() and friend.components.my_friend_affinity ~= nil then
@@ -989,6 +1010,24 @@ local function CanManage(player, friend, ignore_distance)
     if not ignore_distance and (fx - px)^2 + (fz - pz)^2 > 100 then return false end
     local leader = friend.components.follower ~= nil and friend.components.follower:GetLeader() or nil
     return leader == nil or leader == player
+end
+
+local function CanPossess(player, friend)
+    if player == nil or not player:IsValid() or friend == nil or not friend:IsValid()
+        or not IsActualCompanion(friend)
+        or friend.components == nil or friend.components.inventory == nil
+        or not require("my_friend_policy").IsLocalPlayer(player)
+        or friend.components.my_friend_affinity == nil then
+        return false
+    end
+    local affinity = friend.components.my_friend_affinity
+    local score = affinity:Get(player)
+    if score >= 90 then
+        return true
+    end
+    local leader = friend.components.follower ~= nil
+        and friend.components.follower:GetLeader() or nil
+    return leader == player
 end
 
 AddModRPCHandler("MyFriends", "Rename", function(player, friend, name)
@@ -1241,8 +1280,26 @@ AddModRPCHandler("MyFriends", "PanelOpen", function(player, friend)
 end)
 
 AddModRPCHandler("MyFriends", "WheelCommand", function(player, friend, command_id)
+    if player ~= nil and player:HasTag("my_friend_possessing") then
+        local target = Possess.GetCommandTarget(player)
+        if target ~= nil and target:IsValid() and type(command_id) == "string" then
+            require("my_friend_commands").DispatchWheel(target, player, command_id)
+        end
+        return
+    end
     if not CanManage(player, friend, true) or type(command_id) ~= "string" then return end
     require("my_friend_commands").DispatchWheel(friend, player, command_id)
+end)
+
+AddModRPCHandler("MyFriends", "PossessFriend", function(player, friend)
+    if not CanPossess(player, friend) then return end
+    Possess.Possess(player, friend)
+end)
+
+AddModRPCHandler("MyFriends", "ReleaseFriend", function(player)
+    if player == nil or not player:IsValid()
+        or not player:HasTag("my_friend_possessing") then return end
+    Possess.Release(player)
 end)
 
 AddModRPCHandler("MyFriends", "PanelClose", function(player)
@@ -1560,6 +1617,7 @@ end)
 local function ConfigureFriendWorld(world)
     if world == nil or not world.ismastersim or world._my_friend_world_configured then return end
     world._my_friend_world_configured = true
+    Possess.Init(world)
     _G.print("[MyFriends] World lifecycle initialized: " .. tostring(world.prefab)
         .. ", shard=" .. tostring(_G.TheShard:GetShardId()))
     -- DoInitGame replays and removes every snapshot session in the same frame
@@ -1573,6 +1631,7 @@ local function ConfigureFriendWorld(world)
     local oldsave, oldload = world.OnSave, world.OnLoad
     world.OnSave = function(self, data)
         local refs = oldsave ~= nil and oldsave(self, data) or nil
+        Possess.SaveWorld(self, data)
         data.my_friend_saved = self._my_friend_saved == true
         data.my_friend_initialized = self._my_friend_initialized == true
         data.my_friend_known_shards = self._my_friend_known_shards
@@ -1582,6 +1641,7 @@ local function ConfigureFriendWorld(world)
     end
     world.OnLoad = function(self, data, ents)
         if oldload ~= nil then oldload(self, data, ents) end
+        Possess.LoadWorld(self, data)
         self._my_friend_saved = data ~= nil and data.my_friend_saved == true or false
         self._my_friend_initialized = data ~= nil
             and (data.my_friend_initialized == true or data.my_friend_saved == true) or false
@@ -1600,7 +1660,8 @@ local function ConfigureFriendWorld(world)
     end
     local function EnsureCompanion(player)
         if not world:HasTag("forest") or player == nil or not player:IsValid()
-            or player:HasTag("my_friend") or player._despawning then return end
+            or player:HasTag("my_friend") or player:HasTag("my_friend_possessing")
+            or player._despawning or world._my_friend_possession_active then return end
         if not world._my_friend_spawn_check_logged then
             world._my_friend_spawn_check_logged = true
             _G.print("[MyFriends] Checking companion: saved=" .. tostring(world._my_friend_saved)
@@ -1631,6 +1692,43 @@ local function ConfigureFriendWorld(world)
         world:DoTaskInTime(4, function()
             EnsureCompanion(player)
         end)
+    end)
+    local function StandByForRemovedPlayer(player)
+        if player == nil or player:HasTag("my_friend")
+            or player:HasTag("my_friend_possessing") then return end
+        local friend = world._my_friend
+        if friend == nil or not friend:IsValid()
+            or friend.components == nil or friend.components.follower == nil then return end
+        local follower = friend.components.follower
+        if follower:GetLeader() ~= player
+            and friend._my_friend_last_leader_userid ~= player.userid then return end
+        -- A gate/character-screen transition removes the player entity. Treat
+        -- that as an automatic "hold position" request, without invoking the
+        -- farewell/switch code that drops the companion's belongings.
+        require("my_friend_commands").Clear(friend)
+        local root = friend.brain ~= nil and friend.brain.bt ~= nil
+            and friend.brain.bt.root or nil
+        if root ~= nil and root.CancelActive ~= nil then root:CancelActive() end
+        if friend.components.locomotor ~= nil then
+            friend.components.locomotor:Clear()
+            friend.components.locomotor:Stop()
+        end
+        local affinity = friend.components.my_friend_affinity
+        if affinity ~= nil then
+            affinity.requests = {}
+            affinity.staying = true
+        end
+        follower:SetLeader(nil)
+        if follower.ClearCachedPlayerLeader ~= nil then
+            follower:ClearCachedPlayerLeader()
+        end
+        friend._my_friend_replan_requested = true
+    end
+    world:ListenForEvent("ms_playerdespawn", function(_, player)
+        StandByForRemovedPlayer(player)
+    end)
+    world:ListenForEvent("ms_playerdespawnanddelete", function(_, player)
+        StandByForRemovedPlayer(player)
     end)
     world:DoPeriodicTask(30, function()
         for _, player in ipairs(_G.AllPlayers or {}) do
@@ -1667,8 +1765,20 @@ end)
 AddPlayerPostInit(function(inst)
     local world = _G.TheWorld
     if world == nil or not world.ismastersim then return end
+    inst:DoStaticTaskInTime(0, function(player)
+        if not player:IsValid() then return end
+        if Possess.Rebind ~= nil then Possess.Rebind(player) end
+    end)
+    -- Native loading fades finish before a saved possession replaces the body.
+    inst:DoStaticTaskInTime(1, function(player)
+        if player:IsValid() and Possess.Recover ~= nil then Possess.Recover(player) end
+    end)
     inst:DoTaskInTime(4, function(player)
+        if Possess.Rebind ~= nil then
+            Possess.Rebind(player)
+        end
         if not player:IsValid() or player:HasTag("my_friend")
+            or player:HasTag("my_friend_possessing")
             or player.userid == nil or player._despawning then return end
         ConfigureFriendWorld(world)
         _G.print("[MyFriends] Player spawn initialization: " .. tostring(player.userid)

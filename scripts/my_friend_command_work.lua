@@ -149,6 +149,19 @@ local function SoilOccupied(point)
     return false
 end
 
+-- Use live soil moisture and compare tile coordinates, including corner plants.
+local function TileNeedsWater(point)
+    local manager = TheWorld.components.farming_manager
+    if manager == nil or manager:IsSoilMoistAtPoint(point.x, 0, point.z) then return false end
+    local tx, tz = TheWorld.Map:GetTileCoordsAtPoint(point.x, 0, point.z)
+    for _, entity in ipairs(TheSim:FindEntities(point.x, 0, point.z, 3,
+        {"farmplantstress"}, {"INLIMBO", "burnt", "fire"})) do
+        local ex, ez = TheWorld.Map:GetTileCoordsAtPoint(entity.Transform:GetWorldPosition())
+        if ex == tx and ez == tz then return true end
+    end
+    return false
+end
+
 local function FarmTargets(inst, command)
     local map = TheWorld.Map
     local x, _, z = command.origin:Get()
@@ -178,17 +191,24 @@ local function FarmTargets(inst, command)
                     end
                     if eligible then
                         tiles[#tiles + 1] = {key = tostring(ix)..":"..tostring(iz),
-                            tx = ix, tz = iz, distance = (cx-x)^2 + (cz-z)^2}
+                            tx = ix, tz = iz, priority = command.id == "water"
+                                and (TileNeedsWater(Vector3(cx, 0, cz)) and 0 or 1) or 0,
+                            distance = (cx-x)^2 + (cz-z)^2}
                     end
                 end
             end
         end
         table.sort(tiles, function(a, b)
-            return a.distance == b.distance and a.key < b.key or a.distance < b.distance
+            return a.priority == b.priority
+                and (a.distance == b.distance and a.key < b.key or a.distance < b.distance)
+                or a.priority < b.priority
         end)
         -- Four touching tiles (square or straight line) whenever possible.
         command.farm_tiles = {}
-        for _, tile in ipairs(require("my_friend_farm_tiles").Select(tiles, 4)) do
+        local selected = command.id == "water" and tiles
+            or require("my_friend_farm_tiles").Select(tiles, 4)
+        for index, tile in ipairs(selected) do
+            if index > 4 then break end
             command.farm_tiles[tile.key] = true
         end
     end
@@ -201,7 +221,8 @@ local function FarmTargets(inst, command)
                 local key = tostring(ix)..":"..tostring(iz)
                 if command.id == "water" then
                     if (command.farm_done[key] or 0) < 4 and not command.farm_failed[key] then
-                        points[#points + 1] = {point = Vector3(cx, 0, cz), key = key}
+                        points[#points + 1] = {point = Vector3(cx, 0, cz), key = key,
+                            priority = TileNeedsWater(Vector3(cx, 0, cz)) and 0 or 1}
                     end
                 else
                     for gx = -1, 1 do
@@ -220,7 +241,9 @@ local function FarmTargets(inst, command)
     end
     local origin = inst:GetPosition()
     table.sort(points, function(a, b)
-        return (a.point-origin):LengthSq() < (b.point-origin):LengthSq()
+        return a.priority == b.priority
+            and (a.point-origin):LengthSq() < (b.point-origin):LengthSq()
+            or (a.priority or 0) < (b.priority or 0)
     end)
     command.farm_targets = {tx = tx, tz = tz, untiltime = GetTime() + 5, points = points}
     return points
@@ -287,6 +310,7 @@ function M.Farm(inst, command)
     end
     action:AddSuccessAction(function()
         command.farm_done[target.key] = (command.farm_done[target.key] or 0) + 1
+        command.farm_targets = nil
     end)
     action:AddFailAction(function()
         if not action._my_friend_cancelled then command.farm_failed[target.key] = true end

@@ -21,6 +21,8 @@ M.MATERIAL_SEARCH_RANGE = 15
 M.FIRE_CLEARANCE = 4
 M.FIRE_POINT_SEARCH_RANGE = 14
 M.FEATHERFAN_TEMPERATURE = 65
+M.BASE_COLD_FIRE_RANGE = 24
+M.AURORA_RANGE = 24
 
 local THERMAL_CANT_TAGS = {
     "INLIMBO", "burnt", "playerghost",
@@ -64,6 +66,14 @@ end
 function M.GetThermalNeed(inst)
     local temperature = inst.components.temperature
     if temperature == nil then return end
+    -- Native canopy cooling levels off at overheattemp - 5, not at 55C.
+    if M.IsUnderRememberedShade(inst) and temperature.current > M.COLD_RECOVER
+        and temperature.current < temperature.overheattemp - 2
+        and (inst._my_friend_thermal_need ~= "hot"
+            or temperature.current <= temperature.overheattemp - 4.5) then
+        inst._my_friend_thermal_need = nil
+        return
+    end
     inst._my_friend_thermal_need = M.UpdateThermalNeed(
         temperature.current, temperature.overheattemp,
         inst._my_friend_thermal_need)
@@ -261,6 +271,93 @@ function M.FindThermalSource(inst, need)
     return best, bestdistance, besthazardous
 end
 
+local function IsAuroraSource(entity)
+    return entity ~= nil and entity:IsValid()
+        and entity.prefab == "staffcoldlight"
+end
+
+local function FindNearbyAurora(inst)
+    local cached = inst._my_friend_aurora
+    if IsAuroraSource(cached) and inst:IsNear(cached, M.AURORA_RANGE) then return cached end
+    if GetTime() < (inst._my_friend_aurora_scan_after or 0) then return end
+    inst._my_friend_aurora_scan_after = GetTime() + 8
+    local x, y, z = inst.Transform:GetWorldPosition()
+    local best, distance
+    for _, entity in ipairs(TheSim:FindEntities(x, y, z, M.AURORA_RANGE, nil,
+        {"INLIMBO"}, {"HASHEATER"})) do
+        if IsAuroraSource(entity) then
+            local d = inst:GetDistanceSqToInst(entity)
+            if distance == nil or d < distance then best, distance = entity, d end
+        end
+    end
+    inst._my_friend_aurora = best
+    return best
+end
+
+local function FindRememberedBaseColdFire(inst)
+    local remembered = inst._my_friend_base_coldfirepit
+    if remembered ~= nil and remembered:IsValid()
+        and remembered.prefab == "coldfirepit" then
+        return remembered
+    end
+    if GetTime() < (inst._my_friend_coldfire_scan_after or 0) then return end
+    inst._my_friend_coldfire_scan_after = GetTime() + 8
+    local base = require("my_friend_base_ai").GetBasePoint(inst)
+    if base == nil then return end
+    local source
+    for _, entity in ipairs(TheSim:FindEntities(base.x, 0, base.z, 24,
+        {"campfire"}, THERMAL_CANT_TAGS)) do
+        if entity.prefab == "coldfirepit" then source = entity break end
+    end
+    if source ~= nil then inst._my_friend_base_coldfirepit = source end
+    return source
+end
+
+local function IsShadeTree(tree)
+    return tree ~= nil and tree:IsValid() and tree.prefab == "oceantree_pillar"
+        and not tree:HasAnyTag("INLIMBO", "burnt", "stump", "fire")
+        and (tree._hascanopy == nil or tree._hascanopy:value())
+end
+
+local function ShadeRadius()
+    return math.max(3, (TUNING.SHADE_CANOPY_RANGE_SMALL or 22) - 2)
+end
+
+function M.IsUnderRememberedShade(inst)
+    local tree = inst._my_friend_shade_tree
+    return IsShadeTree(tree) and inst:GetDistanceSqToInst(tree) <= ShadeRadius() ^ 2
+end
+
+function M.ConfigureShelter(inst)
+    local sheltered = inst.components.sheltered
+    if sheltered == nil or sheltered._my_friend_shade_hook then return end
+    sheltered._my_friend_shade_hook = true
+    local update = sheltered.OnUpdate
+    sheltered.OnUpdate = function(self, dt)
+        local count = inst.canopytrees
+        if M.IsUnderRememberedShade(inst) then inst.canopytrees = (count or 0) + 1 end
+        update(self, dt)
+        inst.canopytrees = count
+    end
+end
+
+local function FindBaseShade(inst)
+    if not TheWorld.state.issummer then return end
+    local base = require("my_friend_base_ai").GetBasePoint(inst)
+    if base == nil or inst:GetDistanceSqToPoint(base) > 40 ^ 2 then return end
+    local tree = inst._my_friend_shade_tree
+    if IsShadeTree(tree) and tree:GetDistanceSqToPoint(base) <= 40 ^ 2 then return tree end
+    if GetTime() < (inst._my_friend_shade_scan_after or 0) then return end
+    inst._my_friend_shade_scan_after = GetTime() + 10
+    for _, entity in ipairs(TheSim:FindEntities(base.x, 0, base.z, 40,
+        {"shadecanopysmall"}, THERMAL_CANT_TAGS)) do
+        if IsShadeTree(entity) then
+            inst._my_friend_shade_tree = entity
+            return entity
+        end
+    end
+end
+
 local function DistanceSq(inst, target)
     local x, _, z = inst.Transform:GetWorldPosition()
     local tx, _, tz = target.Transform:GetWorldPosition()
@@ -269,6 +366,14 @@ local function DistanceSq(inst, target)
 end
 
 function M.IsNearThermalSource(inst)
+    if M.GetThermalNeed(inst) == "hot" then
+        local target = inst._my_friend_cooling_target
+        if target ~= nil and target:IsValid() then
+            if target.prefab == "oceantree_pillar" then return M.IsUnderRememberedShade(inst) end
+            if (target.components.fueled == nil or target.components.fueled:GetPercent() > 0)
+                and DistanceSq(inst, target) <= 2.75 ^ 2 then return true end
+        end
+    end
     local source, distance, hazardous = M.FindThermalSource(inst)
     if source == nil then return false end
     local distancesq = DistanceSq(inst, source)
@@ -428,6 +533,57 @@ function M.GetTemperatureAction(inst)
     end
     local need = M.GetThermalNeed(inst)
     if need == nil then return end
+    if need == "hot" then
+        local aurora = FindNearbyAurora(inst)
+        if aurora ~= nil then
+            inst._my_friend_cooling_target = aurora
+            if DistanceSq(inst, aurora) > 2.75 ^ 2 then
+                return BufferedAction(inst, aurora, ACTIONS.WALKTO, nil, nil, nil, 2)
+            end
+            return
+        end
+        local tree = FindBaseShade(inst)
+        if tree ~= nil then
+            inst._my_friend_cooling_target = tree
+            if M.IsUnderRememberedShade(inst) then return end
+            local tx, _, tz = tree.Transform:GetWorldPosition()
+            local origin = inst:GetPosition()
+            local heading = math.atan2(origin.z - tz, origin.x - tx)
+            for i = 0, 15 do
+                local angle = heading + i * PI2 / 16
+                local point = Vector3(tx + math.cos(angle) * (ShadeRadius() - 2), 0,
+                    tz + math.sin(angle) * (ShadeRadius() - 2))
+                if TheWorld.Map:IsPassableAtPoint(point.x, 0, point.z)
+                    and not Navigation.IsNearHole(point)
+                    and require("my_friend_home").IsPointInRange(inst, point) then
+                    return BufferedAction(inst, nil, ACTIONS.WALKTO, nil, point)
+                end
+            end
+        end
+        local base_coldfire = FindRememberedBaseColdFire(inst)
+        if base_coldfire ~= nil and DistanceSq(inst, base_coldfire)
+            <= M.BASE_COLD_FIRE_RANGE ^ 2 then
+            local fueled = base_coldfire.components ~= nil
+                and base_coldfire.components.fueled or nil
+            if fueled ~= nil and fueled:GetPercent() < .35 then
+                local fuel = inst.components.inventory:FindItem(function(item)
+                    return (item.prefab == "log" or item.prefab == "twigs" or item.prefab == "cutgrass")
+                        and fueled:CanAcceptFuelItem(item)
+                end)
+                if fuel ~= nil then
+                    return BufferedAction(inst, base_coldfire, ACTIONS.ADDFUEL, fuel)
+                end
+            end
+            if fueled ~= nil and fueled:GetPercent() > 0 then
+                inst._my_friend_cooling_target = base_coldfire
+                if DistanceSq(inst, base_coldfire) > 2.75 ^ 2 then
+                    return BufferedAction(inst, base_coldfire, ACTIONS.WALKTO,
+                        nil, nil, nil, 2)
+                end
+                return
+            end
+        end
+    end
     if need == "hot" and inst.components.temperature.current >= inst.components.temperature.overheattemp then
         local hot = M.FindDamagingHeatSource(inst)
         if hot ~= nil then

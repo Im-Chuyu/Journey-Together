@@ -9,6 +9,7 @@ M.DEATH_DROP_TAG = "my_friend_death_drop"
 M.DEATH_DROP_RADIUS = 18
 M.DEATH_POINT_ARRIVE_DISTANCE = 3
 M.PORTAL_ACTION_TIMEOUT = 300
+M.REMAINS_TIMEOUT = 120
 
 local VALID_PORTALS = {
     multiplayer_portal = true,
@@ -142,7 +143,10 @@ local function OnDeath(inst)
     inst._my_friend_auto_recovery_point = nil
     require("my_friend_ghost_commands").Cancel(inst)
     local x, y, z = inst.Transform:GetWorldPosition()
-    inst._my_friend_death_point = { x = x, y = y, z = z, name = inst:GetDisplayName() }
+    inst._my_friend_death_point = {
+        x = x, y = y, z = z, name = inst:GetDisplayName(),
+        expires = GetTime() + M.REMAINS_TIMEOUT,
+    }
     -- There is only one active companion. Keep the current death site as the
     -- recovery job instead of appending an unbounded history after repeated
     -- deaths before the previous drops were recovered.
@@ -169,16 +173,42 @@ end
 
 local function MarkOwnRemains(inst, point)
     point = point or inst._my_friend_death_point
-    if point == nil then return end
+    if point == nil or point.expires ~= nil and GetTime() >= point.expires then return end
     for _, entity in ipairs(TheSim:FindEntities(point.x, 0, point.z, 2, nil, {"INLIMBO"})) do
         if entity.SetSkeletonDescription ~= nil
             and entity.char == inst.prefab and entity.userid == inst.userid
             and entity.playername == (point.name or inst._my_friend_death_name or inst:GetDisplayName())
             and not (inst._my_friend_existing_remains or {})[entity.GUID]
+            and not entity._my_friend_remains_expired
             and entity.components.my_friend_remains == nil then
             entity:AddComponent("my_friend_remains")
+            entity.components.my_friend_remains:SetLifetime(
+                math.max(0, (point.expires or GetTime() + M.REMAINS_TIMEOUT) - GetTime()))
         end
     end
+end
+
+local function ExpireRemains(inst, now)
+    local sites = inst._my_friend_death_sites or {}
+    for index = #sites, 1, -1 do
+        local point = sites[index]
+        if point ~= nil and point.expires ~= nil and now >= point.expires then
+            for _, entity in ipairs(TheSim:FindEntities(point.x, 0, point.z, 4, {"my_friend_remains"})) do
+                if entity:IsValid() and entity:HasTag("my_friend_remains")
+                    and entity.components.workable ~= nil
+                    and point.x ~= nil and point.z ~= nil then
+                    local x, _, z = entity.Transform:GetWorldPosition()
+                    if (x - point.x)^2 + (z - point.z)^2 <= 4^2
+                        and entity.components.my_friend_remains ~= nil then
+                        entity._my_friend_remains_expired = true
+                        entity:RemoveComponent("my_friend_remains")
+                    end
+                end
+            end
+            table.remove(sites, index)
+        end
+    end
+    inst._my_friend_death_sites = sites
 end
 
 local function OnRespawned(inst)
@@ -319,6 +349,7 @@ function M.GetRecoveryAction(inst)
         or inst._my_friend_container_action then return end
     local leader = Policy.GetLeader(inst)
     if leader ~= nil and not Policy.InRange(inst, inst) then return end
+    ExpireRemains(inst, GetTime())
     ClearRecoveredInventory(inst)
     local now, candidates, outstanding = GetTime(), {}, false
     local retry = inst._my_friend_recovery_retry or {}
@@ -405,7 +436,7 @@ function M.GetRecoveryAction(inst)
     local sites = inst._my_friend_death_sites or {inst._my_friend_death_point}
     local unvisited = false
     for _, point in ipairs(sites) do
-        if not point.visited then
+        if not point.visited and (point.expires == nil or GetTime() < point.expires) then
             unvisited = true
             local x, _, z = inst.Transform:GetWorldPosition()
             if (point.x - x)^2 + (point.z - z)^2 <= 4^2 then
@@ -422,6 +453,7 @@ function M.GetRecoveryAction(inst)
                     action.arrivedist = 3
                     action.validfn = function()
                         return IsAlive(inst) and Safety.IsSafe(inst, p)
+                            and (point.expires == nil or GetTime() < point.expires)
                             and Policy.GetLeader(inst) == leader
                             and (leader == nil or Policy.InRange(inst, inst))
                     end
@@ -443,6 +475,15 @@ function M.OnSave(inst, data)
     require("my_friend_ghost_help").OnSave(inst, data)
     local point = inst._my_friend_death_point
     if point ~= nil then
+        local sites = {}
+        for _, site in ipairs(inst._my_friend_death_sites or {point}) do
+            local copy = {}
+            for key, value in pairs(site) do copy[key] = value end
+            copy.expires_remaining = site.expires ~= nil
+                and math.max(0, site.expires - GetTime()) or M.REMAINS_TIMEOUT
+            copy.expires = nil
+            sites[#sites + 1] = copy
+        end
         data.my_friend_revive = {
             death_x = point.x,
             death_y = point.y,
@@ -450,7 +491,7 @@ function M.OnSave(inst, data)
             portal_requested = inst._my_friend_portal_revive_requested == true,
             recover_drops = inst._my_friend_recover_death_drops == true,
             auto_recovery = inst._my_friend_auto_recovery_point ~= nil,
-            sites = inst._my_friend_death_sites,
+            sites = sites,
             death_name = inst._my_friend_death_name,
             attacker_prefab = inst._my_friend_death_attacker_prefab,
             delivery = inst._my_friend_recovery_delivery,
@@ -477,9 +518,15 @@ function M.OnLoad(inst, data)
                 and point.x == point.x and point.z == point.z
                 and math.abs(point.x) < 10000000 and math.abs(point.z) < 10000000 then
                 inst._my_friend_death_sites[#inst._my_friend_death_sites + 1] = {
-                    x = point.x, z = point.z, y = 0, name = point.name, visited = point.visited == true,
+                    x = point.x, z = point.z, y = 0, name = point.name,
+                    visited = point.visited == true,
+                    expires = GetTime() + (type(point.expires_remaining) == "number"
+                        and math.max(0, point.expires_remaining) or M.REMAINS_TIMEOUT),
                 }
             end
+        end
+        if inst._my_friend_death_sites[1] ~= nil then
+            inst._my_friend_death_point.expires = inst._my_friend_death_sites[1].expires
         end
         inst._my_friend_death_name = saved.death_name
         inst._my_friend_death_attacker_prefab = saved.attacker_prefab

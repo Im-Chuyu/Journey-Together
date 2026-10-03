@@ -93,7 +93,8 @@ end
 function M.Get(friend)
     local command = friend ~= nil and friend._my_friend_command or nil
     if command ~= nil and (not Policy.IsLocalPlayer(command.player)
-        or Policy.GetLeader(friend) ~= command.player or GetTime() >= command.deadline) then
+        or GetTime() >= (command.deadline or 0)
+        or command.id ~= "touch_tower" and Policy.GetLeader(friend) ~= command.player) then
         M.Clear(friend)
         return
     end
@@ -104,6 +105,7 @@ function M.Clear(friend)
     if friend == nil then return end
     require("my_friend_carry_backpack").Cancel(friend)
     local old = friend._my_friend_command
+    if old ~= nil and old.id == "touch_tower" then require("my_friend_command_tower").Cancel(friend, old) end
     if old ~= nil and old.id == "fish" then require("my_friend_fishing").Cancel(friend, old) end
     if old ~= nil and old.id == "butterfly" and friend.components.combat ~= nil
         and friend.components.combat.target == old.butterfly_target then
@@ -300,7 +302,7 @@ function M.Dispatch(friend, player, message, from_wheel)
         or friend._my_friend_sitting ~= nil or friend._my_friend_seat_request ~= nil) then
         id = "stop_sit"
     end
-    local special = SpecialCommands.Parse(friend, addressed_message, id ~= nil)
+    local special = id ~= "touch_tower" and SpecialCommands.Parse(friend, addressed_message, id ~= nil) or nil
     if special ~= nil then
         if not from_wheel and id == nil and MaybeRefuseChinese(friend, addressed_message, "special") then return true end
         if friend:HasTag("playerghost") or Policy.GetLeader(friend) ~= player then return false end
@@ -321,6 +323,19 @@ function M.Dispatch(friend, player, message, from_wheel)
                 or special.recipe == "bookstation" and "bookstation_prepare"
                 or special.special == "spice" and "special_spice_ok" or "special_command_ok")
         end
+        return true
+    end
+    -- Visiting a portal/tower is a one-shot autonomous request. It does not
+    -- require a leader or a follower relationship, so any addressed player
+    -- can issue it while the companion is free or at its base.
+    if id == "touch_tower" then
+        if friend:HasTag("playerghost") or Policy.GetLeader(friend) ~= nil then return false end
+        M.Clear(friend)
+        friend._my_friend_command = {
+            id = "touch_tower", player = player, started = GetTime(),
+            origin = friend:GetPosition(), deadline = GetTime() + 180,
+        }
+        Reply(friend, "special_command_ok")
         return true
     end
     if id == "ask_activity" then

@@ -83,7 +83,9 @@ end
 
 local function StartFriendWalk(inst, target)
     local goal = target
-    if inst:GetCurrentPlatform() == nil then target = Navigation.GetSteeringPoint(inst, target) end
+    if inst:GetCurrentPlatform() == nil then
+        target = Navigation.GetSteeringPoint(inst, target, true)
+    end
     local detour = Navigation.Unstick(inst, goal)
     if detour ~= nil then target = detour end
     if target == nil then inst.components.locomotor:Stop() return end
@@ -114,7 +116,7 @@ end
 local function StartFriendRun(inst, target)
     local goal = target
     if inst:GetCurrentPlatform() == nil then
-        target = Navigation.GetSteeringPoint(inst, target)
+        target = Navigation.GetSteeringPoint(inst, target, true)
     end
     -- Independent of the local planner, which is skipped entirely once the
     -- leader is past its range and returns nil while it is still thinking.
@@ -481,6 +483,7 @@ function MyFriendBrain:OnStart()
                 and id ~= "seek_light" and id ~= "emergency_light_supply"
                 and id ~= "emergency_fire" and id ~= "backpack_recovery" and id ~= "revive_return"
                 and id ~= "carry_backpack"
+                and id ~= "touch_tower"
                 and not ((id == "food" or id == "container_food" or id == "cook")
                     and inst.components.hunger:GetPercent() < .2) then return end
             if command ~= nil and (command.id == "seeds" or command.id == "tidy" or command.id == "equipment")
@@ -491,7 +494,7 @@ function MyFriendBrain:OnStart()
             if LightAI.IsDark(inst) and id ~= "farewell" and id ~= "light" and id ~= "seek_light"
                 and id ~= "emergency_light_supply" and id ~= "emergency_fire"
                 and id ~= "base_fire" and id ~= "hurt" and id ~= "eat"
-                and id ~= "revive" then return end
+                and id ~= "revive" and id ~= "temperature" then return end
             local action = getter(inst)
             if action ~= nil and Policy.IsRoaming(inst) then
                 action = require("my_friend_exploration_riding").PrepareAction(inst, action)
@@ -572,6 +575,10 @@ function MyFriendBrain:OnStart()
         CookingAI.GetCampfireAction, "正在制作应急营火")
     Action("eat", Alive(function(c) return c.emergency_food and 122 or c.hunger < .4 and 118 or 85 end),
         FoodAI.GetEatAction, "正在进食", 5)
+    Add("tower_channel_wait", Alive(function(c)
+        return not c.thermal and c.threat == nil
+            and require("my_friend_command_tower").IsChanneling(inst) and 117 or 0
+    end), StandStill(inst))
     Action("temperature", Alive(function(c) return c.thermal and 115 or 0 end),
         SurvivalAI.GetTemperatureAction, "正在处理体温问题")
     Action("repair", Alive(function(c)
@@ -582,6 +589,7 @@ function MyFriendBrain:OnStart()
         return c.thermal and SurvivalAI.IsNearThermalSource(inst) and 114 or 0
     end), StandStill(inst))
     Action("base_fire", Alive(function(c)
+        if c.thermal and SurvivalAI.GetThermalNeed(inst) == "hot" then return 0 end
         if c.leader == nil and BaseAI.ShouldPreferBaseFire(inst) then return 123 end
         return c.leader == nil and (c.dark or TheWorld.state.isnight
             or TheWorld.state.isdusk or TheWorld:HasTag("cave")) and 121 or 0
@@ -643,6 +651,11 @@ function MyFriendBrain:OnStart()
         RecipeCooking.GetAction, "正在准备料理", 35)
     Action("carry_backpack", Alive(function() return require("my_friend_carry_backpack").Score(inst) end),
         require("my_friend_carry_backpack").GetAction, "正在取回搬重物时留下的背包", 180)
+    Action("touch_tower", Alive(function(c)
+        local command = Commands.Get(inst)
+        return command ~= nil and command.id == "touch_tower"
+            and c.leader == nil and 116 or 0
+    end), require("my_friend_command_tower").GetAction, "正在前往传送塔", 180)
     Action("backpack_recovery", Alive(function() return Backpacks.Priority(inst) end),
         Backpacks.GetAction, "正在找回自己的背包", 30)
     Action("cleanup", Alive(function()

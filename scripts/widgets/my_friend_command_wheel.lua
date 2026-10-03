@@ -94,10 +94,13 @@ local MyFriendCommandWheel = Class(Widget, function(self, owner)
     self:SetScaleMode(SCALEMODE_PROPORTIONAL)
     self:SetScale(.86)
 
-    self.center = self:AddChild(Image("images/button_icons.xml", "circle.tex"))
-    self.center:SetSize(132, 132)
-    self.center:SetTint(.18, .15, .08, .98)
-    self.center:SetClickable(false)
+    self.center = self:AddChild(ImageButton("images/button_icons.xml", "circle.tex"))
+    self.center:ForceImageSize(132, 132)
+    self.center:SetImageNormalColour(.18, .15, .08, .98)
+    self.center:SetImageFocusColour(.34, .27, .10, 1)
+    self.center.scale_on_focus = false
+    self.center:SetHoverText(Language.Text("交换玩家与伙伴实体", "Exchange player and companion", "Обменяться телами со спутником"))
+    self.center:SetOnClick(function() self:TogglePossession() end)
     self.center_label = self:AddChild(Text(DEFAULTFONT, 22,
         Language.Text("伙伴指令", "Companion", "Команды спутника")))
     self.center_label:SetColour(1, .84, .38, 1)
@@ -172,6 +175,25 @@ function MyFriendCommandWheel:RefreshLabels()
     end
 end
 
+function MyFriendCommandWheel:RefreshCenterLabel()
+    local possessing = self.owner ~= nil and self.owner:IsValid()
+        and self.owner:HasTag("my_friend_possessing")
+    self.center_label:SetString(possessing
+        and Language.Text("释放伙伴控制", "Release Companion", "Освободить спутника")
+        or Language.Text("交换实体", "Control Companion", "Управлять спутником"))
+end
+
+function MyFriendCommandWheel:TogglePossession()
+    if self.owner == nil or not self.owner:IsValid() then return end
+    if self.owner:HasTag("my_friend_possessing") then
+        SendModRPCToServer(GetModRPC("MyFriends", "ReleaseFriend"))
+    elseif self.friend ~= nil and self.friend:IsValid()
+        and self.friend:HasTag("my_friend") then
+        SendModRPCToServer(GetModRPC("MyFriends", "PossessFriend"), self.friend)
+    end
+    self:HideWheel()
+end
+
 function MyFriendCommandWheel:Choose(slot)
     local id = self.commands[slot]
     if self.friend ~= nil and self.friend:IsValid() and id ~= nil then
@@ -239,6 +261,10 @@ function MyFriendCommandWheel:CloseCommandPicker()
 end
 
 function MyFriendCommandWheel:FindFriend()
+    if self.owner ~= nil and self.owner:IsValid()
+        and self.owner:HasTag("my_friend_possessing") then
+        return self.owner
+    end
     local function IsCompanion(entity)
         return entity ~= nil and entity:IsValid()
             and entity.isplayer == true
@@ -275,10 +301,14 @@ function MyFriendCommandWheel:FindFriend()
 end
 
 function MyFriendCommandWheel:ShowFor(friend)
+    local possessed = self.owner ~= nil and friend == self.owner
+        and self.owner:HasTag("my_friend_possessing")
     if friend ~= nil and (not friend:IsValid() or friend.isplayer ~= true
-        or not friend:HasTag("my_friend") or friend.prefab == "abigail") then return false end
+        or (not friend:HasTag("my_friend") and not possessed)
+        or friend.prefab == "abigail" and not possessed) then return false end
     self.friend = friend
     self:CloseCommandPicker()
+    self:RefreshCenterLabel()
     self:Show()
     self:MoveToFront()
     return true

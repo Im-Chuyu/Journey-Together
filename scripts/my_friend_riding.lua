@@ -336,7 +336,7 @@ function RideToLeader:FollowMounted(leader)
         point = self.patrol_target
     end
     if point ~= nil and inst:GetCurrentPlatform() == nil then
-        point = Navigation.GetSteeringPoint(inst, point)
+        point = Navigation.GetSteeringPoint(inst, point, true)
     end
     if point ~= nil then
         inst.components.locomotor:GoToPoint(point, nil, true)

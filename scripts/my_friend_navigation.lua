@@ -130,7 +130,7 @@ end
 -- Geometry only: passable ground, no water, nothing solid across the line.
 -- Deliberately says nothing about whether the point is somewhere the companion
 -- is allowed to be; IsWalkClear adds that, Unstick decides for itself.
-function M.IsStepClear(inst, a, b, caps, obstacles)
+function M.IsStepClear(inst, a, b, caps, obstacles, allow_far)
     local dx, dz = b.x - a.x, b.z - a.z
     local lengthsq = dx * dx + dz * dz
     -- Long travel uses the native pathfinder; never scan an entire map-sized
@@ -154,8 +154,9 @@ function M.IsStepClear(inst, a, b, caps, obstacles)
     return true
 end
 
-function M.IsWalkClear(inst, a, b, caps, obstacles)
-    return M.InTravelRange(inst, b) and M.IsStepClear(inst, a, b, caps, obstacles)
+function M.IsWalkClear(inst, a, b, caps, obstacles, allow_far)
+    return (allow_far or M.InTravelRange(inst, b))
+        and M.IsStepClear(inst, a, b, caps, obstacles, allow_far)
 end
 
 function M.ActionPoint(action)
@@ -275,7 +276,8 @@ local function Cell(search, x, z)
             px, _, pz = TheWorld.Map:GetTileCenterPoint(x, z)
         end
         node = { x = px, z = pz, tx = x, tz = z }
-        node.land = M.IsLand(node) and M.InTravelRange(search.inst, node)
+        node.land = M.IsLand(node) and (search.allow_far
+            or M.InTravelRange(search.inst, node))
             and (not search.localgrid or DistanceSq(node, search.origin) <= search.localradius^2)
         search.cells[key] = node
     end
@@ -302,7 +304,8 @@ local function BeginLandSearch(search, localgrid)
     for dx = -1, 1 do
         for dz = -1, 1 do
             local node = Cell(search, tx + dx, tz + dz)
-            if node.land and M.IsWalkClear(search.inst, search.origin, node, search.caps, search.obstacles) then
+            if node.land and M.IsWalkClear(search.inst, search.origin, node, search.caps,
+                search.obstacles, search.allow_far) then
                 node.cost = math.sqrt(DistanceSq(search.origin, node))
                 Push(search.heap, { node = node, cost = node.cost,
                     score = node.cost + math.sqrt(DistanceSq(node, search.goal)) })
@@ -318,13 +321,14 @@ function M.Cancel(search)
     end
 end
 
-function M.Start(inst, goal, land_only)
+function M.Start(inst, goal, land_only, allow_far)
     inst.components.locomotor:AdjustPathCaps(true, "ignorecreep")
     local search = { origin = inst:GetPosition(), goal = goal,
-        caps = M.Caps(inst), started = GetTime(), inst = inst }
+        caps = M.Caps(inst), started = GetTime(), inst = inst,
+        allow_far = allow_far == true }
     if land_only then inst._my_friend_land_route = nil end
     if DistanceSq(search.origin, goal) <= 24^2 and land_only then
-        if M.IsWalkClear(inst, search.origin, goal, search.caps) then
+        if M.IsWalkClear(inst, search.origin, goal, search.caps, nil, search.allow_far) then
             search.steps = {goal}
         else
             BeginLandSearch(search, true)
@@ -337,11 +341,12 @@ function M.Start(inst, goal, land_only)
             for index = #cache.steps, 1, -1 do
                 local point = cache.steps[index]
                 if DistanceSq(search.origin, point) < 16^2
-                    and M.IsWalkClear(inst, search.origin, point, search.caps) then
+                    and M.IsWalkClear(inst, search.origin, point, search.caps, nil, search.allow_far) then
                     local steps, previous, valid = {}, search.origin, true
                     for nextindex = index, #cache.steps do
                         local nextpoint = cache.steps[nextindex]
-                        if not M.IsWalkClear(inst, previous, nextpoint, search.caps) then
+                        if not M.IsWalkClear(inst, previous, nextpoint, search.caps, nil,
+                            search.allow_far) then
                             valid = false
                             break
                         end
@@ -349,7 +354,8 @@ function M.Start(inst, goal, land_only)
                     end
                     -- A nearby new goal can be on the other side of a tree or
                     -- a shore corner. Validate that last connector as well.
-                    if valid and M.IsWalkClear(inst, previous, goal, search.caps) then
+                    if valid and M.IsWalkClear(inst, previous, goal, search.caps, nil,
+                        search.allow_far) then
                         steps[#steps + 1] = goal
                         search.steps = steps
                         return search
@@ -359,7 +365,7 @@ function M.Start(inst, goal, land_only)
         end
     end
     if not land_only and DistanceSq(search.origin, goal) <= 32^2
-        and M.IsWalkClear(inst, search.origin, goal, search.caps) then
+        and M.IsWalkClear(inst, search.origin, goal, search.caps, nil, search.allow_far) then
         search.steps = { goal }
     elseif not land_only then
         search.handle = TheWorld.Pathfinder:SubmitSearch(search.origin.x, 0, search.origin.z,
@@ -392,7 +398,8 @@ local function ValidatePath(search, points)
         for i = 1, count do
             local nextpoint = Vector3(start.x + (point.x - start.x) * i / count, 0,
                 start.z + (point.z - start.z) * i / count)
-            if not M.IsWalkClear(search.inst, previous, nextpoint, search.caps) then return false end
+            if not M.IsWalkClear(search.inst, previous, nextpoint, search.caps, nil,
+                search.allow_far) then return false end
             if DistanceSq(previous, nextpoint) > .0001 then steps[#steps + 1] = nextpoint end
             previous = nextpoint
         end
@@ -445,7 +452,8 @@ function M.Poll(search)
             local obstacles = search.obstacles or TheSim:FindEntities(node.x, 0, node.z,
                 15, nil, {"INLIMBO", "FX"})
             if DistanceSq(node, search.goal) <= 100
-                and M.IsWalkClear(search.inst, node, search.goal, search.caps, obstacles) then
+                and M.IsWalkClear(search.inst, node, search.goal, search.caps, obstacles,
+                    search.allow_far) then
                 local reversed, steps = {}, {}
                 local cursor = node
                 while cursor ~= nil do
@@ -463,7 +471,8 @@ function M.Poll(search)
                 if neighbour.land and not neighbour.closed then
                     local cost = node.cost + math.sqrt(DistanceSq(node, neighbour))
                     if (neighbour.cost == nil or cost < neighbour.cost)
-                        and M.IsWalkClear(search.inst, node, neighbour, search.caps, obstacles) then
+                        and M.IsWalkClear(search.inst, node, neighbour, search.caps, obstacles,
+                            search.allow_far) then
                         neighbour.cost, neighbour.parent = cost, node
                         Push(search.heap, { node = neighbour, cost = cost,
                             score = cost + math.sqrt(DistanceSq(neighbour, search.goal)) })
@@ -583,31 +592,41 @@ function M.Unstick(inst, goal)
     state.since = now
 end
 
-function M.GetSteeringPoint(inst, goal)
+function M.GetSteeringPoint(inst, goal, allow_far)
     if inst:HasTag("playerghost") then
         M.CancelSteering(inst)
         inst._my_friend_steering_cache = nil
         return goal
     end
     local origin, caps = inst:GetPosition(), M.Caps(inst)
+    allow_far = allow_far == true
     local cached = inst._my_friend_steering_cache
     if cached ~= nil and GetTime() < cached.untiltime
+        and cached.allow_far == allow_far
         and DistanceSq(goal, cached.goal) < .25 and DistanceSq(origin, cached.origin) < 1 then
         return cached.point
     end
-    if DistanceSq(origin, goal) > 24^2 or not M.InTravelRange(inst, origin)
-        or not M.InTravelRange(inst, goal) or M.IsWalkClear(inst, origin, goal, caps) then
+    local direct = allow_far and DistanceSq(origin, goal) <= 48^2
+        and M.IsWalkClear(inst, origin, goal, caps, nil, true)
+        or not allow_far and (DistanceSq(origin, goal) > 24^2
+            or not M.InTravelRange(inst, origin)
+            or not M.InTravelRange(inst, goal)
+            or M.IsWalkClear(inst, origin, goal, caps))
+    if direct then
         M.CancelSteering(inst)
-        inst._my_friend_steering_cache = {goal = goal, origin = origin, point = goal, untiltime = GetTime() + .25}
+        inst._my_friend_steering_cache = {goal = goal, origin = origin, point = goal,
+            allow_far = allow_far, untiltime = GetTime() + .25}
         return goal
     end
     local state = inst._my_friend_local_walk
-    if state ~= nil and DistanceSq(state.goal, goal) > 1 then
+    if state ~= nil and (DistanceSq(state.goal, goal) > 1
+        or state.allow_far ~= allow_far) then
         M.CancelSteering(inst)
         state = nil
     end
     if state == nil then
-        state = {goal = goal, search = M.Start(inst, goal), started = GetTime()}
+        state = {goal = goal, allow_far = allow_far,
+            search = M.Start(inst, goal, false, allow_far), started = GetTime()}
         inst._my_friend_local_walk = state
     end
     if state.failed then
@@ -635,10 +654,12 @@ function M.GetSteeringPoint(inst, goal)
     local last = state.index
     for index = state.index, #state.steps do
         if DistanceSq(origin, state.steps[index]) > 12^2 then break end
-        if M.IsWalkClear(inst, origin, state.steps[index], caps) then last = index end
+        if M.IsWalkClear(inst, origin, state.steps[index], caps, nil, state.allow_far) then
+            last = index
+        end
     end
     local point = state.steps[last]
-    if not M.IsWalkClear(inst, origin, point, caps) then
+    if not M.IsWalkClear(inst, origin, point, caps, nil, state.allow_far) then
         M.CancelSteering(inst)
         return
     end

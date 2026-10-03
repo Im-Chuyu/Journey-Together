@@ -47,4 +47,5 @@ return {
     { id = "equipment", en = {"pick up equipment", "collect equipment", "pick up gear",
               "collect gear"} },
     { id = "carry_statue", en = {"carry statue", "move statue", "carry sculpture"} },
+    { id = "touch_tower", en = {"teleport tower", "touch the tower", "touch tower", "touch it"} },
 }
