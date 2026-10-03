@@ -102,6 +102,11 @@ local function SaveMeters(inst)
         health = c ~= nil and c.health ~= nil and c.health:GetPercent() or nil,
         hunger = c ~= nil and c.hunger ~= nil and c.hunger:GetPercent() or nil,
         sanity = c ~= nil and c.sanity ~= nil and c.sanity:GetPercent() or nil,
+        oldage = c ~= nil and c.oldager ~= nil and {
+            year_timer = c.oldager.year_timer,
+            damage_remaining = c.oldager.damage_remaining,
+            damage_per_second = c.oldager.damage_per_second,
+        } or nil,
     }
 end
 
@@ -115,6 +120,15 @@ local function LoadMeters(inst, data)
     end
     if data.sanity ~= nil and inst.components.sanity ~= nil then
         inst.components.sanity:SetPercent(data.sanity)
+    end
+    if data.oldage ~= nil and inst.components.oldager ~= nil then
+        local age = inst.components.oldager
+        age.year_timer = data.oldage.year_timer or 0
+        age.damage_remaining = data.oldage.damage_remaining or 0
+        age.damage_per_second = data.oldage.damage_per_second or 0
+        if inst.player_classified ~= nil then
+            inst.player_classified.oldager_yearpercent:set(age.year_timer)
+        end
     end
 end
 
@@ -237,6 +251,7 @@ local function MarkPossessedPlayer(player, sess)
         and sess.companion_name ~= nil then
         player.components.named:SetName(sess.companion_name)
     end
+    require("my_friend_wortox").RefreshLinkedHearts(player)
     if sess.temporary_companion ~= nil and sess.temporary_companion:IsValid()
         and sess.was_following and sess.temporary_companion.components ~= nil
         and sess.temporary_companion.components.follower ~= nil then
@@ -563,6 +578,7 @@ local function FinishSwap(_, player)
             inst:RemoveTag("my_friend_possessing")
             inst:RemoveTag("my_friend_possessed")
             inst._my_friend_id = nil
+            require("my_friend_wortox").RefreshLinkedHearts(sess.restored_companion)
             inst._my_friend_custom_name = nil
             inst._my_friend_possessed_name = nil
             inst._my_friend_possessed_prefab = nil

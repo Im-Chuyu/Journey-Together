@@ -26,6 +26,18 @@ end
 local function Configure(spawner, joined, left)
     local world = spawner.inst
     local tracked = setmetatable({}, {__mode = "k"})
+    spawner._my_friend_register = function(player)
+        if joined == nil or left == nil then return false end
+        joined(world, player)
+        if not tracked[player] then
+            tracked[player] = true
+            world:ListenForEvent("onremove", function()
+                left(world, player)
+                tracked[player] = nil
+            end, player)
+        end
+        return true
+    end
     local spawn = spawner.SpawnShadowCreature
     spawner.SpawnShadowCreature = function(self, player, params, ...)
         if params == nil and player ~= nil and player:HasTag("my_friend") then
@@ -38,16 +50,49 @@ local function Configure(spawner, joined, left)
             end
             -- Join is idempotent. It also restores the record if another mod
             -- issued a player-left event while this companion is still alive.
-            joined(world, player)
-            if not tracked[player] then
-                tracked[player] = true
-                world:ListenForEvent("onremove", function()
-                    left(world, player)
-                    tracked[player] = nil
-                end, player)
-            end
+            self._my_friend_register(player)
         end
         return spawn(self, player, params, ...)
+    end
+end
+
+function M.RegisterCompanion(inst)
+    local spawner = TheWorld.components.shadowcreaturespawner
+    if spawner ~= nil and spawner._my_friend_register ~= nil then
+        spawner._my_friend_register(inst)
+    end
+end
+
+function M.ConfigureCreature(inst)
+    if not inst:HasTag("shadowcreature") or TheWorld == nil or not TheWorld.ismastersim
+        or inst._my_friend_shadow_targeting then return end
+    local combat = inst.components.combat
+    if combat == nil or combat.targetfn == nil then return end
+    inst._my_friend_shadow_targeting = true
+    local retarget = combat.targetfn
+    combat.targetfn = function(creature, ...)
+        local friend = TheWorld._my_friend
+        if friend == nil or not friend:IsValid() or not friend:HasTag("my_friend")
+            or friend:HasTag("playerghost") or friend.components.sanity == nil
+            or not friend.components.sanity:IsCrazy()
+            or friend.components.health == nil or friend.components.health:IsDead()
+            or creature:GetDistanceSqToInst(friend) > TUNING.SHADOWCREATURE_TARGET_DIST^2 then
+            return retarget(creature, ...)
+        end
+        local players = {}
+        for _, player in ipairs(AllPlayers) do
+            if player == friend then return retarget(creature, ...) end
+            players[#players + 1] = player
+        end
+        players[#players + 1] = friend
+        -- Keep the native dominance rules and both return values, without
+        -- registering a fake connected player or adding another scan task.
+        local env = getfenv(retarget)
+        setfenv(retarget, setmetatable({AllPlayers = players}, {__index = env}))
+        local ok, target, forcechange = pcall(retarget, creature, ...)
+        setfenv(retarget, env)
+        if not ok then error(target) end
+        return target, forcechange
     end
 end
 

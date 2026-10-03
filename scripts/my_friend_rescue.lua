@@ -1,6 +1,7 @@
 -- Reviving nearby dead players and thanking whoever revives the companion.
 local Policy = require("my_friend_policy")
 local Wanda = require("my_friend_wanda")
+local Wortox = require("my_friend_wortox")
 
 local M = {}
 
@@ -50,17 +51,38 @@ end
 local function GhostPlayers(inst)
     local x, y, z = inst.Transform:GetWorldPosition()
     local ghosts = {}
+    local leader = inst.prefab == "wortox" and Policy.GetLeader(inst) or nil
+    if Policy.IsLocalPlayer(leader) and leader:HasTag("playerghost")
+        and leader.userid ~= nil and leader.components.trader ~= nil then
+        ghosts[#ghosts + 1] = leader
+    end
     for _, entity in ipairs(TheSim:FindEntities(x, y, z, M.RANGE,
         { "playerghost" }, GHOST_CANT_TAGS)) do
-        if Policy.IsLocalPlayer(entity) and entity.userid ~= nil
+        if entity ~= leader and Policy.IsLocalPlayer(entity) and entity.userid ~= nil
             and entity.components.trader ~= nil then
             ghosts[#ghosts + 1] = entity
         end
     end
     table.sort(ghosts, function(a, b)
+        if a == leader then return b ~= leader end
+        if b == leader then return false end
         return inst:GetDistanceSqToInst(a) < inst:GetDistanceSqToInst(b)
     end)
     return ghosts
+end
+
+function M.IsRescueActionValid(inst, action)
+    local ghost = action._my_friend_rescue_target
+    return inst.prefab == "wortox" and Policy.IsLocalPlayer(ghost)
+        and ghost:HasTag("playerghost") and ghost.components.trader ~= nil
+        and (ghost == Policy.GetLeader(inst) or ghost:GetDistanceSqToPoint(
+            action._my_friend_rescue_origin) <= M.RANGE^2)
+end
+
+function M.InTravelRange(inst, action, point)
+    return M.IsRescueActionValid(inst, action)
+        and (action._my_friend_rescue_target == Policy.GetLeader(inst)
+            or (point - action._my_friend_rescue_origin):LengthSq() <= (M.RANGE + 8)^2)
 end
 
 local function HasRevivalNearby(ghost)
@@ -86,12 +108,14 @@ function M.Score(inst)
     local has_heart = FindItem(inst, IsHeart) ~= nil
     local has_haunt = FindItem(inst, IsHauntRevival) ~= nil
     local has_watch = Wanda.FindReviveWatch(inst) ~= nil
-    if not has_heart and not has_haunt and not has_watch then return 0 end
+    local can_make_heart = Wortox.CanMakeHeart(inst)
+    if not has_heart and not has_haunt and not has_watch and not can_make_heart then return 0 end
     local retry = Retry(inst)
     for _, ghost in ipairs(GhostPlayers(inst)) do
         if GetTime() >= (retry[ghost.userid] or 0)
             and (Wanda.FindReviveWatch(inst, ghost) ~= nil
-                or has_heart or has_haunt and not HasRevivalNearby(ghost)) then
+                or has_heart or has_haunt and not HasRevivalNearby(ghost)
+                or can_make_heart) then
             inst._my_friend_rescue_check_after = nil
             return M.SCORE
         end
@@ -104,7 +128,8 @@ function M.GetAction(inst)
     local retry = Retry(inst)
     local heart = FindItem(inst, IsHeart)
     local haunt = heart == nil and FindItem(inst, IsHauntRevival) or nil
-    if heart == nil and haunt == nil and inst.prefab ~= "wanda" then return end
+    if heart == nil and haunt == nil and inst.prefab ~= "wanda"
+        and not Wortox.CanMakeHeart(inst) then return end
     for _, ghost in ipairs(GhostPlayers(inst)) do
         if GetTime() >= (retry[ghost.userid] or 0) then
             -- Prefer the rechargeable watch over consumable revival items.
@@ -138,7 +163,14 @@ function M.GetAction(inst)
                     end)
                 end
             end
+            if action == nil and heart == nil and Wortox.CanMakeHeart(inst) then
+                action = Wortox.GetMakeHeartAction(inst, ghost)
+            end
             if action ~= nil then
+                if inst.prefab == "wortox" then
+                    action._my_friend_rescue_target = ghost
+                    action._my_friend_rescue_origin = inst:GetPosition()
+                end
                 action:AddFailAction(function()
                     if not action._my_friend_cancelled then
                         retry[ghost.userid] = GetTime() + M.RETRY_DELAY

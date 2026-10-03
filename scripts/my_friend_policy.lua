@@ -141,6 +141,8 @@ function M.GuardAction(inst, action, radius)
             local wormhole = require("my_friend_wormhole")
             if target ~= nil and not wormhole.InTravelRange(inst, act, target:GetPosition()) then return false end
             if point ~= nil and not wormhole.InTravelRange(inst, act, point) then return false end
+        elseif act._my_friend_rescue_target ~= nil then
+            if not require("my_friend_rescue").IsRescueActionValid(inst, act) then return false end
         elseif act._my_friend_tower_command ~= nil then
             if inst._my_friend_command ~= act._my_friend_tower_command then return false end
         elseif act._my_friend_carry_backpack ~= nil then

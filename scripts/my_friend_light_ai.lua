@@ -12,6 +12,9 @@ M.DARK_ENTER_DELAY = 1.5
 M.DARK_EXIT_DELAY = .4
 M.LIGHT_STORE_DELAY = .75
 M.LIGHT_CHECK_CACHE = .5
+-- Native player_common uses .05 for Charlie darkness, not the much higher
+-- light threshold used for sanity loss.
+M.DARK_LIGHT_THRESHOLD = .05
 
 local LIGHT_PREFABS = {
     alterguardianhat = 8,
@@ -283,6 +286,9 @@ function M.HasMaterialReserve(inst)
 end
 
 local function IsOwnedLight(inst, light)
+    local wormlight = inst.wormlight
+    if light == wormlight or wormlight ~= nil and light == wormlight.fx
+        or light.components.spell ~= nil and light.components.spell.target == inst then return true end
     local source = light._lantern or light._owner
     if source == inst then return true end
     if type(source) == "table" and source.components ~= nil
@@ -303,7 +309,7 @@ end
 local function LightReachesPoint(light, x, z)
     if light.Light == nil or not light.Light:IsEnabled() then return false end
     local radius = light.Light:GetRadius()
-    return radius ~= nil and DistanceSqToPoint(light, x, z) <= (radius + .75) ^ 2
+    return radius ~= nil and DistanceSqToPoint(light, x, z) <= radius ^ 2
 end
 
 function M.IsPointExternallyLit(inst, point)
@@ -322,7 +328,8 @@ function M.IsExternallyLit(inst)
         and now - (cached.time or 0) < M.LIGHT_CHECK_CACHE then
         return cached.external
     end
-    if TheWorld ~= nil and TheWorld.state ~= nil and TheWorld.state.isday
+    if TheWorld ~= nil and TheWorld.state ~= nil
+        and (TheWorld.state.isday or TheWorld.state.isfullmoon)
         and not TheWorld:HasTag("cave") then
         inst._my_friend_light_cache = {time = now, external = true}
         return true
@@ -347,22 +354,27 @@ function M.IsExternallyLit(inst)
 
     local x, y, z = inst.Transform:GetWorldPosition()
     local self_lit = M.HasUsableEquippedLight(inst)
+        or inst.Light ~= nil and inst.Light:IsEnabled()
+        or inst.wormlight ~= nil and inst.wormlight:IsValid()
+    local external_source = false
     for _, light in ipairs(TheSim:FindEntities(x, y, z,
         M.EXTERNAL_LIGHT_SCAN_RANGE, nil, LIGHT_CANT_TAGS)) do
         if LightReachesPoint(light, x, z) then
             if IsOwnedLight(inst, light) then
                 self_lit = true
             else
-                inst._my_friend_light_cache = {time = now, external = true}
-                return true
+                external_source = true
             end
         end
     end
-    -- The light watcher can remain stale while a follower is outside the
-    -- player's active area.  The nearby-light scan above is authoritative in
-    -- that case: if no external light reaches this point, it is dark here.
-    inst._my_friend_light_cache = {time = now, external = false}
-    return false
+    -- Total engine light is trustworthy only without our own light sources.
+    -- Dim cave/ambient light can be safe without a nearby light prefab.
+    local external = external_source
+    if not self_lit and inst.LightWatcher ~= nil then
+        external = inst.LightWatcher:GetLightValue() >= M.DARK_LIGHT_THRESHOLD
+    end
+    inst._my_friend_light_cache = {time = now, external = external}
+    return external
 end
 
 local function StoreEquippedLight(inst, item)

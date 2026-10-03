@@ -481,7 +481,7 @@ function MyFriendBrain:OnStart()
                 and id ~= "emergency_fire" and id ~= "backpack_recovery" and id ~= "revive_return"
                 and id ~= "carry_backpack"
                 and id ~= "touch_tower"
-                and id ~= "squeeze_heart" and id ~= "watch_heal"
+                and id ~= "squeeze_heart" and id ~= "make_heart" and id ~= "watch_heal"
                 and not ((id == "food" or id == "container_food" or id == "cook")
                     and inst.components.hunger:GetPercent() < .2) then return end
             if command ~= nil and (command.id == "seeds" or command.id == "tidy" or command.id == "equipment")
@@ -575,7 +575,7 @@ function MyFriendBrain:OnStart()
     Action("eat", Alive(function(c) return c.emergency_food and 122 or c.hunger < .4 and 118 or 85 end),
         FoodAI.GetEatAction, "正在进食", 5)
     Action("watch_heal", Alive(function()
-        return require("my_friend_wanda").NeedsHeal(inst) and 145 or 0
+        return require("my_friend_wanda").GetHealScore(inst)
     end), require("my_friend_character_actions").GetHealAction, "正在使用不老表", 8)
     Action("wanda_refuel", Alive(function(c)
         return inst.prefab == "wanda" and not c.hurt and not c.hurt_evade and 130 or 0
@@ -588,6 +588,11 @@ function MyFriendBrain:OnStart()
         local command = Commands.Get(inst)
         return command ~= nil and command.id == "squeeze_heart" and 117 or 0
     end), require("my_friend_character_actions").GetSqueezeAction, "正在挤压双尾心", 15)
+    Action("make_heart", Alive(function()
+        local command = Commands.Get(inst)
+        return inst.prefab == "wortox" and command ~= nil
+            and command.id == "make_heart" and 117 or 0
+    end), require("my_friend_wortox").GetMakeHeartCommandAction, "正在制作双尾心", 15, true)
     Add("tower_channel_wait", Alive(function(c)
         return not c.thermal and c.threat == nil
             and require("my_friend_command_tower").IsChanneling(inst) and 118 or 0

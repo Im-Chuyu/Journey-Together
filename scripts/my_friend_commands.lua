@@ -306,7 +306,7 @@ function M.Dispatch(friend, player, message, from_wheel)
         or friend._my_friend_sitting ~= nil or friend._my_friend_seat_request ~= nil) then
         id = "stop_sit"
     end
-    local special = id ~= "touch_tower" and id ~= "squeeze_heart"
+    local special = id ~= "touch_tower" and id ~= "squeeze_heart" and id ~= "make_heart"
         and SpecialCommands.Parse(friend, addressed_message, id ~= nil) or nil
     if special ~= nil then
         if not from_wheel and id == nil and MaybeRefuseChinese(friend, addressed_message, "special") then return true end
@@ -501,7 +501,7 @@ function M.Dispatch(friend, player, message, from_wheel)
                 or id == "dig_sapling" or id == "dig_stump") and 600 or 180),
         charge_pending = WORK[id] == true}
     if id == "fish" then require("my_friend_fishing").Configure(friend) end
-    if id == "monkeytail" or id == "banana" or id == "squeeze_heart" then
+    if id == "monkeytail" or id == "banana" or id == "squeeze_heart" or id == "make_heart" then
         Dialogue.RandomReply(friend, "describe_" .. id)
     else
         Dialogue.Reply(friend, "describe_" .. id)

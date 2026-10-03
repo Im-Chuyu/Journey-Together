@@ -3,7 +3,18 @@ local Policy = require("my_friend_policy")
 local Dialogue = require("my_friend_dialogue")
 
 M.HEAL_AGE = 73
+M.OPTIONAL_HEAL_AGE = 65
+M.HEAL_ROLL_INTERVAL = 10
+M.HEAL_CHANCE = .1
 M.FUEL_RANGE = 20
+
+function M.Configure(inst)
+    -- SpawnPrefab skips the character's load/new-spawn initialization. Reuse
+    -- Wanda's own age transitions, listeners and damage modifiers.
+    if inst.prefab == "wanda" and inst.age_state == nil and inst._OnLoad ~= nil then
+        inst:_OnLoad()
+    end
+end
 
 local function Carried(inst, item)
     local ii = item ~= nil and item:IsValid() and item.components.inventoryitem or nil
@@ -19,8 +30,25 @@ end
 
 function M.NeedsHeal(inst)
     local age = M.GetAge(inst)
-    return age ~= nil and age >= M.HEAL_AGE
-        and not inst.components.health:IsDead() and not inst:HasTag("playerghost")
+    if age == nil or inst.components.health:IsDead() or inst:HasTag("playerghost")
+        or age < M.OPTIONAL_HEAL_AGE then
+        inst._my_friend_optional_watch = nil
+        return false
+    end
+    if age >= M.HEAL_AGE then return true end
+    -- Score/validity checks may run several times for the same action. Roll
+    -- once per interval and retain that decision until the watch is used.
+    if GetTime() >= (inst._my_friend_watch_roll_after or 0) then
+        inst._my_friend_watch_roll_after = GetTime() + M.HEAL_ROLL_INTERVAL
+        inst._my_friend_optional_watch = inst._my_friend_optional_watch
+            or math.random() < M.HEAL_CHANCE
+    end
+    return inst._my_friend_optional_watch == true
+end
+
+function M.GetHealScore(inst)
+    if not M.NeedsHeal(inst) then return 0 end
+    return M.GetAge(inst) >= M.HEAL_AGE and 145 or 90
 end
 
 function M.GetHealAction(inst)
@@ -35,7 +63,11 @@ function M.GetHealAction(inst)
                 return M.NeedsHeal(inst) and Carried(inst, item)
                     and item.components.pocketwatch:CanCast(inst)
             end
-            action:AddSuccessAction(function() Dialogue.RandomReply(inst, "watch_heal") end)
+            action:AddSuccessAction(function()
+                inst._my_friend_optional_watch = nil
+                inst._my_friend_watch_roll_after = GetTime() + M.HEAL_ROLL_INTERVAL
+                Dialogue.RandomReply(inst, "watch_heal")
+            end)
             return action
         end
     end

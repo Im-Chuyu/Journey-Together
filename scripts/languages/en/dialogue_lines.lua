@@ -1593,5 +1593,29 @@ M.replies.activity_wortox_heal = {
     -- fn637
     "Another soul set free, to ease your pain.",
 }
+M.replies.describe_make_heart = {
+    -- fn638
+    "Ten souls for a heart that can bring life back.",
+    -- fn639
+    "All right. I will weave these souls into a Twintailed Heart.",
+    -- fn640
+    "A heart? That will cost ten souls.",
+}
+M.replies.heart_made = {
+    -- fn641
+    "The Twintailed Heart is ready. Life gets another chance.",
+    -- fn642
+    "Ten souls have become one heart. Use it wisely.",
+    -- fn643
+    "Here is the heart. Do not let hope slip away.",
+}
+M.replies.heart_make_failed = {
+    -- fn644
+    "I need ten souls and somewhere to carry the heart.",
+    -- fn645
+    "Gather ten souls and leave a little room for the heart.",
+    -- fn646
+    "Not yet. Check my souls and the space in my bags.",
+}
 return M
 

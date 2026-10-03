@@ -184,6 +184,12 @@ FriendBuildAction.mount_valid = true
 AddStategraphActionHandler("wilson",
     _G.ActionHandler(FriendBuildAction, "dolongaction"))
 
+local FriendMakeHeart = AddAction("MY_FRIEND_MAKE_HEART", Text("制作双尾心", "Make Twintailed Heart"),
+    function(act) return require("my_friend_wortox").MakeHeart(act.doer) end)
+FriendMakeHeart.mount_valid = true
+FriendMakeHeart.do_not_locomote = true
+AddStategraphActionHandler("wilson", _G.ActionHandler(FriendMakeHeart, "dolongaction"))
+
 local FriendMakeRoom = AddAction("MY_FRIEND_MAKE_ROOM", Text("让出位置", "Make room"), function(act)
     return require("my_friend_bookstation").MakeRoom(act)
 end)
@@ -656,6 +662,9 @@ local function ConfigureFriend(inst)
     require("my_friend_gifts").Configure(inst)
     require("my_friend_ghost_commands").Configure(inst)
     require("my_friend_rescue").Configure(inst)
+    require("my_friend_wanda").Configure(inst)
+    require("my_friend_shadow_compat").RegisterCompanion(inst)
+    require("my_friend_wortox").RefreshLinkedHearts(inst)
     -- Diagnostics: a companion should only ever become a ghost through real
     -- damage. Log the cause so an unexplained ghost after a reload can be traced.
     inst:ListenForEvent("ms_becameghost", function()
@@ -1629,6 +1638,8 @@ AddComponentPostInit("skilltreeupdater", function(self, inst)
 end)
 require("my_friend_character_actions").InstallSoulHealing()
 AddPrefabPostInit("wortox_soul_spawn", require("my_friend_wortox").InstallSoulAttraction)
+AddPrefabPostInit("wortox_reviver", require("my_friend_wortox").ConfigureHeart)
+AddPrefabPostInitAny(require("my_friend_shadow_compat").ConfigureCreature)
 
 AddClassPostConstruct("components/combat_replica", function(self)
     local validtarget = self.IsValidTarget

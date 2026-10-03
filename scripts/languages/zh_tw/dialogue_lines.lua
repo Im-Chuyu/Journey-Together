@@ -2241,4 +2241,37 @@ M.voice_order[#M.voice_order + 1] = {"activity_wanda_refuel", 3, 634}
 M.voice_order[#M.voice_order + 1] = {"activity_wortox_heal", 1, 635}
 M.voice_order[#M.voice_order + 1] = {"activity_wortox_heal", 2, 636}
 M.voice_order[#M.voice_order + 1] = {"activity_wortox_heal", 3, 637}
+M.replies.describe_make_heart = {
+    -- fn638
+    "十顆靈魂，換一顆能帶回生命的心。",
+    -- fn639
+    "好，讓我把這些靈魂織成雙尾心。",
+    -- fn640
+    "做一顆心？這可得花掉十顆靈魂。",
+}
+M.replies.heart_made = {
+    -- fn641
+    "雙尾心做好了，生命還有第二次機會。",
+    -- fn642
+    "十顆靈魂已經化作一顆心，好好用它。",
+    -- fn643
+    "心在這裡，別讓希望白白溜走。",
+}
+M.replies.heart_make_failed = {
+    -- fn644
+    "靈魂要湊夠十顆，身上也得有地方放這顆心。",
+    -- fn645
+    "先準備十顆靈魂，再給雙尾心留個位置吧。",
+    -- fn646
+    "現在還做不了，看看靈魂夠不夠，背包有沒有空位。",
+}
+M.voice_order[#M.voice_order + 1] = {"describe_make_heart", 1, 638}
+M.voice_order[#M.voice_order + 1] = {"describe_make_heart", 2, 639}
+M.voice_order[#M.voice_order + 1] = {"describe_make_heart", 3, 640}
+M.voice_order[#M.voice_order + 1] = {"heart_made", 1, 641}
+M.voice_order[#M.voice_order + 1] = {"heart_made", 2, 642}
+M.voice_order[#M.voice_order + 1] = {"heart_made", 3, 643}
+M.voice_order[#M.voice_order + 1] = {"heart_make_failed", 1, 644}
+M.voice_order[#M.voice_order + 1] = {"heart_make_failed", 2, 645}
+M.voice_order[#M.voice_order + 1] = {"heart_make_failed", 3, 646}
 return M

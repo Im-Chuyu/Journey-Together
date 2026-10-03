@@ -5,6 +5,191 @@ local Dialogue = require("my_friend_dialogue")
 M.HEAL_START = .5
 M.HEAL_STOP = .8
 M.HEAL_RANGE = 20
+M.HEART_SOUL_COST = 10
+
+function M.CanMakeHeart(inst)
+    return inst.prefab == "wortox" and inst:HasTag("my_friend")
+        and not inst:HasTag("playerghost") and inst.components.health ~= nil
+        and not inst.components.health:IsDead() and inst.components.inventory ~= nil
+        and inst.components.inventory:Has("wortox_soul", M.HEART_SOUL_COST) == true
+end
+
+function M.MakeHeart(inst)
+    if not M.CanMakeHeart(inst) then return false end
+    local heart = SpawnPrefab("wortox_reviver")
+    if heart == nil then return false end
+    local inventory = inst.components.inventory
+    local _, souls = inventory:Has("wortox_soul", M.HEART_SOUL_COST)
+    if inventory:CanAcceptCount(heart, 1) < 1 and inventory:GetActiveItem() ~= nil
+        and souls > M.HEART_SOUL_COST then
+        heart:Remove()
+        return false
+    end
+    -- Has/ConsumeByName use the same carried slots and overflow bag. An open
+    -- chest must never count as souls carried by the companion.
+    inst.components.inventory:ConsumeByName("wortox_soul", M.HEART_SOUL_COST)
+    inst.components.inventory:GiveItem(heart, nil, inst:GetPosition())
+    heart:OnBuilt(inst)
+    inst:PushEvent("builditem", {item = heart, recipe = GetValidRecipe("wortox_reviver")})
+    Dialogue.RandomReply(inst, "heart_made")
+    return true
+end
+
+function M.GetMakeHeartAction(inst, ghost)
+    if not M.CanMakeHeart(inst) or Policy.IsBusy(inst) then return end
+    local Commands = require("my_friend_commands")
+    local command = ghost == nil and Commands.Get(inst) or nil
+    if ghost == nil and (command == nil or command.id ~= "make_heart") then return end
+    local action = BufferedAction(inst, nil, ACTIONS.MY_FRIEND_MAKE_HEART)
+    action.validfn = function()
+        return M.CanMakeHeart(inst) and (ghost ~= nil
+            and ghost:IsValid() and ghost:HasTag("playerghost")
+            or ghost == nil and inst._my_friend_command == command)
+    end
+    if command ~= nil then
+        action:AddSuccessAction(function()
+            if inst._my_friend_command == command then Commands.Clear(inst) end
+        end)
+        action:AddFailAction(function()
+            if not action._my_friend_cancelled and inst._my_friend_command == command then
+                Commands.Clear(inst)
+                Dialogue.RandomReply(inst, "heart_make_failed")
+            end
+        end)
+    end
+    return action
+end
+
+function M.GetMakeHeartCommandAction(inst)
+    local Commands = require("my_friend_commands")
+    local command = Commands.Get(inst)
+    if command == nil or command.id ~= "make_heart" or Policy.IsBusy(inst) then return end
+    if not M.CanMakeHeart(inst) then
+        Commands.Clear(inst)
+        Dialogue.RandomReply(inst, "heart_make_failed")
+        return
+    end
+    return M.GetMakeHeartAction(inst)
+end
+
+-- Native hearts link to a user's login ID. NPC-made hearts instead keep the
+-- existing companion body ID; actual player-made hearts retain native links.
+local linked_hearts = setmetatable({}, {__mode = "k"})
+local RefreshHeart
+local function EnsureOwnerEvents(owner)
+    if owner._my_friend_heart_events then return end
+    owner._my_friend_heart_events = true
+    local function Refresh() M.RefreshLinkedHearts(owner) end
+    for _, event in ipairs({"ms_skilltreeinitialized", "onsetskillselection_server",
+        "onactivateskill_server", "ondeactivateskill_server"}) do
+        owner:ListenForEvent(event, Refresh)
+    end
+end
+
+local function FindHeartOwner(id)
+    -- While possessing, the original companion body is controlled by this
+    -- player. The parked AI body shares the session ID and must not win.
+    for _, player in ipairs(AllPlayers) do
+        if player:IsValid() and player._my_friend_id == id
+            and player:HasTag("my_friend_possessed") then
+            return player.prefab == "wortox" and player or nil
+        end
+    end
+    local friend = TheWorld._my_friend
+    if friend ~= nil and friend:IsValid() and friend._my_friend_id == id
+        and friend.prefab == "wortox" then return friend end
+end
+
+function M.RefreshLinkedHearts(owner)
+    if owner == nil or not owner:IsValid() or owner._my_friend_id == nil then return end
+    EnsureOwnerEvents(owner)
+    for heart in pairs(linked_hearts) do
+        if heart:IsValid() and heart._my_friend_heart_owner_id == owner._my_friend_id then
+            RefreshHeart(heart, FindHeartOwner(owner._my_friend_id)
+                or owner.prefab == "wortox" and owner or nil)
+        end
+    end
+end
+
+RefreshHeart = function(heart, owner)
+    local linked = heart.components.linkeditem
+    if heart._my_friend_heart_owner_id == nil then return linked.owner_inst end
+    owner = owner or FindHeartOwner(heart._my_friend_heart_owner_id)
+    local old = heart._my_friend_heart_owner
+    if old ~= owner then
+        if old ~= nil then
+            heart:RemoveEventCallback("onremove", heart._my_friend_heart_removed, old)
+        end
+        heart._my_friend_heart_owner = owner
+        heart._my_friend_heart_removed = function()
+            linked:SetOwnerInst(nil)
+            heart._my_friend_heart_owner = nil
+            heart:SetAllowConsumption(false)
+            heart._my_friend_heart_consumable = false
+        end
+        if owner ~= nil then heart:ListenForEvent("onremove", heart._my_friend_heart_removed, owner) end
+        linked:SetOwnerInst(owner)
+        -- SetOwnerInst invokes the native removal callback, which locks the
+        -- spell even if both the previous and new owners have the same skill.
+        heart._my_friend_heart_consumable = nil
+    end
+    -- A removed/reset skill must lock squeezing again, just as a missing
+    -- owner does. All effects of the spell remain the native heart's code.
+    local can_squeeze = owner ~= nil and owner.components.skilltreeupdater ~= nil
+        and owner.components.skilltreeupdater:IsActivated("wortox_lifebringer_3") == true
+    if heart._my_friend_heart_consumable ~= can_squeeze then
+        heart._my_friend_heart_consumable = can_squeeze
+        if can_squeeze then linked:OnSkillTreeInitialized()
+        else heart:SetAllowConsumption(false) end
+    end
+    if owner ~= nil then
+        if linked.netownername:value() ~= owner:GetDisplayName() then
+            linked.netownername:set(owner:GetDisplayName())
+        end
+        EnsureOwnerEvents(owner)
+    end
+    return owner
+end
+
+function M.ConfigureHeart(heart)
+    if not TheWorld.ismastersim or heart.components.linkeditem == nil then return end
+    local linked = heart.components.linkeditem
+    local attach = heart.TryToAttachWortoxID
+    heart.TryToAttachWortoxID = function(self, owner)
+        if self._my_friend_heart_owner_id ~= nil then
+            RefreshHeart(self)
+            return
+        end
+        if owner ~= nil and owner:HasTag("my_friend") and owner.prefab == "wortox"
+            and owner._my_friend_id ~= nil and linked:GetOwnerUserID() == nil
+            and owner.components.skilltreeupdater ~= nil
+            and owner.components.skilltreeupdater:IsActivated("wortox_lifebringer_1") then
+            self._my_friend_heart_owner_id = owner._my_friend_id
+            linked_hearts[self] = true
+            RefreshHeart(self, owner)
+            return
+        end
+        return attach(self, owner)
+    end
+    local getowner = linked.GetOwnerInst
+    linked.GetOwnerInst = function(self)
+        if heart._my_friend_heart_owner_id ~= nil then return RefreshHeart(heart) end
+        return getowner(self)
+    end
+    local save, load = heart.OnSave, heart.OnLoad
+    heart.OnSave = function(self, data)
+        data.my_friend_heart_owner_id = self._my_friend_heart_owner_id
+        if save ~= nil then return save(self, data) end
+    end
+    heart.OnLoad = function(self, data, ...)
+        self._my_friend_heart_owner_id = data ~= nil and data.my_friend_heart_owner_id or nil
+        if self._my_friend_heart_owner_id ~= nil then
+            linked_hearts[self] = true
+            self:DoTaskInTime(0, function() RefreshHeart(self) end)
+        end
+        if load ~= nil then return load(self, data, ...) end
+    end
+end
 
 local function NeedsHealing(player, threshold)
     return Policy.IsLocalPlayer(player) and player.entity:IsVisible()
