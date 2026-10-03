@@ -125,6 +125,10 @@ function M.UpdateGreetings(inst)
     if inst._my_friend_under_threat or Policy.IsBusy(inst)
         or inst.components.combat ~= nil and inst.components.combat.target ~= nil
         or M.IsGreetingPauseActive(inst) then return false end
+    -- At a player-set base, greet between tasks so every greeting can be
+    -- followed by the full pause without cancelling an action in progress.
+    if require("my_friend_home").Mode(inst) == "base"
+        and not M.CanPauseForGreeting(inst) then return false end
     local now = GetTime()
     if now < (inst._my_friend_next_greeting or 0) then return false end
     inst._my_friend_greeting_cooldowns = inst._my_friend_greeting_cooldowns or {}

@@ -840,11 +840,16 @@ local function ConfigureFriend(inst)
             inst.components.my_friend_affinity:UpdateLeader()
         end
     end)
+    inst:ListenForEvent("startfiredamage", function()
+        require("my_friend_behavior_ai").OnFireDamage(inst)
+    end)
     inst:ListenForEvent("healthdelta", function(_, data)
         if data == nil or (data.amount or 0) >= 0 then return end
         require("my_friend_equipment").Hurt(inst)
         -- Hunger, freezing and food penalties need treatment, not random running.
-        if data.cause == "fire" or data.cause == "hot" then
+        if data.cause == "fire" then
+            require("my_friend_behavior_ai").OnFireDamage(inst)
+        elseif data.cause == "hot" then
             local source = require("my_friend_survival_ai").FindDamagingHeatSource(inst)
             if source ~= nil then
                 require("my_friend_behavior_ai").StartHurtRetreat(inst, source)
@@ -1012,7 +1017,7 @@ local function SpawnFriend(player, announce)
     end
 end
 
-local function CanManage(player, friend, ignore_distance)
+local function CanManage(player, friend, ignore_distance, public_command)
     if player == nil or not player:IsValid() or friend == nil or not friend:IsValid()
         or not IsActualCompanion(friend)
         or friend.components == nil or friend.components.inventory == nil
@@ -1021,7 +1026,7 @@ local function CanManage(player, friend, ignore_distance)
     local px, _, pz = player.Transform:GetWorldPosition()
     if not ignore_distance and (fx - px)^2 + (fz - pz)^2 > 100 then return false end
     local leader = friend.components.follower ~= nil and friend.components.follower:GetLeader() or nil
-    return leader == nil or leader == player
+    return public_command or leader == nil or leader == player
 end
 
 local function CanPossess(player, friend)
@@ -1299,7 +1304,8 @@ AddModRPCHandler("MyFriends", "WheelCommand", function(player, friend, command_i
         end
         return
     end
-    if not CanManage(player, friend, true) or type(command_id) ~= "string" then return end
+    if type(command_id) ~= "string" or not CanManage(player, friend, true,
+        command_id == "read_book" or command_id == "squeeze_heart") then return end
     require("my_friend_commands").DispatchWheel(friend, player, command_id)
 end)
 

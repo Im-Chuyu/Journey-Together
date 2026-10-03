@@ -320,11 +320,17 @@ local function GetMealAction(inst, command, own_only)
     local target = FindOwnSack(inst, Wanted)
     if target == nil and not own_only then
         local x, y, z, range = SearchOrigin(inst)
-        local distance
+        local priority, distance
         for _, entity in ipairs(TheSim:FindEntities(x, y, z, range, nil, CANT_TAGS)) do
             if IsAvailable(inst, entity) and Wanted(entity) then
+                -- The carried sack was checked first. Prefer fridges to
+                -- saltboxes, then gelblob holders; distance breaks ties.
+                local p = entity.prefab == "gelblob_storage" and 3
+                    or entity.prefab == "saltbox" and 2 or 1
                 local d = inst:GetDistanceSqToInst(entity)
-                if distance == nil or d < distance then target, distance = entity, d end
+                if priority == nil or p < priority or p == priority and d < distance then
+                    target, priority, distance = entity, p, d
+                end
             end
         end
     end

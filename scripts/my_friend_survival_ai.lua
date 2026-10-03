@@ -208,7 +208,19 @@ local function IsHostileHeater(inst, source)
         and combat.target == inst
 end
 
-function M.FindDamagingHeatSource(inst)
+function M.GetFireDangerRadius(source)
+    if source == nil or not source:IsValid() then return 0 end
+    local propagator = source.components ~= nil and source.components.propagator or nil
+    if propagator ~= nil and not propagator.spreading then return 0 end
+    local distance = GetDamageDistance(source)
+    if distance > 0 and propagator ~= nil and propagator.damages then
+        local multiplier = TheWorld.state.isspring and (TUNING.SPRING_FIRE_RANGE_MOD or 1) or 1
+        distance = math.max(distance, (propagator.damagerange or 3) * multiplier + 1)
+    end
+    return distance
+end
+
+function M.FindDamagingHeatSource(inst, fire_only)
     local x, y, z = inst.Transform:GetWorldPosition()
     local best, bestscore
     local temperature = inst.components.temperature
@@ -216,18 +228,19 @@ function M.FindDamagingHeatSource(inst)
         if source ~= inst and source.entity:GetParent() == nil then
             local heater = source.components.heater
             local heat = heater ~= nil and heater:IsExothermic() and heater:GetHeat(inst) or nil
-            local damage = GetDamageDistance(source)
+            local damage = fire_only and M.GetFireDangerRadius(source) or GetDamageDistance(source)
             local cutoff = heater ~= nil and (heater:GetHeatRadiusCutoff() or 10) or damage
             local p = source:GetPosition()
             local distance = (p.x - x)^2 + (p.z - z)^2
-            if (damage > 0 or temperature ~= nil and heat ~= nil and heat > temperature.current)
-                and distance < math.max(cutoff, damage)^2 then
+            if (damage > 0 or not fire_only and temperature ~= nil
+                    and heat ~= nil and heat > temperature.current)
+                and distance < (fire_only and damage or math.max(cutoff, damage))^2 then
                 local score = distance - damage * 2
                 if bestscore == nil or score < bestscore then best, bestscore = source, score end
             end
         end
     end
-    return best
+    return best, best ~= nil and M.GetFireDangerRadius(best) or nil
 end
 
 local function GetSourceData(inst, source, need)

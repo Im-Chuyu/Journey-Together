@@ -510,7 +510,8 @@ function MyFriendBrain:OnStart()
                 end
                 require("my_friend_dialogue").OnAction(inst, action)
                 if text ~= nil then BaseAI.SetTask(inst, text) end
-                return unrestricted and action or Policy.GuardAction(inst, action)
+                return (unrestricted or action._my_friend_fire_retreat) and action
+                    or Policy.GuardAction(inst, action)
             end
         end, id, true, timeout or 12, (not unrestricted or id == "revive_return") and id ~= "hurt"
             -- "temperature" walks to a fire or a thermal stone that can easily
@@ -615,7 +616,9 @@ function MyFriendBrain:OnStart()
         BaseAI.GetBaseFireAction, nil)
     Add("light_wait", Alive(function(c) return c.waitlight and 90 or 0 end), StandStill(inst))
     Add("greeting", Alive(function(c)
-        return c.greeting and CoreAI.CanPauseForGreeting(inst) and 89 or 0
+        if not c.greeting or not CoreAI.CanPauseForGreeting(inst) then return 0 end
+        return require("my_friend_home").Mode(inst) == "base"
+            and not c.dark and not c.thermal and not c.emergency_food and 123 or 89
     end), StandStill(inst, nil, function() return CoreAI.IsGreetingPauseActive(inst) end))
     Action("social_distance", Alive(105), SocialAI.GetAvoidAction, "正在和不熟悉的玩家保持距离", 12)
     Action("command_drop", Alive(function(c)
@@ -719,7 +722,7 @@ function MyFriendBrain:OnStart()
         local command = Commands.Get(inst)
         if command ~= nil and (command.id == "touch_tower" or command.id == "squeeze_heart") then return 0 end
         if Policy.IsRoaming(inst) then return 0 end
-        return c.leader ~= nil and command ~= nil
+        return command ~= nil and (c.leader ~= nil or command.special == "read")
             and (command.special ~= nil and 132 or command.id == "carry_statue" and 117 or 104) or 0
     end), function(actor) return Commands.Commit(actor, BaseAI.GetCommandAction(actor)) end, nil, 180)
     local function ExpeditionScore(c)
@@ -815,6 +818,7 @@ function MyFriendBrain:OnStart()
                 distance = leader ~= nil and Policy.DistanceSq(inst, leader) or 0}
         end
         if leader == nil and not ghost then BaseAI.EnsureBase(inst) end
+        BehaviourAI.UpdateFireRetreat(inst)
         local hurt_evade = GetTime() < (inst._my_friend_hurt_evade_until or 0)
         local threat = not ghost and not hurt_evade
             and BehaviourAI.FindThreat(inst) or nil

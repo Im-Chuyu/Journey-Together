@@ -94,7 +94,8 @@ function M.Get(friend)
     local command = friend ~= nil and friend._my_friend_command or nil
     if command ~= nil and (not Policy.IsLocalPlayer(command.player)
         or GetTime() >= (command.deadline or 0)
-        or command.id ~= "touch_tower" and Policy.GetLeader(friend) ~= command.player) then
+        or command.id ~= "touch_tower" and command.id ~= "squeeze_heart"
+            and command.special ~= "read" and Policy.GetLeader(friend) ~= command.player) then
         M.Clear(friend)
         return
     end
@@ -310,7 +311,8 @@ function M.Dispatch(friend, player, message, from_wheel)
         and SpecialCommands.Parse(friend, addressed_message, id ~= nil) or nil
     if special ~= nil then
         if not from_wheel and id == nil and MaybeRefuseChinese(friend, addressed_message, "special") then return true end
-        if friend:HasTag("playerghost") or Policy.GetLeader(friend) ~= player then return false end
+        if friend:HasTag("playerghost")
+            or special.special ~= "read" and Policy.GetLeader(friend) ~= player then return false end
         M.Clear(friend)
         if special.special == "wendy_recall" then
             require("my_friend_abigail").Recall(friend, 480)
@@ -426,7 +428,7 @@ function M.Dispatch(friend, player, message, from_wheel)
         Dialogue.Say(friend, "hold_position", player)
         return true
     end
-    if Policy.GetLeader(friend) ~= player then
+    if id ~= "squeeze_heart" and Policy.GetLeader(friend) ~= player then
         if id == "set_base" then Reply(friend, "base_needs_follow") end
         return false
     end

@@ -412,15 +412,17 @@ function M.FindAssistTarget(inst)
     return best
 end
 
-function M.StartHurtRetreat(inst, source)
+function M.StartHurtRetreat(inst, source, fire_distance)
     if source == nil or not source:IsValid() or not IsAlive(inst)
         or inst:HasTag("playerghost") then return end
     -- Repeated damage within one retreat must not move its origin or extend it.
-    if GetTime() < (inst._my_friend_hurt_evade_until or 0) then return end
+    if GetTime() < (inst._my_friend_hurt_evade_until or 0)
+        and (fire_distance == nil or inst._my_friend_hurt_fire_distance ~= nil) then return end
     inst._my_friend_hurt_position = inst:GetPosition()
     inst._my_friend_hurt_attacker = source
     inst._my_friend_hurt_source = source:GetPosition()
     inst._my_friend_hurt_destination = nil
+    inst._my_friend_hurt_fire_distance = fire_distance
     inst._my_friend_hurt_until = GetTime() + 3
     inst._my_friend_hurt_evade_until = GetTime() + 3.5
     inst._my_friend_assist_target = nil
@@ -430,6 +432,31 @@ function M.StartHurtRetreat(inst, source)
     require("my_friend_container_ai").Cancel(inst)
     -- Let the utility selector cancel its old node after the hit animation.
     inst._my_friend_replan_requested = true
+end
+
+function M.OnFireDamage(inst)
+    if not IsAlive(inst) or inst:HasTag("playerghost") then return end
+    local health = inst.components.health
+    if health.GetFireDamageScale ~= nil and health:GetFireDamageScale() <= 0 then return end
+    local now = GetTime()
+    if now < (inst._my_friend_fire_check_after or 0) then return end
+    inst._my_friend_fire_check_after = now + 1
+    local source, distance = require("my_friend_survival_ai").FindDamagingHeatSource(inst, true)
+    if source ~= nil then
+        inst._my_friend_fire_source = source
+        M.StartHurtRetreat(inst, source, distance + 1)
+    end
+end
+
+function M.UpdateFireRetreat(inst)
+    -- Only revisit the remembered fire after contact; no periodic world scan.
+    local source = inst._my_friend_fire_source
+    if source == nil then return end
+    local distance = require("my_friend_survival_ai").GetFireDangerRadius(source)
+    if distance <= 0 then inst._my_friend_fire_source = nil return end
+    if DistanceSq(inst, source) < distance * distance then
+        M.StartHurtRetreat(inst, source, distance + 1)
+    end
 end
 
 function M.ObservePlayerAttack(inst)
@@ -465,15 +492,18 @@ function M.GetHurtRetreatAction(inst)
     local current = inst:GetPosition()
     local leader = Policy.GetLeader(inst)
     local source = inst._my_friend_hurt_source
+    local fire_distance = inst._my_friend_hurt_fire_distance
     local heading = source ~= nil
         and math.atan2(current.z - source.z, current.x - source.x) or math.random() * 2 * math.pi
     for i = 1, 12 do
         local offset = math.ceil((i - 1) / 2) * (i % 2 == 0 and 1 or -1)
         local angle = heading + offset * 2 * math.pi / 12
+        local centre = fire_distance ~= nil and source or origin
+        local distance = fire_distance or 3
         local point = inst._my_friend_hurt_destination
-            or Vector3(origin.x + math.cos(angle) * 3, 0, origin.z + math.sin(angle) * 3)
-        local allowed = leader == nil or Policy.IsRoaming(inst)
-        if leader ~= nil and not Policy.IsRoaming(inst) then
+            or Vector3(centre.x + math.cos(angle) * distance, 0, centre.z + math.sin(angle) * distance)
+        local allowed = fire_distance ~= nil or leader == nil or Policy.IsRoaming(inst)
+        if fire_distance == nil and leader ~= nil and not Policy.IsRoaming(inst) then
             local p = leader:GetPosition()
             allowed = (point.x - p.x)^2 + (point.z - p.z)^2 <= 36
         end
@@ -484,6 +514,7 @@ function M.GetHurtRetreatAction(inst)
             and Navigation.IsClear(current, point, Navigation.Caps(inst)) then
             inst._my_friend_hurt_destination = point
             local action = BufferedAction(inst, nil, ACTIONS.WALKTO, nil, point)
+            action._my_friend_fire_retreat = fire_distance ~= nil
             action.arrivedist = .25
             local function Finish()
                 inst._my_friend_hurt_until = 0
@@ -779,6 +810,7 @@ function M.CanCounterAttack(inst, target)
     local enemycombat = target.components ~= nil and target.components.combat or nil
     local enemyhealth = target.components ~= nil and target.components.health or nil
     local health = inst.components.health
+    local is_wanda = inst.prefab == "wanda" and inst.components.oldager ~= nil
     local enemyweapon = enemycombat ~= nil and enemycombat.GetWeapon ~= nil
         and enemycombat:GetWeapon() or nil
     M.EquipBestCombatArmor(inst, target, enemyweapon)
@@ -795,10 +827,13 @@ function M.CanCounterAttack(inst, target)
     -- companion has a working weapon and armour, it helps the leader instead
     -- of waiting for the conservative damage/survival estimate to pass.
     if assisting then
-        return health == nil or health.GetPercent == nil
+        return is_wanda or health == nil or health.GetPercent == nil
             or health:GetPercent() >= .15
     end
     if damage <= 25 or not protected then return false end
+    -- Wanda's remaining years are not ordinary hit points. Low remaining
+    -- years increase her weapon damage; the watch behaviour handles healing.
+    if is_wanda then return true end
     if enemycombat == nil or enemyhealth == nil or health == nil then return true end
     if health.GetPercent ~= nil and health:GetPercent() < .15 then return false end
 
