@@ -10,6 +10,34 @@ local RestoreCompanion
 local RestoreActiveSession
 local Characters = require("my_friend_characters")
 
+local function PlayerOwnsCharacter(player, prefab)
+    if player == nil or type(prefab) ~= "string" then return false end
+    if player.prefab == prefab or not Characters.IsPaid(prefab) then return true end
+    local reported = _G.MyFriendOwnedCharacters ~= nil
+        and _G.MyFriendOwnedCharacters[player.userid] or nil
+    return reported ~= nil and reported[prefab] == true
+end
+
+local function SafeSkinForPlayer(player, prefab, skin)
+    if type(skin) ~= "string" or skin == "" or skin == prefab
+        or skin == prefab .. "_none" then return nil end
+    local owned = _G.MyFriendSkinNames ~= nil
+        and _G.MyFriendSkinNames[player.userid] or nil
+    return owned ~= nil and owned[skin] == true and skin or nil
+end
+
+local function SafeClothingForPlayer(player, clothing)
+    local safe = {}
+    local owned = _G.MyFriendSkinNames ~= nil
+        and _G.MyFriendSkinNames[player.userid] or nil
+    for _, part in ipairs({"body", "hand", "legs", "feet"}) do
+        local value = clothing ~= nil and clothing[part] or nil
+        safe[part] = type(value) == "string" and value ~= ""
+            and owned ~= nil and owned[value] == true and value or ""
+    end
+    return safe
+end
+
 local function World()
     return _G.TheWorld
 end
@@ -160,18 +188,19 @@ local function LoadAffinity(inst, data)
     end
 end
 
-local function StartSwap(player, prefab, skin)
+local function StartSwap(player, prefab, skin, trusted)
     local sw = player ~= nil and player.components ~= nil
         and player.components.seamlessplayerswapper or nil
     if sw == nil or sw._my_friend_swap_in_progress
         or type(sw._StartSwap) ~= "function" then return false end
     if prefab ~= nil and not Characters.IsCharacter(prefab) then return false end
     if player.userid == nil or player.userid == "" then return false end
+    if not trusted and prefab ~= nil and not PlayerOwnsCharacter(player, prefab) then return false end
     sw._my_friend_swap_in_progress = true
     if prefab ~= nil then
         sw.swap_data = sw.swap_data or {}
         sw.swap_data[prefab] = {
-            skin_base = type(skin) == "string" and skin ~= "" and skin or nil,
+            skin_base = SafeSkinForPlayer(player, prefab, skin),
         }
     end
     -- Finish a spawn fade while its controller still exists. Native swapping
@@ -265,6 +294,10 @@ end
 
 function M.IsPossessing(player)
     return SessionFor(player) ~= nil
+end
+
+function M.CanUseCompanionCharacter(player, prefab)
+    return PlayerOwnsCharacter(player, prefab)
 end
 
 function M.Rebind(player)
@@ -502,7 +535,7 @@ RestoreActiveSession = function(sess, player)
     sess.phase = "reload_enter"
     local skin = sess.active_skin_data ~= nil
         and sess.active_skin_data.skin_name or sess.companion_skin
-    if not StartSwap(player, prefab, skin) then
+    if not StartSwap(player, prefab, skin, true) then
         sess.phase = nil
         return false
     end
@@ -657,6 +690,7 @@ function M.Possess(player, friend)
     if player.components == nil or player.components.seamlessplayerswapper == nil
         or not friend:HasTag("my_friend") or friend:HasTag("playerghost")
         or friend.components == nil then return false end
+    if not PlayerOwnsCharacter(player, friend.prefab) then return false end
     local world = World()
     if world == nil or not world.ismastersim then return false end
     local follower = friend.components.follower
@@ -670,6 +704,8 @@ function M.Possess(player, friend)
     local was_following = follower ~= nil and follower:GetLeader() == player
     local affinity = friend.components.my_friend_affinity
     local clothing = skinner ~= nil and skinner:GetClothing() or nil
+    local safe_companion_skin = SafeSkinForPlayer(player, friend.prefab,
+        skinner ~= nil and skinner.skin_name or nil)
     local companion_pets = DetachCompanionPets(friend)
     local sessions = Sessions()
     if sessions == nil then return false end
@@ -684,11 +720,11 @@ function M.Possess(player, friend)
         friend_staying = affinity ~= nil and affinity.staying == true or false,
         companion_prefab = friend.prefab,
         companion_id = friend._my_friend_id,
-        companion_skin = skinner ~= nil and skinner.skin_name or nil,
+        companion_skin = safe_companion_skin,
         companion_skin_data = {
             owner = friend._my_friend_skin_owner or player.userid,
-            skin_name = skinner ~= nil and skinner.skin_name or nil,
-            clothing = clothing,
+            skin_name = safe_companion_skin,
+            clothing = SafeClothingForPlayer(player, clothing),
             skin_mode = skinner ~= nil and skinner.skintype or nil,
         },
         companion_body = {

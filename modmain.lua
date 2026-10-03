@@ -511,6 +511,7 @@ end)
 
 -- Server side: which skins each client says it owns, checked by SetSkins.
 _G.MyFriendSkinNames = {}
+_G.MyFriendOwnedCharacters = {}
 
 -- SGwilson normally uses its running states for point movement even when the
 -- locomotor is moving at walk speed.  These extra states are entered only by
@@ -1039,6 +1040,9 @@ local function CanPossess(player, friend)
         return false
     end
     local affinity = friend.components.my_friend_affinity
+    if not Possess.CanUseCompanionCharacter(player, friend.prefab) then
+        return false
+    end
     local score = affinity:Get(player)
     if score >= 90 then
         return true
@@ -1097,6 +1101,15 @@ AddModRPCHandler("MyFriends", "OwnedSkins", function(player, payload)
     local owned = {}
     for skin in payload:gmatch("[^,]+") do owned[skin] = true end
     _G.MyFriendSkinNames[player.userid] = owned
+end)
+
+AddModRPCHandler("MyFriends", "OwnedCharacters", function(player, payload)
+    if player == nil or player.userid == nil or type(payload) ~= "string" then return end
+    local owned = {}
+    for prefab in payload:gmatch("[^,]+") do
+        if Characters.IsCharacter(prefab) then owned[prefab] = true end
+    end
+    _G.MyFriendOwnedCharacters[player.userid] = owned
 end)
 
 AddModRPCHandler("MyFriends", "SetSkins", function(player, friend, base, body, hand, legs, feet)
