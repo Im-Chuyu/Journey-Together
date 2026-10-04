@@ -10,18 +10,19 @@ local MyFriendCombat = Class(BehaviourNode, function(self, inst)
     self.commit_attack_until = nil
 end)
 
-local function DistanceSq(a, b)
-    local ax, _, az = a.Transform:GetWorldPosition()
-    local bx, _, bz = b.Transform:GetWorldPosition()
-    local dx, dz = bx - ax, bz - az
-    return dx * dx + dz * dz
-end
+local DistanceSq = Policy.DistanceSq
 
 local function IsBusy(inst)
     return inst.sg ~= nil and inst.sg:HasStateTag("busy")
 end
 
 local function IsValidThreat(inst, target)
+    if inst == nil or not inst:IsValid() or inst:HasTag("playerghost")
+        or inst.components.health == nil or inst.components.health:IsDead()
+        or target == nil or not target:IsValid() or target.Transform == nil
+        or target:IsInLimbo() or target:HasTag("playerghost")
+        or target.components == nil or target.components.health == nil
+        or target.components.health:IsDead() or target.components.combat == nil then return false end
     local player_attack_target = BehaviourAI.GetLeaderAttackCount(inst, target) > 0
     local assisting = target == inst._my_friend_assist_target
     return target ~= nil and target:IsValid()
@@ -37,12 +38,12 @@ local function IsBoss(target)
 end
 
 local function Stop(inst)
-    if inst.components.locomotor ~= nil then inst.components.locomotor:Stop() end
+    if inst:IsValid() and inst.components.locomotor ~= nil then inst.components.locomotor:Stop() end
 end
 
 function MyFriendCombat:Visit()
     local combat = self.inst.components.combat
-    if combat == nil then
+    if not self.inst:IsValid() or combat == nil or self.inst.components.locomotor == nil then
         self.status = FAILED
         return
     end
@@ -75,7 +76,7 @@ function MyFriendCombat:Visit()
     -- combat.target nil. CalcAttackRangeSq() then indexes that nil and takes
     -- the server down. Nothing below can work on a target combat rejected, so
     -- hand the tick back instead.
-    if combat.target ~= self.target then
+    if combat.target ~= self.target or not IsValidThreat(self.inst, self.target) then
         self.target = nil
         self.status = FAILED
         Stop(self.inst)
@@ -90,7 +91,11 @@ function MyFriendCombat:Visit()
     if not Policy.InRange(self.inst, self.inst, 7) then
         local leader = Policy.GetLeader(self.inst)
         combat:SetTarget(nil)
-        self.inst.components.locomotor:GoToPoint(leader:GetPosition(), nil, true)
+        if leader ~= nil then
+            self.inst.components.locomotor:GoToPoint(leader:GetPosition(), nil, true)
+        else
+            Stop(self.inst)
+        end
         self:Sleep(.1)
         return
     end
@@ -154,9 +159,13 @@ function MyFriendCombat:Visit()
         if self.inst.sg == nil or self.inst.sg:HasStateTag("canrotate") then
             self.inst:FacePoint(target_position)
         end
-        local action = BufferedAction(self.inst, self.target, ACTIONS.ATTACK)
+        local target = self.target
+        local action = BufferedAction(self.inst, target, ACTIONS.ATTACK)
         action.validfn = function()
-            return IsValidThreat(self.inst, self.target)
+            -- Validate the target this action was created for. self.target may
+            -- already refer to a different enemy when the SG runs the action.
+            return self.target == target and combat.target == target
+                and IsValidThreat(self.inst, target)
         end
         self.inst.components.locomotor:PushAction(action, true)
     end
@@ -164,6 +173,11 @@ function MyFriendCombat:Visit()
 end
 
 function MyFriendCombat:OnStop()
+    if not self.inst:IsValid() then
+        self.target, self.announced_target = nil, nil
+        self.dodge_started_at, self.commit_attack_until = nil, nil
+        return
+    end
     Stop(self.inst)
     if self.target == nil or not IsValidThreat(self.inst, self.target) then
         if self.inst.components.combat ~= nil then self.inst.components.combat:SetTarget(nil) end

@@ -10,8 +10,10 @@ local command_wheel_key = GetModConfigData("command_wheel_key") or "r"
 command_wheel_key = type(command_wheel_key) == "string" and command_wheel_key:lower() or "r"
 local command_wheel_key_code = command_wheel_key:match("^[a-z]$") ~= nil
     and string.byte(command_wheel_key) or 114
-local wheel_extra_key = GetModConfigData("command_wheel_extra_key") or "F5"
-local panel_extra_key = GetModConfigData("companion_panel_extra_key") or "F6"
+local wheel_extra_key = GetModConfigData("command_wheel_extra_key") or "DISABLED"
+local panel_extra_key = GetModConfigData("companion_panel_extra_key") or "DISABLED"
+local panel_ui_button = GetModConfigData("companion_panel_ui_button") == true
+local wheel_ui_button = GetModConfigData("command_wheel_ui_button") == true
 local Text = Language.Text
 
 local function IsActualCompanion(inst)
@@ -524,7 +526,7 @@ local function AddFriendWalkState(name, animation, nextstate, looping)
 
         onenter = function(inst, target)
             if target ~= nil then
-                inst.components.locomotor:GoToPoint(target, nil, false)
+                require("my_friend_navigation").MoveToPoint(inst, target, false)
             else
                 inst.components.locomotor:SetShouldRun(false)
                 inst.components.locomotor:WalkForward()
@@ -575,15 +577,17 @@ local function PushPanelData(inst)
         or inst._my_friend_panel_net == nil or inst.components == nil then return end
     FriendReplication.Sync(inst)
     local health, hunger, sanity = inst.components.health, inst.components.hunger, inst.components.sanity
-    -- The trailing field carries panel state the client cannot work out on
-    -- its own: whether the shared free character change is still unspent.
+    -- Trailing flags: 1 = free character change, 2 = free rename.
+    local affinity = inst.components.my_friend_affinity
+    local flags = (require("my_friend_farewell").IsFreeChangeAvailable(inst) and 1 or 0)
+        + (affinity ~= nil and affinity:IsFreeRenameAvailable() and 2 or 0)
     local panel = string.format("%.2f,%.2f|%.2f,%.2f|%.2f,%.2f|%s|%d",
         health ~= nil and health.currenthealth or 0, health ~= nil and health.maxhealth or 0,
         hunger ~= nil and hunger.current or 0, hunger ~= nil and hunger.max or 0,
         sanity ~= nil and sanity.current or 0, sanity ~= nil and sanity.max or 0,
         string.format("%.2f,%.2f", inst.components.moisture ~= nil and inst.components.moisture:GetMoisture() or 0,
             inst.components.moisture ~= nil and inst.components.moisture:GetMaxMoisture() or 100),
-        require("my_friend_farewell").IsFreeChangeAvailable(inst) and 1 or 0)
+        flags)
     -- Avoid dirtying the net string when no panel value changed. The task
     -- still runs regularly so a newly joined client receives the current
     -- value, but steady-state play produces no repeated panel packets.
@@ -819,7 +823,7 @@ local function ConfigureFriend(inst)
         -- Combat emits healthdelta before attacked. damageresolved is the
         -- signed health delta and already includes armor and damage modifiers.
         if data ~= nil and ((data.damageresolved or 0) < 0
-            or attacker ~= nil and attacker:HasTag("player")) then
+            or attacker ~= nil and attacker:IsValid() and attacker:HasTag("player")) then
             require("my_friend_behavior_ai").StartHurtRetreat(inst, attacker)
         end
         if attacker ~= nil and attacker:IsValid() and attacker.userid ~= nil
@@ -874,7 +878,7 @@ end
 local function FindFriend()
     local actual
     for _, e in pairs(_G.Ents) do
-        if e:IsValid() then
+        if e:IsValid() and not e._my_friend_possess_parked then
             if Characters.IsCharacter(e.prefab)
                 and (e._my_friend_is_companion or e:HasTag("my_friend")) then
                 if actual == nil then actual = ConfigureFriend(e) else e:Remove() end
@@ -1032,29 +1036,12 @@ local function CanManage(player, friend, ignore_distance, public_command)
 end
 
 local function CanPossess(player, friend)
-    if player == nil or not player:IsValid() or friend == nil or not friend:IsValid()
-        or not IsActualCompanion(friend)
-        or friend.components == nil or friend.components.inventory == nil
-        or not require("my_friend_policy").IsLocalPlayer(player)
-        or friend.components.my_friend_affinity == nil then
-        return false
-    end
-    local affinity = friend.components.my_friend_affinity
-    if not Possess.CanUseCompanionCharacter(player, friend.prefab) then
-        return false
-    end
-    local score = affinity:Get(player)
-    if score >= 90 then
-        return true
-    end
-    local leader = friend.components.follower ~= nil
-        and friend.components.follower:GetLeader() or nil
-    return leader == player
+    return IsActualCompanion(friend) and Possess.CanPossess(player, friend)
 end
 
 AddModRPCHandler("MyFriends", "Rename", function(player, friend, name)
     if not CanManage(player, friend) then return end
-    require("my_friend_commands").Rename(friend, player, name)
+    if require("my_friend_commands").Rename(friend, player, name) then PushPanelData(friend) end
 end)
 
 AddModRPCHandler("MyFriends", "PanelLocked", function(player, friend, kind)
@@ -1070,6 +1057,7 @@ AddModRPCHandler("MyFriends", "PanelLocked", function(player, friend, kind)
         return
     end
     local needed = kind == "skin" and 40 or 80
+    if kind == "rename" and friend.components.my_friend_affinity:CanRename(player) then return end
     if friend.components.my_friend_affinity:Get(player) < needed then
         Dialogue.Reply(friend, "affinity_locked", tostring(needed))
     end
@@ -1569,6 +1557,26 @@ AddClassPostConstruct("widgets/controls", function(self)
     local Wheel = require("widgets/my_friend_command_wheel")
     self.my_friend_command_wheel = self:AddChild(Wheel(self.owner))
     self.my_friend_command_wheel:Hide()
+    local function ToggleFriendPanel()
+        local panel = self.my_friend_panel
+        if panel:IsVisible() then panel:HideFriend() return end
+        local target = _G.TheInput ~= nil and _G.TheInput:GetWorldEntityUnderMouse() or nil
+        if not IsActualCompanion(target) then target = self.my_friend_command_wheel:FindFriend() end
+        if IsActualCompanion(target) then
+            panel:ShowFriend(target)
+            panel:MoveToFront()
+        end
+    end
+    if panel_ui_button or wheel_ui_button then
+        local HUDButtons = require("widgets/my_friend_hud_buttons")
+        self.my_friend_hud_buttons = self:AddChild(HUDButtons(panel_ui_button, wheel_ui_button,
+            function()
+                if self.owner == _G.ThePlayer then ToggleFriendPanel() end
+            end,
+            function()
+                if self.owner == _G.ThePlayer then self.my_friend_command_wheel:Toggle() end
+            end))
+    end
     if not self._my_friend_wheel_key_registered and _G.TheInput ~= nil then
         self._my_friend_wheel_key_registered = true
         self._my_friend_wheel_key_handler = _G.TheInput:AddKeyDownHandler(
@@ -1595,7 +1603,8 @@ AddClassPostConstruct("widgets/controls", function(self)
     end
     local extra_handlers = {}
     local function AddExtraKey(value, callback)
-        local code = type(value) == "string" and _G["KEY_" .. value] or nil
+        if type(value) ~= "string" or value == "DISABLED" then return end
+        local code = rawget(_G, "KEY_" .. value)
         if code == nil or _G.TheInput == nil then return end
         local held = false
         extra_handlers[#extra_handlers + 1] = _G.TheInput:AddKeyDownHandler(code, function()
@@ -1611,13 +1620,7 @@ AddClassPostConstruct("widgets/controls", function(self)
     AddExtraKey(wheel_extra_key, function() self.my_friend_command_wheel:Toggle() end)
     -- If both extra shortcuts are set to one key, the wheel keeps priority.
     if panel_extra_key ~= wheel_extra_key or wheel_extra_key == "DISABLED" then
-        AddExtraKey(panel_extra_key, function()
-            local panel = self.my_friend_panel
-            if panel:IsVisible() then panel:Hide() return end
-            local target = _G.TheInput:GetWorldEntityUnderMouse()
-            if not IsActualCompanion(target) then target = self.my_friend_command_wheel:FindFriend() end
-            if IsActualCompanion(target) then panel:ShowFriend(target) end
-        end)
+        AddExtraKey(panel_extra_key, ToggleFriendPanel)
     end
     self.inst:ListenForEvent("onremove", function()
         for _, handler in ipairs(extra_handlers) do handler:Remove() end
@@ -1664,6 +1667,7 @@ AddPrefabPostInitAny(require("my_friend_shadow_compat").ConfigureCreature)
 AddClassPostConstruct("components/combat_replica", function(self)
     local validtarget = self.IsValidTarget
     self.IsValidTarget = function(combat, target)
+        if not combat.inst:IsValid() or target ~= nil and not target:IsValid() then return false end
         if target ~= nil and target:HasTag("my_friend") and combat.inst.isplayer
             and not combat.inst:HasTag("my_friend") then
             return target ~= combat.inst and target.entity:IsValid() and target.entity:IsVisible()
@@ -1675,6 +1679,7 @@ AddClassPostConstruct("components/combat_replica", function(self)
     end
     local canbeattacked = self.CanBeAttacked
     self.CanBeAttacked = function(combat, attacker)
+        if not combat.inst:IsValid() or attacker ~= nil and not attacker:IsValid() then return false end
         if combat.inst:HasTag("my_friend") and attacker ~= nil
             and attacker.isplayer and not attacker:HasTag("my_friend") then
             return not combat.inst:HasAnyTag("playerghost", "flight", "noattack",
@@ -1732,7 +1737,8 @@ local function ConfigureFriendWorld(world)
     local function EnsureCompanion(player)
         if not world:HasTag("forest") or player == nil or not player:IsValid()
             or player:HasTag("my_friend") or player:HasTag("my_friend_possessing")
-            or player._despawning or world._my_friend_possession_active then return end
+            or player._despawning or world._my_friend_possession_active
+            or Possess.HasSessions() then return end
         if not world._my_friend_spawn_check_logged then
             world._my_friend_spawn_check_logged = true
             _G.print("[MyFriends] Checking companion: saved=" .. tostring(world._my_friend_saved)
@@ -1810,6 +1816,7 @@ local function ConfigureFriendWorld(world)
         end
     end)
     world:DoPeriodicTask(2, function()
+        if world._my_friend_possession_active then return end
         if world._my_friend == nil or not world._my_friend:IsValid() then
             if _G.GetTime() >= (world._my_friend_find_after or 0) then
                 world._my_friend_find_after = _G.GetTime() + 15

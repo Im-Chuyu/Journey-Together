@@ -4,10 +4,10 @@ local FIXED_USERID = "KU_XjTVXvf_"
 -- A player may leave food on the companion instead of feeding it. The window
 -- runs from the first item handed over; only the three most valuable items
 -- still held when it closes are counted.
-local GIFT_WINDOW = 480
+local GIFT_WINDOW = 240
 local GIFT_ITEM_LIMIT = 3
 local EQUIPMENT_GIFT_WINDOW = 480
-local EQUIPMENT_GIFT_CAP = 10
+local EQUIPMENT_GIFT_CAP = 5
 local SACK_GIFT_COOLDOWN = 5 * TUNING.TOTAL_DAY_TIME
 local Policy = require("my_friend_policy")
 
@@ -21,6 +21,7 @@ local Affinity = Class(function(self, inst)
     self.requests = {}
     self.meal_depth = 0
     self.staying = false
+    self.rename_used = false
     self.proximity = {}
     self.gifts = {}
     self.equipment_gifts = {}
@@ -54,6 +55,14 @@ function Affinity:CanFeed(player) return self:Get(player) >= 0 end
 function Affinity:CanTakeItems(player) return self:Get(player) >= 20 end
 function Affinity:CanCommandWork(player) return self:Get(player) > 50 end
 
+function Affinity:IsFreeRenameAvailable()
+    return self.rename_used ~= true
+end
+
+function Affinity:CanRename(player)
+    return self:IsFreeRenameAvailable() or self:Get(player) >= 80
+end
+
 function Affinity:UpdateProximity()
     local now = GetTime()
     local elapsed = math.min(2, math.max(0, now - self.last_proximity_tick))
@@ -65,7 +74,7 @@ function Affinity:UpdateProximity()
             local time = (self.proximity[player.userid] or 0) + elapsed
             if time >= 60 then
                 time = time - 60
-                self:DoDelta(player, .1, "companionship")
+                self:DoDelta(player, .2, "companionship")
             end
             self.proximity[player.userid] = time
         end
@@ -170,7 +179,7 @@ function Affinity:RecordInventoryGift(player, item, count)
 end
 
 -- Equipment gifts grant a small immediate affinity bonus. Each player has an
--- independent 480-second window with a total reward cap of 10 affinity.
+-- independent 480-second window with a total reward cap of 5 affinity.
 function Affinity:RecordEquipmentGift(player, item)
     local userid = UserID(player)
     if userid == nil or not Policy.IsLocalPlayer(player) or item == nil
@@ -267,8 +276,7 @@ function Affinity:RecordFollowerChange(health, sanity)
     if leader == nil or not leader:IsValid() or leader.userid == nil then return end
     health = health or 0
     sanity = sanity or 0
-    local delta = (health >= 0 and health * .005 or health * .02)
-        + (sanity >= 0 and sanity * .005 or sanity * .01)
+    local delta = (health + sanity) * .005
     if delta ~= 0 then return self:DoDelta(leader, delta, "follower_stats") end
 end
 
@@ -276,6 +284,7 @@ function Affinity:RequestFollow(player)
     local userid = UserID(player)
     if userid == nil or not Policy.IsLocalPlayer(player) or not self:CanFollow(userid)
         or player:HasTag("playerghost") or player:HasTag("my_friend") then return false end
+    require("my_friend_home").Resume(self.inst)
     self.staying = false
     for _, id in ipairs(self.requests) do
         if id == userid then
@@ -371,6 +380,7 @@ function Affinity:OnSave()
         values = self.values,
         requests = self.requests,
         staying = self.staying,
+        rename_used = self.rename_used or nil,
         proximity = self.proximity,
         gifts = gifts,
         equipment_gifts = next(equipment_gifts) ~= nil and equipment_gifts or nil,
@@ -383,6 +393,7 @@ function Affinity:OnLoad(data)
     self.equipment_gifts = {}
     self.sack_gifts = {}
     self.staying = data ~= nil and data.staying == true or false
+    self.rename_used = data ~= nil and data.rename_used == true or false
     if data == nil then return end
     for userid, remaining in pairs(data.sack_gifts or {}) do
         if type(userid) == "string" and type(remaining) == "number"

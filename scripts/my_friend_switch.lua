@@ -1,7 +1,8 @@
 -- Replaces the companion with a different playable character.
 --
 -- The new companion is a genuinely fresh one: no inherited name, inventory,
--- affinity, personal memories or leader. The old friend leaves for good and a
+-- personal memories or leader. Relationships keep the configured penalty.
+-- The old friend leaves for good and a
 -- stranger arrives, exactly like meeting the very first companion.
 --
 -- The shared base and free character-change allowance survive the change.
@@ -115,12 +116,21 @@ function M.Switch(friend, character, configure, keep_items)
     local switch_used = friend._my_friend_switch_used
     -- A character change creates a fresh companion, but the relationship with
     -- each player carries over with the requested penalty. Only copy the
-    -- per-player values; follow requests and gift windows are transient.
+    -- per-player values and the shared rename allowance; follow requests and
+    -- gift windows are transient.
     local old_affinity = friend.components.my_friend_affinity ~= nil
         and friend.components.my_friend_affinity:OnSave() or nil
     local base_data = {}
     local Base = require("my_friend_base_ai")
     Base.OnSave(friend, base_data)
+    local shard_homes = friend._my_friend_shard_homes
+
+    -- Do not remove the only copy of the base/relationship if spawning fails.
+    local replacement = SpawnPrefab(character)
+    if replacement == nil then
+        print("[MyFriends] Character switch failed: could not spawn " .. tostring(character))
+        return nil, "spawnfailed"
+    end
 
     if keep_items then
         M.TakeBelongings(friend)
@@ -134,16 +144,11 @@ function M.Switch(friend, character, configure, keep_items)
     TheWorld._my_friend = nil
     friend:Remove()
 
-    local replacement = SpawnPrefab(character)
-    if replacement == nil then
-        print("[MyFriends] Character switch failed: could not spawn " .. tostring(character))
-        return nil, "spawnfailed"
-    end
+    require("my_friend_replication").ApplyDefaultAppearance(replacement)
     replacement.Transform:SetPosition(position:Get())
     configure(replacement)
-    if base_data.my_friend_base ~= nil or base_data.my_friend_home ~= nil then
-        Base.OnLoad(replacement, base_data)
-    end
+    Base.OnLoad(replacement, base_data)
+    replacement._my_friend_shard_homes = shard_homes
     local new_affinity = replacement.components ~= nil
         and replacement.components.my_friend_affinity or nil
     if new_affinity ~= nil and old_affinity ~= nil and new_affinity.OnLoad ~= nil then
@@ -153,7 +158,7 @@ function M.Switch(friend, character, configure, keep_items)
                 values[userid] = value >= 20 and math.max(20, value - 20) or value
             end
         end
-        new_affinity:OnLoad({values = values})
+        new_affinity:OnLoad({values = values, rename_used = old_affinity.rename_used})
     end
     replacement._my_friend_switch_used = switch_used
     replacement._my_friend_replan_requested = true

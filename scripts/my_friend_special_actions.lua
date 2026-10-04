@@ -93,6 +93,49 @@ local function SpiceAction(inst, command)
     return Policy.GuardAction(inst, action)
 end
 
+local function DirectRoleRecipeAction(inst, command, recipe)
+    -- These commands are explicit role-specific companion features. Use the
+    -- normal BUILD action after the shared material planner has finished,
+    -- without unlocking or mutating the companion's recipe list.
+    local point = command.build_point or inst:GetPosition()
+    local action = BufferedAction(inst, nil,
+        ACTIONS.MY_FRIEND_BUILD or ACTIONS.BUILD, nil, point,
+        recipe.name, recipe.build_distance)
+    action.validfn = function()
+        return inst._my_friend_command == command
+            and inst.components.builder ~= nil
+            and inst.components.builder:HasIngredients(recipe)
+    end
+    action:AddSuccessAction(function()
+        if inst._my_friend_command == command then
+            require("my_friend_commands").Clear(inst)
+        end
+    end)
+    return Policy.GuardAction(inst, action)
+end
+
+local function IsDirectRoleRecipe(inst, recipe_name)
+    return inst.prefab == "wendy" and recipe_name == "sisturn"
+        or inst.prefab == "wanda"
+            and (recipe_name == "pocketwatch_weapon"
+                or recipe_name == "pocketwatch_heal"
+                or recipe_name == "pocketwatch_revive")
+end
+
+local function GetDirectRoleAction(inst, command, recipe)
+    if recipe.placer ~= nil then
+        local action, reason = BookStation.GetPrepareAction(inst, command, recipe)
+        if action ~= nil then return action end
+        if reason ~= nil then
+            command.waiting = reason == "waiting"
+            command.failure_reply = not command.waiting and reason or nil
+            return
+        end
+        return DirectRoleRecipeAction(inst, command, recipe)
+    end
+    return DirectRoleRecipeAction(inst, command, recipe)
+end
+
 local function BuildAction(inst, command)
     local recipe = GetValidRecipe(command.recipe)
     if recipe == nil then return end
@@ -120,8 +163,19 @@ local function BuildAction(inst, command)
     if inst.components.builder.EvaluateTechTrees ~= nil then
         inst.components.builder:EvaluateTechTrees()
     end
+    -- If every ingredient is already carried, avoid depending on the
+    -- external-source scan at all. This is especially important for Wendy:
+    -- the sister urn recipe is deliberately outside her native skill tree.
+    if IsDirectRoleRecipe(inst, command.recipe)
+        and inst.components.builder:HasIngredients(recipe) then
+        return GetDirectRoleAction(inst, command, recipe)
+    end
     local materials = Materials.Plan(inst, recipe)
     if materials == nil then return end
+    if IsDirectRoleRecipe(inst, command.recipe) then
+        if #materials > 0 then return Materials.GetAction(inst, materials) end
+        return GetDirectRoleAction(inst, command, recipe)
+    end
     if not CraftingTech.CanBuild(inst, recipe) then
         local station, distance = CraftingTech.FindStation(inst, recipe)
         if station == nil then return end
@@ -136,7 +190,8 @@ local function BuildAction(inst, command)
         if not CraftingTech.Activate(inst, station, recipe) then return end
     end
     if #materials > 0 then return Materials.GetAction(inst, materials) end
-    if command.recipe == "bookstation" and inst.components.builder:HasIngredients(recipe) then
+    if (command.recipe == "bookstation" or command.recipe == "sisturn")
+        and inst.components.builder:HasIngredients(recipe) then
         local prepare, reason = BookStation.GetPrepareAction(inst, command, recipe)
         if prepare ~= nil then return prepare end
         if reason ~= nil then
@@ -151,7 +206,8 @@ local function BuildAction(inst, command)
         local previous = action.validfn
         action.validfn = function(act)
             return inst._my_friend_command == command
-                and (command.recipe ~= "bookstation" or BookStation.IsClear(command))
+                and ((command.recipe ~= "bookstation" and command.recipe ~= "sisturn")
+                    or BookStation.IsClear(command))
                 and (previous == nil or previous(act))
         end
         action:AddSuccessAction(function()

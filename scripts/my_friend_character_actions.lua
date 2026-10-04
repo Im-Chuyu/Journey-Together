@@ -13,9 +13,20 @@ function M.GetHealAction(inst)
 end
 
 local function CanSqueeze(inst, item)
-    return Carried(inst, item) and item.prefab == "wortox_reviver"
-        and item.components.spellcaster ~= nil and item.components.spellcaster:CanCast(inst)
-        and item.components.linkeditem ~= nil and item.components.linkeditem:GetOwnerInst() ~= nil
+    if not Carried(inst, item) or item.prefab ~= "wortox_reviver"
+        or item.components.spellcaster == nil then return false end
+    local Wortox = require("my_friend_wortox")
+    if item.components.linkeditem == nil then return false end
+    -- Refresh the companion-owned link and unlock state before checking the
+    -- spellcaster. Native hearts use a player login callback which companions
+    -- never receive.
+    Wortox.RefreshHeartFor(inst, item)
+    local owner = item._my_friend_heart_owner
+        or item.components.linkeditem:GetOwnerInst()
+    -- A recipient can squeeze another player's heart to teleport to its
+    -- maker. Keep that owner link and use the native spell's unlock check.
+    return owner ~= nil and owner:IsValid()
+        and item.components.spellcaster:CanCast(inst)
 end
 
 function M.GetSqueezeAction(inst)

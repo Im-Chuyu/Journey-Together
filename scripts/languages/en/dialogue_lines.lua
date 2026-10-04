@@ -1394,6 +1394,9 @@ M.replies = {
     special_device_place_failed = {"The cookware is ready, but I couldn't find a clear place nearby."},
     -- fn557
     special_recall = {"All right, I'll have Abigail rest for a while."},
+    wendy_enrage_ok = {"All right. I'll have Abigail become aggressive."},
+    wendy_calm_ok = {"All right. I'll have Abigail calm down."},
+    wendy_abigail_unavailable = {"Abigail is not summoned right now."},
     -- fn558
     special_read_ok = {"I'll find that book and read it."},
     -- fn559
@@ -1616,6 +1619,14 @@ M.replies.heart_make_failed = {
     "Gather ten souls and leave a little room for the heart.",
     -- fn646
     "Not yet. Check my souls and the space in my bags.",
+}
+M.replies.activity_wormwood_heal = {
+    -- fn647
+    "I'll dress these wounds before moving on.",
+    -- fn648
+    "This medicine should help me recover.",
+    -- fn649
+    "These injuries need tending first.",
 }
 return M
 

@@ -62,8 +62,7 @@ function M.IsLand(point)
         and not M.IsNearHole(point)
 end
 
-function M.IsClear(a, b, caps)
-    if not TheWorld.Pathfinder:IsClear(a.x, 0, a.z, b.x, 0, b.z, caps) then return false end
+local function IsTerrainClear(a, b)
     local samples = math.max(1, math.ceil(math.sqrt(DistanceSq(a, b)) / .5))
     for index = 1, samples do
         local t = index / samples
@@ -71,6 +70,11 @@ function M.IsClear(a, b, caps)
         if not M.IsLand(point) then return false end
     end
     return true
+end
+
+function M.IsClear(a, b, caps)
+    return TheWorld.Pathfinder:IsClear(a.x, 0, a.z, b.x, 0, b.z, caps)
+        and IsTerrainClear(a, b)
 end
 
 function M.InTravelRange(inst, point)
@@ -143,7 +147,13 @@ function M.IsStepClear(inst, a, b, caps, obstacles, allow_far)
     -- Long travel uses the native pathfinder; never scan an entire map-sized
     -- circle for entity collision during one route/turn decision.
     if lengthsq > 32^2 and obstacles == nil then return false end
-    if not M.IsClear(a, b, caps) then return false end
+    -- Follow legs use physical clearance: the native grid inflates buildings
+    -- to blocked cells and can reject a gap a player could walk through.
+    if allow_far then
+        if not IsTerrainClear(a, b) then return false end
+    elseif not M.IsClear(a, b, caps) then
+        return false
+    end
     local entities = obstacles or TheSim:FindEntities((a.x + b.x) / 2, 0,
         (a.z + b.z) / 2, math.sqrt(lengthsq) / 2 + 5, nil, {"INLIMBO", "FX"})
     for _, entity in ipairs(entities) do
@@ -505,6 +515,25 @@ function M.CancelSteering(inst)
     local state = inst._my_friend_local_walk
     if state ~= nil then M.Cancel(state.search) end
     inst._my_friend_local_walk = nil
+    inst._my_friend_steering_cache = nil
+end
+
+-- Call only for a leg already checked by steering/Unstick. Preserve native
+-- locomotion and arrival, without asking its coarse grid to reroute the leg.
+function M.MoveToPoint(inst, point, run)
+    local locomotor = inst.components.locomotor
+    if inst:GetCurrentPlatform() ~= nil or inst:HasTag("playerghost")
+        or DistanceSq(inst:GetPosition(), point) > 32^2 then
+        locomotor:GoToPoint(point, nil, run)
+        return
+    end
+    locomotor:ResetPath()
+    locomotor.lastdesttile = nil
+    local directdrive = locomotor.directdrive
+    locomotor.directdrive = true
+    local ok, err = pcall(locomotor.GoToPoint, locomotor, point, nil, run)
+    locomotor.directdrive = directdrive
+    if not ok then error(err, 0) end
 end
 
 -- ---------------------------------------------------------------------------
@@ -539,6 +568,186 @@ M.STUCK_GOAL_DRIFT = 8
 
 function M.ClearStuck(inst)
     inst._my_friend_stuck = nil
+end
+
+-- Very long follow routes need a coarse map-level route before the normal
+-- locomotor pathfinder is asked to walk to a point.  Without this, a leader
+-- on another connected land region can make the companion aim at the leader's
+-- coordinates across the ocean and get stuck at the shoreline.  This planner
+-- only runs for the explicit long-follow branch; ordinary movement keeps the
+-- existing steering code below.
+M.LONG_FOLLOW_DISTANCE = 96
+M.LONG_FOLLOW_ROUTE_TTL = 12
+M.LONG_FOLLOW_ROUTE_STEP = 4
+M.LONG_FOLLOW_MAX_TARGET = 28
+
+local function TopologyPoint(node)
+    local x = node ~= nil and (node.x or node.cent ~= nil and node.cent[1]) or nil
+    local z = node ~= nil and (node.y or node.cent ~= nil and node.cent[2]) or nil
+    return type(x) == "number" and type(z) == "number"
+        and Vector3(x, 0, z) or nil
+end
+
+local function GetTopologyNode(point)
+    if point == nil or TheWorld == nil or TheWorld.Map == nil
+        or TheWorld.Map.GetNodeIdAtPoint == nil then return end
+    return TheWorld.Map:GetNodeIdAtPoint(point.x, 0, point.z)
+end
+
+local function StartLongFollowRoute(inst, goal)
+    local topology = TheWorld ~= nil and TheWorld.topology or nil
+    if topology == nil or topology.nodes == nil or topology.ids == nil then return end
+    local origin = inst:GetPosition()
+    local start_id, goal_id = GetTopologyNode(origin), GetTopologyNode(goal)
+    if start_id == nil or goal_id == nil or topology.nodes[start_id] == nil
+        or topology.nodes[goal_id] == nil or start_id == goal_id then
+        return
+    end
+    local state = {
+        inst = inst, goal = goal, start_id = start_id, goal_id = goal_id,
+        started = GetTime(), cells = {}, open = {}, expanded = 0,
+    }
+    local start = {
+        id = start_id, point = TopologyPoint(topology.nodes[start_id]),
+        cost = 0,
+    }
+    local target = TopologyPoint(topology.nodes[goal_id])
+    if start.point == nil or target == nil then return end
+    state.cells[start_id] = start
+    Push(state.open, {cell = start, cost = 0,
+        score = DistanceSq(start.point, target)})
+    return state
+end
+
+local function IsTopologyEdgeLand(a, b)
+    local distance = math.sqrt(DistanceSq(a, b))
+    local samples = math.max(1, math.ceil(distance / 8))
+    for index = 1, samples - 1 do
+        local t = index / samples
+        if not M.IsLand(Vector3(a.x + (b.x - a.x) * t, 0,
+            a.z + (b.z - a.z) * t)) then
+            return false
+        end
+    end
+    return true
+end
+
+local function PollLongFollowRoute(state)
+    local topology = TheWorld ~= nil and TheWorld.topology or nil
+    if topology == nil or topology.nodes == nil then return false end
+    local target = TopologyPoint(topology.nodes[state.goal_id])
+    if target == nil then return false end
+    for _ = 1, 48 do
+        local entry = Pop(state.open)
+        if entry == nil then return false end
+        local cell = entry.cell
+        if not cell.closed and entry.cost == cell.cost then
+            cell.closed = true
+            state.expanded = state.expanded + 1
+            if cell.id == state.goal_id then
+                local reversed, cursor = {}, cell
+                while cursor ~= nil do
+                    reversed[#reversed + 1] = cursor.point
+                    cursor = cursor.parent
+                end
+                local path = {}
+                for index = #reversed, 1, -1 do
+                    local point = reversed[index]
+                    if point ~= nil and M.IsLand(point) then
+                        path[#path + 1] = point
+                    end
+                end
+                if #path < 2 then return false end
+                state.path, state.index = path, 2
+                return true
+            end
+            if state.expanded >= 4096 then return false end
+            local node = topology.nodes[cell.id]
+            for _, neighbour_id in ipairs(node.neighbours or {}) do
+                local neighbour_node = topology.nodes[neighbour_id]
+                local point = TopologyPoint(neighbour_node)
+                if point ~= nil and M.IsLand(point)
+                    and IsTopologyEdgeLand(cell.point, point) then
+                    local neighbour = state.cells[neighbour_id]
+                    if neighbour == nil then
+                        neighbour = {id = neighbour_id, point = point}
+                        state.cells[neighbour_id] = neighbour
+                    end
+                    if not neighbour.closed then
+                        local cost = cell.cost + math.sqrt(DistanceSq(cell.point, point))
+                        if neighbour.cost == nil or cost < neighbour.cost then
+                            neighbour.cost, neighbour.parent = cost, cell
+                            Push(state.open, {cell = neighbour, cost = cost,
+                                score = cost + math.sqrt(DistanceSq(point, target))})
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+function M.GetLongFollowPoint(inst, goal)
+    if goal == nil or inst == nil or inst:GetCurrentPlatform() ~= nil then return goal end
+    local origin = inst:GetPosition()
+    if DistanceSq(origin, goal) < M.LONG_FOLLOW_DISTANCE^2 then
+        inst._my_friend_long_follow = nil
+        return goal
+    end
+    local topology = TheWorld ~= nil and TheWorld.topology or nil
+    if topology == nil or topology.nodes == nil then return goal end
+    local goal_id = GetTopologyNode(goal)
+    local start_id = GetTopologyNode(origin)
+    if goal_id == nil or start_id == nil or start_id == goal_id then
+        inst._my_friend_long_follow = nil
+        return goal
+    end
+    local state = inst._my_friend_long_follow
+    if state == nil or state.goal_id ~= goal_id
+        or state.path ~= nil and GetTime() >= (state.expires or 0)
+        or DistanceSq(state.goal, goal) > 64^2 then
+        state = StartLongFollowRoute(inst, goal)
+        inst._my_friend_long_follow = state
+        if state == nil then return goal end
+    end
+    state.goal = goal
+    if state.path == nil then
+        local result = PollLongFollowRoute(state)
+        if result == false then
+            inst._my_friend_long_follow = nil
+            return goal
+        elseif result == nil then
+            return
+        end
+        state.expires = GetTime() + M.LONG_FOLLOW_ROUTE_TTL
+    end
+    while state.index <= #state.path
+        and DistanceSq(origin, state.path[state.index]) <= M.LONG_FOLLOW_ROUTE_STEP^2 do
+        state.index = state.index + 1
+    end
+    if state.index >= #state.path then
+        return goal
+    end
+    -- Keep each hand-off close enough for the existing local steering code to
+    -- validate.  This prevents a topology node on the far side of a bay from
+    -- becoming another straight-line command across water.
+    local point = state.path[state.index]
+    local dx, dz = point.x - origin.x, point.z - origin.z
+    local distance = math.sqrt(dx * dx + dz * dz)
+    if distance > M.LONG_FOLLOW_MAX_TARGET then
+        local length = M.LONG_FOLLOW_MAX_TARGET
+        for _ = 1, 5 do
+            local candidate = Vector3(origin.x + dx * length / distance, 0,
+                origin.z + dz * length / distance)
+            if M.IsLand(candidate) then
+                point = candidate
+                break
+            end
+            length = length - 4
+        end
+    end
+    return point
 end
 
 -- Returns a point to walk to instead of `goal`, or nil to carry on as normal.
@@ -603,7 +812,7 @@ function M.Unstick(inst, goal)
             local angle = heading + offset * math.pi / 8
             local point = Vector3(position.x + math.cos(angle) * distance, 0,
                 position.z + math.sin(angle) * distance)
-            if M.IsLand(point) and M.IsStepClear(inst, position, point, caps)
+            if M.IsLand(point) and M.IsStepClear(inst, position, point, caps, nil, true)
                 and (not bounded or M.InTravelRange(inst, point)) then
                 state.detour, state.expires = point, now + M.SIDESTEP_COMMIT
                 state.since, state.mark = now, position
@@ -655,7 +864,7 @@ function M.GetSteeringPoint(inst, goal, allow_far)
         inst._my_friend_local_walk = state
     end
     if state.failed then
-        if GetTime() > state.started + (allow_far and 30 or 5) then M.CancelSteering(inst) end
+        if GetTime() > state.started + (allow_far and 2 or 5) then M.CancelSteering(inst) end
         return
     end
     if state.steps == nil then

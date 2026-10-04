@@ -16,6 +16,27 @@ local Characters = require("my_friend_characters")
 -- whole mod down, so a typo in the config never stops the world from loading.
 local COMMANDS = {}
 do
+    -- Character-specific command files are loaded during mod initialisation,
+    -- before every vanilla character is guaranteed to be present in
+    -- DST_CHARACTERLIST. Keep this small built-in catalogue as a fallback so
+    -- Wendy/Wickerbottom/Warly/Wanda commands are available on every server.
+    local function CharacterCatalogue()
+        local result, seen = {}, {}
+        for _, character in ipairs(Characters.List()) do
+            if type(character) == "string" and not seen[character] then
+                seen[character] = true
+                result[#result + 1] = character
+            end
+        end
+        for _, character in ipairs({"wendy", "wickerbottom", "warly", "wanda"}) do
+            if not seen[character] then
+                seen[character] = true
+                result[#result + 1] = character
+            end
+        end
+        return result
+    end
+
     local function AddConfigured(configured, character)
         for _, entry in ipairs(type(configured) == "table" and configured or {}) do
             if type(entry) == "table" and type(entry.id) == "string" then
@@ -41,7 +62,7 @@ do
             .. tostring(configured))
     end
     AddConfigured(configured)
-    for _, character in ipairs(Characters.List()) do
+    for _, character in ipairs(CharacterCatalogue()) do
         AddConfigured(LanguageFiles.CharacterCommandWords(Language.language, character), character)
     end
     if #COMMANDS == 0 then
@@ -55,6 +76,9 @@ local ALIASES = {
     wendy = {"温蒂", "温迪"},
     wickerbottom = {"维克巴顿", "薇克巴顿", "奶奶", "奶"},
     warly = {"沃利", "大厨"},
+    -- This is a stable title for Wortox, so it remains usable after the
+    -- companion is renamed, just like 奶奶 for Wickerbottom.
+    wortox = {"恶魔", "小恶魔", "沃拓克斯"},
 }
 
 local function Contains(text, word)
@@ -125,6 +149,8 @@ function M.Clear(friend)
     friend._my_friend_seat_request = nil
     friend._my_friend_follow_requested_until = nil
     friend._my_friend_follow_settle_until = nil
+    friend._my_friend_wait_until = nil
+    friend._my_friend_wait_player = nil
     friend._my_friend_replan_requested = true
     friend._my_friend_work_target, friend._my_friend_work_action = nil, nil
     friend._my_friend_work_left, friend._my_friend_work_stall_deadline = nil, nil
@@ -158,7 +184,7 @@ function M.Rename(friend, player, name)
         or friend.components.health:IsDead() then return false end
     local affinity = friend.components.my_friend_affinity
     if affinity == nil then return false end
-    if affinity:Get(player) < 80 then
+    if not affinity:CanRename(player) then
         Reply(friend, "affinity_name")
         return false
     end
@@ -170,12 +196,14 @@ function M.Rename(friend, player, name)
     if friend.components.named == nil then friend:AddComponent("named") end
     friend._my_friend_custom_name = name
     friend.components.named:SetName(name, player.userid)
+    affinity.rename_used = true
     Reply(friend, "name_ok", name)
     return true
 end
 
 local function AddressedMessage(friend, message)
-    local text = message:lower()
+    local offset = message:match("^@%s*()") or 1
+    local text = message:sub(offset):lower()
     local names = {}
     if friend._my_friend_custom_name ~= nil and friend._my_friend_custom_name ~= "" then
         names[#names + 1] = friend._my_friend_custom_name:lower()
@@ -190,18 +218,18 @@ local function AddressedMessage(friend, message)
         local current = friend._my_friend_custom_name or friend:GetDisplayName()
         if type(current) == "string" and current ~= "" then names[#names + 1] = "奶"..current:lower() end
     end
-    local name_start, name_length
+    local name_length
     for _, name in ipairs(names) do
-        local first = name ~= "" and text:find(name, 1, true) or nil
-        -- Prefer the address over names inside the command, and full names
-        -- over prefixes at the same position.
-        if first ~= nil and (name_start == nil or first < name_start
-            or first == name_start and #name > name_length) then
-            name_start, name_length = first, #name
+        -- Commands start with an address. A name merely mentioned later in a
+        -- conversation, or embedded in a longer English word, is not an order.
+        if name ~= "" and text:sub(1, #name) == name
+            and (not name:find("[a-z]") or not text:sub(#name + 1, #name + 1):match("[%a%d_]"))
+            and (name_length == nil or #name > name_length) then
+            name_length = #name
         end
     end
-    if name_start ~= nil then
-        return message:sub(1, name_start - 1)..message:sub(name_start + name_length)
+    if name_length ~= nil then
+        return message:sub(offset + name_length)
     end
 end
 
@@ -236,10 +264,8 @@ function M.Dispatch(friend, player, message, from_wheel)
     if require("my_friend_carry_backpack").Answer(friend, player, addressed_message or message) then
         return true
     end
-    -- Tower requests are public commands; a bare keyword is also accepted.
-    if addressed_message == nil and FindCommand(friend, message:lower()) == "touch_tower" then
-        addressed_message = message
-    end
+    -- Public commands still need an address; their follow/permission checks
+    -- remain in the handlers below, independently of chat parsing.
     if addressed_message == nil then return false end
     local text = addressed_message:lower()
     -- The rock-fruit command has a short follow-up question. Handle it before
@@ -303,6 +329,16 @@ function M.Dispatch(friend, player, message, from_wheel)
             return require("my_friend_ghost_commands").Request(friend, player, portal)
         end
     end
+    if id == "wait_for_me" then
+        if friend:HasTag("playerghost") or affinity == nil or affinity:Get(player) < 20 then return false end
+        -- Temporary pause: preserve the current work command and resume it
+        -- after five seconds. Emergency behaviours take priority in the brain.
+        friend._my_friend_wait_until = GetTime() + 5
+        friend._my_friend_wait_player = player
+        friend._my_friend_replan_requested = true
+        Dialogue.Say(friend, "hold_position", player)
+        return true
+    end
     if id == "stop_ride" and (friend:HasTag("sitting_on_chair")
         or friend._my_friend_sitting ~= nil or friend._my_friend_seat_request ~= nil) then
         id = "stop_sit"
@@ -323,7 +359,7 @@ function M.Dispatch(friend, player, message, from_wheel)
                 food = special.food, player = player, started = GetTime(), deadline = GetTime() + 180}
             if special.special == "read" then
                 require("my_friend_books").PrepareCommand(friend, friend._my_friend_command)
-            elseif special.recipe == "bookstation" then
+            elseif special.recipe == "bookstation" or special.center_tile then
                 require("my_friend_bookstation").PrepareCommand(friend._my_friend_command)
             end
             Dialogue.Reply(friend, special.special == "read" and "special_read_ok"
@@ -331,6 +367,19 @@ function M.Dispatch(friend, player, message, from_wheel)
                 or special.special == "spice" and "special_spice_ok" or "special_command_ok")
         end
         return true
+    end
+    if id == "wendy_enrage" or id == "wendy_calm" then
+        if friend.prefab ~= "wendy" or friend:HasTag("playerghost")
+            or Policy.GetLeader(friend) ~= player then return false end
+        M.Clear(friend)
+        local aggressive = id == "wendy_enrage"
+        local ok = require("my_friend_wendy").Request(friend, aggressive)
+        if ok then
+            Dialogue.Reply(friend, aggressive and "wendy_enrage_ok" or "wendy_calm_ok")
+        else
+            Dialogue.Reply(friend, "wendy_abigail_unavailable")
+        end
+        return ok
     end
     -- Visiting a portal/tower is a one-shot autonomous request. It does not
     -- require a particular leader; public chat and the wheel work in both
@@ -543,7 +592,7 @@ function M.Commit(friend, action)
         local affinity = friend.components.my_friend_affinity
         if not affinity:CanCommandWork(command.player) then M.Clear(friend) return end
         command.charge_pending = nil
-        affinity:DoDelta(command.player, -.1, "work_command")
+        affinity:DoDelta(command.player, -.01, "work_command")
     end
     local previous = action.validfn
     action.validfn = function(act)

@@ -80,12 +80,7 @@ local THREAT_CANT_TAGS = {
     "notarget", "playerghost",
 }
 
-local function DistanceSq(a, b)
-    local ax, _, az = a.Transform:GetWorldPosition()
-    local bx, _, bz = b.Transform:GetWorldPosition()
-    local dx, dz = bx - ax, bz - az
-    return dx * dx + dz * dz
-end
+local DistanceSq = Policy.DistanceSq
 
 local function IsAlive(inst)
     return inst ~= nil and inst:IsValid() and inst.components ~= nil
@@ -378,7 +373,8 @@ function M.FindAssistTarget(inst)
     local now = GetTime()
     local cached = inst._my_friend_assist_scan
     if cached ~= nil and cached.leader == leader and now < cached.untiltime then
-        return cached.target
+        -- Keep the scan interval even when a cached enemy has disappeared.
+        return IsAlive(cached.target) and cached.target or nil
     end
     local x, y, z = leader.Transform:GetWorldPosition()
     local function ValidTarget(entity)
@@ -589,18 +585,19 @@ function M.FindThreat(inst, range)
 end
 
 local function HasWorkingArmor(item)
-    local armor = item ~= nil and item.components ~= nil and item.components.armor or nil
+    local armor = item ~= nil and item:IsValid() and item.components ~= nil and item.components.armor or nil
     return armor ~= nil and (armor.indestructible or armor.condition == nil or armor.condition > 0)
 end
 
 local function IsActiveLight(item)
-    return item ~= nil and (item._my_friend_ai_light
+    return item ~= nil and item:IsValid() and (item._my_friend_ai_light
         or item._my_friend_manual_light_until ~= nil
         or item.HasAnyTag ~= nil and item:HasAnyTag("light", "nightvision"))
 end
 
 local function WeaponDamage(inst, target, item)
-    local weapon = item ~= nil and item.components ~= nil and item.components.weapon or nil
+    if not IsAlive(inst) or target ~= nil and not IsAlive(target) then return end
+    local weapon = item ~= nil and item:IsValid() and item.components ~= nil and item.components.weapon or nil
     if weapon == nil then return end
     if inst.components.combat ~= nil and inst.components.combat.CalcDamage ~= nil
         and target ~= nil and target.HasTag ~= nil then
@@ -612,7 +609,7 @@ local function WeaponDamage(inst, target, item)
 end
 
 local function IsWeaponBroken(item)
-    if item == nil or item.components == nil then return true end
+    if item == nil or not item:IsValid() or item.components == nil then return true end
     if item:HasTag("broken") then return true end
     local finite = item.components.finiteuses
     if finite ~= nil and finite:GetUses() <= 0 then return true end
@@ -621,6 +618,7 @@ local function IsWeaponBroken(item)
 end
 
 function M.FindBestCombatWeapon(inst, target)
+    if not IsAlive(inst) or target ~= nil and not IsAlive(target) then return end
     local inventory = inst.components.inventory
     if inventory == nil then return end
     local best = inventory:GetEquippedItem(EQUIPSLOTS.HANDS)
@@ -628,7 +626,7 @@ function M.FindBestCombatWeapon(inst, target)
     local bestdamage = WeaponDamage(inst, target, best) or 0
     if inventory.ReferenceAllItems ~= nil then
         for _, item in ipairs(inventory:ReferenceAllItems()) do
-            local equippable = item.components ~= nil and item.components.equippable or nil
+            local equippable = item:IsValid() and item.components ~= nil and item.components.equippable or nil
             local damage = not IsWeaponBroken(item)
                 and WeaponDamage(inst, target, item) or nil
             if damage ~= nil and damage > bestdamage
@@ -642,6 +640,8 @@ function M.FindBestCombatWeapon(inst, target)
 end
 
 local function GetArmorValue(inst, item, slot, attacker, weapon)
+    if attacker ~= nil and not IsAlive(attacker) then return end
+    if weapon ~= nil and not weapon:IsValid() then weapon = nil end
     if not HasWorkingArmor(item) then return end
     local equippable = item.components.equippable
     if equippable == nil or equippable.equipslot ~= slot
@@ -662,7 +662,8 @@ local function GetArmorValue(inst, item, slot, attacker, weapon)
 end
 
 function M.GetThermalInsulation(item, need)
-    return require("my_friend_survival_ai").GetInsulationValue(item, need) ~= nil
+    return item ~= nil and item:IsValid()
+        and require("my_friend_survival_ai").GetInsulationValue(item, need) ~= nil
 end
 
 local function IsBetterArmor(absorption, condition, bestabsorption, bestcondition)
@@ -702,6 +703,8 @@ function M.EquipBestCombatArmor(inst, attacker, weapon)
     -- damage, rather than merely being above the equipment threshold.
     local thermal_need = require("my_friend_survival_ai").GetThermalNeed(inst)
     for _, slot in ipairs(require("my_friend_equip_slots").All()) do
+        if not IsAlive(inst) or attacker ~= nil and not IsAlive(attacker) then return end
+        if weapon ~= nil and not weapon:IsValid() then weapon = nil end
         if slot ~= EQUIPSLOTS.HANDS then
             local current = inventory:GetEquippedItem(slot)
             -- When temperature protection is active, prefer armour that also
@@ -732,7 +735,7 @@ function M.EquipBestCombatArmor(inst, attacker, weapon)
                     and current.HasTag ~= nil and current:HasTag("backpack") then
                     inventory:DropItem(current, true, false, inst:GetPosition())
                 end
-                inventory:Equip(best)
+                if best:IsValid() then inventory:Equip(best) end
             end
         end
     end
@@ -750,7 +753,7 @@ local function GetArmorStats(inventory, attacker, weapon)
             else
                 amount = armor.absorb_percent or .6
             end
-            if amount ~= nil and amount > 0 then
+            if type(amount) == "number" and amount > 0 then
                 protected = true
                 absorption = math.max(absorption, amount)
                 condition = condition + (armor.indestructible and 100000
@@ -785,19 +788,22 @@ function M.EstimateFight(friendhealth, enemyhealth, outgoing, incoming,
 end
 
 function M.CanCounterAttack(inst, target)
-    if target == nil or inst.components.inventory == nil or inst.components.combat == nil then
+    if not IsAlive(target) or not IsAlive(inst)
+        or inst.components.inventory == nil or inst.components.combat == nil then
         return false
     end
     local inventory = inst.components.inventory
     local hand = inventory:GetEquippedItem(EQUIPSLOTS.HANDS)
     local weaponitem, damage = M.FindBestCombatWeapon(inst, target)
-    if weaponitem == nil or damage <= 25
+    if weaponitem == nil or not weaponitem:IsValid() or type(damage) ~= "number" or damage <= 25
         or weaponitem ~= hand and IsActiveLight(hand) then return false end
     if weaponitem ~= hand and inventory.Equip ~= nil then
         if inventory:Equip(weaponitem) ~= true then return false end
+        if not IsAlive(target) then return false end
         weaponitem = inventory:GetEquippedItem(EQUIPSLOTS.HANDS)
         damage = WeaponDamage(inst, target, weaponitem) or 0
     end
+    if weaponitem == nil or not weaponitem:IsValid() or damage <= 25 then return false end
     -- Keep the hand slot stable while this target remains relevant. The
     -- survival loadout must not replace a weapon with an umbrella between
     -- combat ticks during rain.
@@ -814,8 +820,11 @@ function M.CanCounterAttack(inst, target)
     local enemyweapon = enemycombat ~= nil and enemycombat.GetWeapon ~= nil
         and enemycombat:GetWeapon() or nil
     M.EquipBestCombatArmor(inst, target, enemyweapon)
+    if not IsAlive(target) or not IsAlive(inst) or not weaponitem:IsValid() then return false end
+    if enemyweapon ~= nil and not enemyweapon:IsValid() then enemyweapon = nil end
     local absorption, armorcondition, protected = GetArmorStats(
         inventory, target, enemyweapon)
+    if not IsAlive(target) or not IsAlive(inst) then return false end
     local leader = Policy.GetLeader(inst)
     local leader_target = leader ~= nil and leader.components ~= nil
         and leader.components.combat ~= nil and leader.components.combat.target or nil
@@ -862,6 +871,7 @@ function M.ShouldCommitCounterAttack(friend_in_cooldown, dodge_elapsed,
 end
 
 function M.ShouldDodge(inst, target)
+    if not IsAlive(inst) or not IsAlive(target) or inst.components.combat == nil then return false end
     local combat = target ~= nil and target.components ~= nil and target.components.combat or nil
     if combat == nil then return false end
     local distance = math.sqrt(DistanceSq(inst, target))
@@ -885,6 +895,7 @@ function M.ShouldDodge(inst, target)
 end
 
 function M.GetCombatDodgeDistance(inst, target)
+    if not IsAlive(inst) or not IsAlive(target) then return 3 end
     local combat = target ~= nil and target.components ~= nil and target.components.combat or nil
     if combat == nil then return 3 end
     local attackrange = combat.GetAttackRange ~= nil and combat:GetAttackRange()

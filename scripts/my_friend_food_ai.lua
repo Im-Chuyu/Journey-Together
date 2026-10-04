@@ -60,6 +60,10 @@ local function GetMaximum(component, fallback)
         or component.max or component.maxhealth or fallback
 end
 
+function M.CanHealWithFood(inst)
+    return inst ~= nil and inst.prefab ~= "wormwood" and not inst:HasTag("health_as_oldage")
+end
+
 local function GetStats(inst)
     local health = inst.components.health
     local hunger = inst.components.hunger
@@ -68,10 +72,11 @@ local function GetStats(inst)
     local hpmax = math.max(1, GetMaximum(health, health.currenthealth))
     local hungermax = math.max(1, GetMaximum(hunger, hunger.current))
     local sanitymax = math.max(1, GetMaximum(sanity, sanity.current))
+    local food_heals = M.CanHealWithFood(inst)
     return {
-        health = inst:HasTag("health_as_oldage") and hpmax or health.currenthealth,
+        health = food_heals and health.currenthealth or hpmax,
         healthmax = hpmax,
-        healthpercent = inst:HasTag("health_as_oldage") and 1 or Clamp(health.currenthealth / hpmax, 0, 1),
+        healthpercent = food_heals and Clamp(health.currenthealth / hpmax, 0, 1) or 1,
         hunger = hunger.current,
         hungermax = hungermax,
         hungerpercent = Clamp(hunger.current / hungermax, 0, 1),
@@ -105,7 +110,7 @@ GetFoodDeltas = function(inst, food)
         health, hunger, sanity = eater.custom_stats_mod_fn(
             inst, health, hunger, sanity, food, inst)
     end
-    if inst:HasTag("health_as_oldage") then health = 0 end
+    if not M.CanHealWithFood(inst) then health = 0 end
     return health * stackmult, hunger * stackmult, sanity * stackmult
 end
 

@@ -87,12 +87,19 @@ function M.IsFollowGatheringPaused(inst)
 end
 
 function M.DistanceSq(a, b)
+    -- Cached targets can disappear between AI snapshots (e.g. lunar vines).
+    -- Never dereference a removed entity's native Transform component.
+    if a == nil or b == nil or not a:IsValid() or not b:IsValid()
+        or a.Transform == nil or b.Transform == nil then return math.huge end
     local ax, _, az = a.Transform:GetWorldPosition()
     local bx, _, bz = b.Transform:GetWorldPosition()
+    if ax == nil or az == nil or bx == nil or bz == nil then return math.huge end
     return (ax - bx)^2 + (az - bz)^2
 end
 
 function M.InRange(inst, target, radius)
+    if inst == nil or not inst:IsValid() or target == nil
+        or not target:IsValid() or target.Transform == nil then return false end
     local point = inst._my_friend_auto_recovery_point
     if point ~= nil and inst._my_friend_recover_death_drops and target ~= nil then
         if target == inst then return true end
@@ -134,6 +141,9 @@ function M.GuardAction(inst, action, radius)
     local leader = M.GetLeader(inst)
     local previous = action.validfn
     action.validfn = function(act)
+        if not inst:IsValid() or act.target ~= nil and not act.target:IsValid() then
+            return false
+        end
         if M.GetLeader(inst) ~= leader then return false end
         local target = act.target
         local point = act.GetActionPoint ~= nil and act:GetActionPoint() or nil
@@ -152,6 +162,11 @@ function M.GuardAction(inst, action, radius)
             if command == nil or command.id ~= "chop" or target ~= leader then return false end
         elseif act._my_friend_chop_loot ~= nil then
             if target == nil or target:GetDistanceSqToPoint(act._my_friend_chop_loot) > 5^2 then return false end
+        elseif act._my_friend_crafting_material then
+            -- Crafting commands scan and withdraw from the companion's own
+            -- immediate work area. Do not apply the ordinary leader-centred
+            -- activity range a second time here; the material action's
+            -- validfn already checks its source distance and ownership.
         elseif act._my_friend_command_origin ~= nil then
             local origin = act._my_friend_command_origin
             if target ~= nil and target:GetDistanceSqToPoint(origin) > 16^2 then return false end

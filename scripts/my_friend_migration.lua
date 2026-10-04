@@ -1,6 +1,6 @@
 local M = {}
 -- Positions only make sense on the shard they were recorded on.
-local LOCAL_FIELDS = {"my_friend_base", "my_friend_home", "my_friend_revive",
+local LOCAL_FIELDS = {"my_friend_base", "my_friend_home", "my_friend_hold_memory", "my_friend_revive",
     "my_friend_fire_memory", "my_friend_resource_memory"}
 
 function M.SaveWorldMemory(inst, data)
@@ -45,7 +45,7 @@ function M.HoldCompanion(player)
     follower:SetLeader(nil)
     follower:ClearCachedPlayerLeader()
     friend._my_friend_last_leader_userid = nil
-    require("my_friend_home").Set(friend, friend:GetPosition(), "hold")
+    require("my_friend_home").Hold(friend)
     friend._my_friend_replan_requested = true
 end
 
@@ -83,6 +83,7 @@ function M.Attach(player, configure)
             end
         end
         if migrationdata == nil then M.HoldCompanion(inst) end
+        require("my_friend_possess").OnPlayerDespawn(inst)
         if old ~= nil then return old(inst, migrationdata) end
     end
 end

@@ -136,6 +136,10 @@ function M.Complete(inst, character, keep_items)
     local fallback = NearestPlayer(inst)
     local replacement = require("my_friend_switch").Switch(inst, character, configure, keep_items)
     if replacement == nil then return end
+    -- If the old companion was the parked autonomous body of a possession
+    -- session, Release() must remove this replacement instead of spawning an
+    -- additional companion from the controlled player body.
+    require("my_friend_possess").ReplaceTemporaryCompanion(inst, replacement)
     replacement._my_friend_switch_used = true
     local point = M.ArrivalPoint(fallback)
     if point ~= nil then replacement.Transform:SetPosition(point:Get()) end

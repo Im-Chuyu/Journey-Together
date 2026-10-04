@@ -6,6 +6,11 @@ function Traveller:Capture()
     local friend = TheWorld._my_friend
     if self.record ~= nil or friend == nil or not friend:IsValid()
         or friend.components.follower:GetLeader() ~= self.inst then return end
+    local owner = require("my_friend_possess").SessionOwner(friend)
+    if owner ~= nil and owner ~= self.inst.userid then
+        require("my_friend_migration").HoldCompanion(self.inst)
+        return
+    end
     require("my_friend_commands").Clear(friend)
     local root = friend.brain ~= nil and friend.brain.bt ~= nil and friend.brain.bt.root or nil
     if root ~= nil and root.CancelActive ~= nil then root:CancelActive() end
@@ -16,6 +21,7 @@ function Traveller:Capture()
     if record == nil then return end
     self.record = record
     self.userid = self.inst.userid
+    self.possession = require("my_friend_possess").CaptureMigration(self.inst, friend)
     require("my_friend_shard_home").MarkDeparture()
     -- The record travels in the player's normal migration session. Remove
     -- the source entity only after the complete carried inventory is captured.
@@ -29,7 +35,7 @@ function Traveller:OnSave()
     if self.record ~= nil then
         -- The component is attached by AddPlayerPostInit before the save data
         -- is applied, so add_component_if_missing is neither needed nor safe.
-        return {record = self.record, userid = self.userid}
+        return {record = self.record, userid = self.userid, possession = self.possession}
     end
 end
 
@@ -37,10 +43,12 @@ function Traveller:Restore()
     if self.record == nil or self.inst:HasTag("my_friend") then return end
     local existing = TheWorld._my_friend
     if existing ~= nil and existing:IsValid() then
+        if self.possession ~= nil and not require("my_friend_possess").RestoreMigration(
+            self.inst, self.possession, existing) then return end
         -- The live companion is the truth. Keeping the record around used to
         -- spawn a stale duplicate later, whenever the live one was away.
         print("[MyFriends] Dropping a travelling record: a companion is already here")
-        self.record, self.userid = nil, nil
+        self.record, self.userid, self.possession = nil, nil, nil
         return
     end
     local migration = require("my_friend_migration")
@@ -49,6 +57,14 @@ function Traveller:Restore()
     local friend = SpawnSaveRecord(self.record)
     if friend == nil then return end
     migration.ConfigureFriend(friend)
+    if self.possession ~= nil then
+        if not require("my_friend_possess").RestoreMigration(self.inst, self.possession, friend) then
+            if friend.components.inventory ~= nil then friend.components.inventory:DestroyContents() end
+            friend:Remove()
+            return
+        end
+        self.possession = nil
+    end
     self.record = nil
     TheWorld._my_friend_saved = true
     if self.inst.migrationpets ~= nil then
@@ -72,7 +88,7 @@ function Traveller:OnLoad(data)
     if data == nil or type(data.record) ~= "table"
         or not require("my_friend_characters").IsCharacter(data.record.prefab)
         or data.record.data == nil or data.record.data.my_friend_companion ~= true then return end
-    self.record, self.userid = data.record, data.userid
+    self.record, self.userid, self.possession = data.record, data.userid, data.possession
     -- Snapshot sessions replayed during world load are removed again right
     -- away; the real join runs OnLoad a second time and restores then.
     if TheWorld._my_friend_loading then return end

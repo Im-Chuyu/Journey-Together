@@ -8,6 +8,7 @@ end
 local function HasCompanion(ignore_departure)
     local friend = TheWorld._my_friend
     if friend ~= nil and friend:IsValid() then return true end
+    if require("my_friend_possess").HasSessions() then return true end
     if TheWorld._my_friend_home_pending ~= nil then return true end
     for _, player in ipairs(AllPlayers or {}) do
         local traveller = player.components.my_friend_traveller
@@ -32,6 +33,9 @@ end
 function M.ReturnHome(friend)
     if TheWorld.prefab ~= "cave" or friend == nil or not friend:IsValid()
         or TheWorld._my_friend_home_pending ~= nil then return end
+    -- An offline possession still owns this body. Sending it alone to the
+    -- surface leaves its session pointing at a removed entity in the caves.
+    if require("my_friend_possess").SessionOwner(friend) ~= nil then return end
     require("my_friend_commands").Clear(friend)
     local root = friend.brain ~= nil and friend.brain.bt ~= nil and friend.brain.bt.root or nil
     if root ~= nil then root:CancelActive() end

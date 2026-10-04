@@ -15,8 +15,29 @@ local WheelButton = Class(ImageButton, function(self, wheel, slot, size)
     self:SetImageFocusColour(.25, .22, .1, 1)
     self:SetImageDisabledColour(.05, .06, .08, .85)
     self.scale_on_focus = false
+    self.move_on_click = false
     self:SetClickable(true)
+    self:SetOnDown(function()
+        self.hold_started = GetStaticTime()
+        self.long_press = false
+    end)
+    self:SetWhileDown(function()
+        if not self:IsVisible() or self.wheel.picker:IsVisible() then
+            self:CancelHold()
+        elseif not self.long_press and self.hold_started ~= nil
+            and GetStaticTime() - self.hold_started >= 2.5 then
+            self.long_press = true
+            self.wheel:OpenCommandPicker(self.slot)
+        end
+    end)
 end)
+
+function WheelButton:CancelHold()
+    self.hold_started = nil
+    self.down = false
+    self:ResetPreClickPosition()
+    self:StopUpdating()
+end
 
 -- ImageButton handles the left click through OnControl.  Right click is
 -- delivered through the widget mouse path, so intercept it here first.
@@ -61,6 +82,20 @@ end
 
 local function CommandList()
     local result, seen = {}, {}
+    local characters, character_seen = {}, {}
+    for _, character in ipairs(Characters.List()) do
+        if type(character) == "string" and not character_seen[character] then
+            character_seen[character] = true
+            characters[#characters + 1] = character
+        end
+    end
+    -- Keep the same startup-safe fallback as the server command loader.
+    for _, character in ipairs({"wendy", "wickerbottom", "warly", "wanda"}) do
+        if not character_seen[character] then
+            character_seen[character] = true
+            characters[#characters + 1] = character
+        end
+    end
     local function Add(configured)
         for _, entry in ipairs(configured or {}) do
             if type(entry) == "table" and type(entry.id) == "string"
@@ -75,7 +110,7 @@ local function CommandList()
     Add(LanguageFiles.CommandWords(Language.language))
     -- Character commands live beside each character's language/dialogue file,
     -- but the picker intentionally exposes the complete catalogue at once.
-    for _, character in ipairs(Characters.List()) do
+    for _, character in ipairs(characters) do
         Add(LanguageFiles.CharacterCommandWords(Language.language, character))
     end
     return result
@@ -115,7 +150,9 @@ local MyFriendCommandWheel = Class(Widget, function(self, owner)
         button.label = button:AddChild(Text(DEFAULTFONT, 17, ""))
         button.label:SetColour(1, .86, .46, 1)
         button.label:SetClickable(false)
-        button:SetOnClick(function() self:Choose(i) end)
+        button:SetOnClick(function()
+            if not button.long_press then self:Choose(i) end
+        end)
         self.buttons[i] = button
     end
 
@@ -249,10 +286,19 @@ end
 
 function MyFriendCommandWheel:OpenCommandPicker(slot)
     if self.commands[slot] == nil then return end
+    self:CancelButtonHolds()
     self.slot = slot
     self.picker_page = 1
     self:RenderPickerPage()
     self.picker:Show()
+end
+
+function MyFriendCommandWheel:CancelButtonHolds()
+    for _, button in ipairs(self.buttons or {}) do button:CancelHold() end
+end
+
+function MyFriendCommandWheel:OnHide()
+    self:CancelButtonHolds()
 end
 
 function MyFriendCommandWheel:CloseCommandPicker()
@@ -307,6 +353,7 @@ function MyFriendCommandWheel:ShowFor(friend)
         or (not friend:HasTag("my_friend") and not possessed)
         or friend.prefab == "abigail" and not possessed) then return false end
     self.friend = friend
+    self:CancelButtonHolds()
     self:CloseCommandPicker()
     self:RefreshCenterLabel()
     self:Show()

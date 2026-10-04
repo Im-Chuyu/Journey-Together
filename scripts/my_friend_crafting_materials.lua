@@ -14,11 +14,14 @@ end
 
 local function Nearby(inst, source)
     if not source:IsValid() then return false end
-    local x, y, z, range = Policy.SearchOrigin(inst, RANGE)
+    -- Crafting materials belong to the companion's immediate work area.
+    -- Policy.SearchOrigin intentionally follows the leader for ordinary
+    -- activity scans; using it here made a following companion ignore items
+    -- and chests beside itself whenever the leader was elsewhere.
+    local x, y, z = inst.Transform:GetWorldPosition()
     local position = source:GetPosition()
     return not source:HasAnyTag("INLIMBO", "burnt", "fire")
-        and (position.x - x)^2 + (position.z - z)^2 <= range^2
-        and Policy.InRange(inst, source)
+        and (position.x - x)^2 + (position.z - z)^2 <= RANGE^2
         and inst:GetCurrentPlatform() == source:GetCurrentPlatform()
 end
 
@@ -46,8 +49,8 @@ function M.Plan(inst, recipe)
         end
         seen[item] = true
     end
-    local x, y, z, range = Policy.SearchOrigin(inst, RANGE)
-    local sources = TheSim:FindEntities(x, y, z, range, nil, {"INLIMBO", "burnt", "fire"})
+    local x, y, z = inst.Transform:GetWorldPosition()
+    local sources = TheSim:FindEntities(x, y, z, RANGE, nil, {"INLIMBO", "burnt", "fire"})
     table.sort(sources, function(a, b) return inst:GetDistanceSqToInst(a) < inst:GetDistanceSqToInst(b) end)
     local plan = {}
     local function Add(item, source)
@@ -82,6 +85,7 @@ function M.GetAction(inst, plan)
     local action = BufferedAction(inst, source or item,
         source ~= nil and ACTIONS.MY_FRIEND_WITHDRAW or ACTIONS.PICKUP,
         source ~= nil and item or nil)
+    action._my_friend_crafting_material = true
     action._my_friend_withdraw_count = count
     action.validfn = function()
         return Usable(item) and Nearby(inst, source or item)

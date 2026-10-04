@@ -2002,6 +2002,9 @@ M.replies = {
     special_device_place_failed = {"厨具做好了，但附近没有合适的空地，我先不乱放。"},
     -- fn557
     special_recall = {"好，我让阿比盖尔回去休息一会儿。"},
+    wendy_enrage_ok = {"好，我会让阿比盖尔进入激怒状态。"},
+    wendy_calm_ok = {"好，我会让阿比盖尔冷静下来。"},
+    wendy_abigail_unavailable = {"阿比盖尔现在没有被召唤出来。"},
     -- fn558
     special_read_ok = {"我去找这本书来读。"},
     -- fn559
@@ -2270,5 +2273,16 @@ M.voice_order[#M.voice_order + 1] = {"heart_made", 3, 643}
 M.voice_order[#M.voice_order + 1] = {"heart_make_failed", 1, 644}
 M.voice_order[#M.voice_order + 1] = {"heart_make_failed", 2, 645}
 M.voice_order[#M.voice_order + 1] = {"heart_make_failed", 3, 646}
+M.replies.activity_wormwood_heal = {
+    -- fn647
+    "把伤口包好，再继续赶路。",
+    -- fn648
+    "这些药能帮我的身体恢复一些。",
+    -- fn649
+    "先照顾好受伤的地方。",
+}
+M.voice_order[#M.voice_order + 1] = {"activity_wormwood_heal", 1, 647}
+M.voice_order[#M.voice_order + 1] = {"activity_wormwood_heal", 2, 648}
+M.voice_order[#M.voice_order + 1] = {"activity_wormwood_heal", 3, 649}
 return M
 

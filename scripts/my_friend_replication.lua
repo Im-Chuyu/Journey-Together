@@ -75,6 +75,22 @@ local function BelongsToCharacter(skin, prefab)
     return skin:sub(1, #prefab + 1) == prefab .. "_"
 end
 
+-- Restricted characters (Wortox, Wormwood, Wurt, etc.) deliberately start
+-- with the Wilson build when their prefab is spawned outside the normal
+-- character-select flow. Companions are spawned directly by the server, so
+-- give a fresh body its own default build before any companion systems or
+-- saved wardrobe data are applied.
+function M.ApplyDefaultAppearance(inst)
+    if inst == nil or not inst:IsValid() or inst.AnimState == nil
+        or type(inst.prefab) ~= "string" then return end
+    inst.AnimState:SetBuild(inst.prefab)
+    local skinner = inst.components ~= nil and inst.components.skinner or nil
+    if skinner ~= nil then
+        skinner:SetSkinName(inst.prefab .. "_none", true)
+        M.ApplySkinMode(inst, false)
+    end
+end
+
 -- A skin has to be committed through the character's own entry point.
 --
 -- skinner:SetSkinMode("normal_skin") looks like the obvious call, but it skips

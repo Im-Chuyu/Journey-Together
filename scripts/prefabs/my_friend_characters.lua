@@ -22,6 +22,7 @@ local function MakeFn(character)
             -- every other system (skins, stategraph, prefab post inits,
             -- remains, dialogue) keeps seeing an ordinary character.
             inst.prefab = character
+            require("my_friend_replication").ApplyDefaultAppearance(inst)
         end
         return inst
     end

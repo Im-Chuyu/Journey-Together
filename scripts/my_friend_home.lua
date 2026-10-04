@@ -89,10 +89,32 @@ end
 
 function M.Set(inst, point, mode)
     if inst == nil or point == nil then return false end
+    inst._my_friend_hold_memory = nil
     inst._my_friend_home = {x = point.x, z = point.z, mode = mode or "base"}
     M.Apply(inst)
     inst._my_friend_replan_requested = true
     return true
+end
+
+-- Automatic waiting during a disconnect/portal change must not forget the
+-- player's base. Explicit home commands still replace the chosen site.
+function M.Hold(inst)
+    local saved = inst._my_friend_hold_memory
+    if saved == nil then
+        saved = {}
+        require("my_friend_base_ai").OnSave(inst, saved)
+    end
+    M.Set(inst, inst:GetPosition(), "hold")
+    inst._my_friend_hold_memory = saved
+end
+
+function M.Resume(inst)
+    local saved = inst._my_friend_hold_memory
+    if saved == nil then return end
+    inst._my_friend_hold_memory = nil
+    inst._my_friend_base = nil
+    require("my_friend_base_ai").OnLoad(inst, saved)
+    inst._my_friend_replan_requested = true
 end
 
 function M.IsLateJoin(inst)
@@ -218,6 +240,7 @@ function M.FindAnchor(inst, origin)
 end
 
 function M.Save(inst, data)
+    data.my_friend_hold_memory = inst._my_friend_hold_memory
     local home = inst._my_friend_home
     if home ~= nil and type(home.x) == "number" and type(home.z) == "number" then
         data.my_friend_home = {x = home.x, z = home.z, mode = home.mode}
@@ -227,6 +250,7 @@ function M.Save(inst, data)
 end
 
 function M.Load(inst, data)
+    inst._my_friend_hold_memory = data ~= nil and data.my_friend_hold_memory or nil
     local home = data ~= nil and data.my_friend_home or nil
     if type(home) == "table" and type(home.x) == "number" and type(home.z) == "number"
         and home.x == home.x and home.z == home.z then

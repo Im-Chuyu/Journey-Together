@@ -82,10 +82,11 @@ local function IsFriendWalking(inst)
 end
 
 local function StartFriendWalk(inst, target)
+    local requested = target
     if inst:GetCurrentPlatform() == nil then
         target = Navigation.GetSteeringPoint(inst, target, true)
     end
-    local detour = target ~= nil and Navigation.Unstick(inst, target) or nil
+    local detour = Navigation.Unstick(inst, target or requested)
     if detour ~= nil then target = detour end
     if target == nil then inst.components.locomotor:Stop() return end
     if inst.sg ~= nil then
@@ -97,13 +98,14 @@ local function StartFriendWalk(inst, target)
     local old = inst._my_friend_last_move
     if old == nil or old.run or GetTime() >= old.untiltime
         or (old.point - target):LengthSq() > .25 then
-        inst.components.locomotor:GoToPoint(target, nil, false)
+        Navigation.MoveToPoint(inst, target, false)
         inst._my_friend_last_move = {point = target, run = false, untiltime = GetTime() + .75}
     end
 end
 
 local function StopFriendWalk(inst)
     inst._my_friend_last_move = nil
+    inst._my_friend_long_follow = nil
     Navigation.CancelSteering(inst)
     Navigation.ClearStuck(inst)
     inst.components.locomotor:Stop()
@@ -112,13 +114,21 @@ local function StopFriendWalk(inst)
     end
 end
 
-local function StartFriendRun(inst, target)
+local function StartFriendRun(inst, target, long_follow)
+    if long_follow and target ~= nil then
+        target = Navigation.GetLongFollowPoint(inst, target)
+    end
+    if target == nil then
+        inst.components.locomotor:Stop()
+        return
+    end
+    local requested = target
     if inst:GetCurrentPlatform() == nil then
         target = Navigation.GetSteeringPoint(inst, target, true)
     end
     -- Sidestep toward the next route point, never back across the sea toward
     -- the leader while the terrain planner is still working.
-    local detour = target ~= nil and Navigation.Unstick(inst, target) or nil
+    local detour = Navigation.Unstick(inst, target or requested)
     if detour ~= nil then target = detour end
     if target == nil then inst.components.locomotor:Stop() return end
     -- Do not bounce the stategraph between walk/idle while a nearby leader
@@ -133,7 +143,7 @@ local function StartFriendRun(inst, target)
         and (not platform_move or inst.components.locomotor.dest == nil)
     if old == nil or not old.run or refresh
         or (old.point - target):LengthSq() > 1 then
-        inst.components.locomotor:GoToPoint(target, nil, true)
+        Navigation.MoveToPoint(inst, target, true)
         inst._my_friend_last_move = {point = target, run = true,
             untiltime = GetTime() + (platform_move and 1 or .45)}
     end
@@ -212,6 +222,7 @@ function MyFriendFollow:Visit()
         self.leader = leader
         self.chasing = false
     end
+    Platforms.ResetAfterPlatformChange(self.inst)
     if Platforms.NeedsCrossing(self.inst, leader) then
         self.stroll_target, self.next_stroll = nil, nil
         self.chasing = true
@@ -233,7 +244,7 @@ function MyFriendFollow:Visit()
         if IsFriendWalking(self.inst) then
             self.inst.sg:GoToState("idle")
         end
-        StartFriendRun(self.inst, Vector3(tx, ty, tz))
+        StartFriendRun(self.inst, Vector3(tx, ty, tz), true)
         self.status = RUNNING
         self:Sleep(0.1)
         return
@@ -481,7 +492,7 @@ function MyFriendBrain:OnStart()
                 and id ~= "emergency_fire" and id ~= "backpack_recovery" and id ~= "revive_return"
                 and id ~= "carry_backpack"
                 and id ~= "touch_tower"
-                and id ~= "squeeze_heart" and id ~= "make_heart" and id ~= "watch_heal"
+                and id ~= "squeeze_heart" and id ~= "make_heart" and id ~= "watch_heal" and id ~= "wormwood_heal"
                 and not ((id == "food" or id == "container_food" or id == "cook")
                     and inst.components.hunger:GetPercent() < .2) then return end
             if command ~= nil and (command.id == "seeds" or command.id == "tidy" or command.id == "equipment")
@@ -489,11 +500,11 @@ function MyFriendBrain:OnStart()
                 and id ~= "command" and id ~= "wormhole" and id ~= "revive" and id ~= "rescue" and id ~= "light"
                 and id ~= "hurt" and id ~= "eat" and id ~= "temperature"
                 and id ~= "seek_light" and id ~= "emergency_fire" and id ~= "revive_return"
-                and id ~= "watch_heal" then return end
+                and id ~= "watch_heal" and id ~= "wormwood_heal" then return end
             if LightAI.IsDark(inst) and id ~= "farewell" and id ~= "light" and id ~= "seek_light"
                 and id ~= "emergency_light_supply" and id ~= "emergency_fire"
                 and id ~= "base_fire" and id ~= "hurt" and id ~= "eat"
-                and id ~= "revive" and id ~= "temperature" and id ~= "watch_heal" then return end
+                and id ~= "revive" and id ~= "temperature" and id ~= "watch_heal" and id ~= "wormwood_heal" then return end
             local action = getter(inst)
             if action ~= nil and Policy.IsRoaming(inst) then
                 action = require("my_friend_exploration_riding").PrepareAction(inst, action)
@@ -525,6 +536,13 @@ function MyFriendBrain:OnStart()
     local function Alive(score)
         return function(c) return not c.ghost and (type(score) == "function" and score(c) or score) or 0 end
     end
+    local function CanWaitForPlayer(c)
+        return c.wait_for_me and not c.leaderdead and c.threat == nil
+            and not c.hurt and not c.hurt_evade and not c.thermal
+            and not c.dark and not c.emergency_food and not c.urgent_repair
+            and not inst._my_friend_under_threat
+            and (inst.components.combat == nil or inst.components.combat.target == nil)
+    end
     Action("revive", function(c) return c.ghost and math.max(150, GhostCommands.Score(inst)) or 0 end,
         GhostCommands.GetAction, nil, GhostCommands.TIMEOUT, true)
     Action("revive_return", Alive(function(c) return GhostCommands.ReturnScore(inst, c) end),
@@ -539,6 +557,17 @@ function MyFriendBrain:OnStart()
         require("my_friend_farewell").GetAction, "正在与大家告别并离开", 20)
     Action("light", Alive(function(c) return c.dark and 140 or 84 end),
         LightAI.GetLightAction, "正在保证照明", 5, true)
+    Add("wait_for_me", Alive(function(c)
+        return CanWaitForPlayer(c) and 133 or 0
+    end), StandStill(inst, nil, function()
+        if GetTime() >= (inst._my_friend_wait_until or 0) then
+            inst._my_friend_wait_until = nil
+            inst._my_friend_wait_player = nil
+            return false
+        end
+        return not inst._my_friend_under_threat
+            and (inst.components.combat == nil or inst.components.combat.target == nil)
+    end))
     Action("hurt", Alive(function(c) return c.hurt and 135 or 0 end),
         BehaviourAI.GetHurtRetreatAction, "正在离开受伤的位置", 3)
     Add("hurt_wait", Alive(function(c) return c.hurt_evade and 134 or 0 end), StandStill(inst))
@@ -578,6 +607,9 @@ function MyFriendBrain:OnStart()
     Action("watch_heal", Alive(function()
         return require("my_friend_wanda").GetHealScore(inst)
     end), require("my_friend_character_actions").GetHealAction, "正在使用不老表", 8)
+    Action("wormwood_heal", Alive(function()
+        return require("my_friend_wormwood").GetHealScore(inst)
+    end), require("my_friend_wormwood").GetHealAction, "正在治疗伤口", 8)
     Action("wanda_refuel", Alive(function(c)
         return inst.prefab == "wanda" and not c.hurt and not c.hurt_evade and 130 or 0
     end), require("my_friend_wanda").GetRefuelAction, "正在给警钟补充噩梦燃料", 8, true)
@@ -859,6 +891,18 @@ function MyFriendBrain:OnStart()
         if not ghost then
             repair, urgent_repair = require("my_friend_equipment").GetRepairStatus(inst)
         end
+        local hurt = GetTime() < (inst._my_friend_hurt_until or 0)
+        local emergency_food = not ghost and FoodAI.IsEmergency(inst) or false
+        local thermal = not ghost and SurvivalAI.NeedsTemperatureHelp(inst) or false
+        local wait_active = GetTime() < (inst._my_friend_wait_until or 0)
+            and threat == nil and not hurt and not hurt_evade
+            and not dark and not thermal and not urgent_repair
+            and not leaderdead and not emergency_food
+        if not wait_active and (threat ~= nil or hurt or hurt_evade or dark
+            or thermal or urgent_repair or leaderdead) then
+            inst._my_friend_wait_until = nil
+            inst._my_friend_wait_player = nil
+        end
         return {
             leader = leader, rejoining = rejoining, leaderdead = leaderdead,
             ghost = ghost, threat = threat, canfight = inst._my_friend_can_fight,
@@ -868,17 +912,18 @@ function MyFriendBrain:OnStart()
                 and not require("my_friend_home").NoConstruction(inst),
             distance = leader ~= nil and Policy.DistanceSq(inst, leader) or 0,
             hunger = inst.components.hunger:GetPercent(),
-            emergency_food = not ghost and FoodAI.IsEmergency(inst),
+            emergency_food = emergency_food,
             dark = dark,
-            thermal = not ghost and SurvivalAI.NeedsTemperatureHelp(inst),
+            thermal = thermal,
             needsfood = not ghost and FoodAI.NeedsFoodSupply(inst),
             reserve = ghost or LightAI.HasLightReserve(inst),
             full = not ghost and BaseAI.GetStoragePressure(inst),
             waitlight = not ghost and LightAI.ShouldWaitInLight(inst),
             repair = repair,
             urgent_repair = urgent_repair,
+            wait_for_me = wait_active,
             greeting = CoreAI.IsGreetingPauseActive(inst),
-            hurt = GetTime() < (inst._my_friend_hurt_until or 0),
+            hurt = hurt,
             hurt_evade = hurt_evade,
         }
     end

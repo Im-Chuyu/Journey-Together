@@ -5,6 +5,15 @@ local Dialogue = require("my_friend_dialogue")
 local M = {}
 local CLEARANCE = 1.8
 
+local function IsCenterRecipe(command)
+    return command ~= nil
+        and (command.recipe == "bookstation" or command.recipe == "sisturn")
+end
+
+local function FailureKey(command, key)
+    return command.recipe == "sisturn" and "special_cannot_make" or key
+end
+
 local function DistanceSq(entity, point)
     local x, _, z = entity.Transform:GetWorldPosition()
     return (x - point.x)^2 + (z - point.z)^2
@@ -48,7 +57,7 @@ end
 function M.MakeRoom(act)
     local inst, player = act.doer, act.target
     local command = inst._my_friend_command
-    if command == nil or command.recipe ~= "bookstation" or command.player ~= player
+    if not IsCenterRecipe(command) or command.player ~= player
         or command.build_point == nil or not Policy.IsLocalPlayer(player)
         or Policy.GetLeader(inst) ~= player or inst:GetDistanceSqToInst(player) > 3^2 then return false end
     if not Blocks(player, command.build_point) then return true end
@@ -68,7 +77,7 @@ end
 function M.GetPrepareAction(inst, command, recipe)
     local point = command.build_point
     if point == nil or not Navigation.IsLand(point) then
-        return nil, "bookstation_blocked"
+        return nil, FailureKey(command, "bookstation_blocked")
     end
     -- Resolve the leader's occupancy before asking the vanilla deploy test.
     -- Some game builds include players in the spacing query; that is exactly
@@ -77,25 +86,27 @@ function M.GetPrepareAction(inst, command, recipe)
     if Blocks(player, point) then
         if command.room_until ~= nil then
             if GetTime() < command.room_until then return nil, "waiting" end
-            return nil, "bookstation_blocked"
+            return nil, FailureKey(command, "bookstation_blocked")
         end
         local action = BufferedAction(inst, player, ACTIONS.MY_FRIEND_MAKE_ROOM)
         action.arrivedist = 2
         action.validfn = function() return inst._my_friend_command == command and player:IsValid() end
         action:AddFailAction(function()
             if not action._my_friend_cancelled and inst._my_friend_command == command then
-                Dialogue.Reply(inst, "bookstation_blocked")
+                Dialogue.Reply(inst, FailureKey(command, "bookstation_blocked"))
                 require("my_friend_commands").Clear(inst)
             end
         end)
-        Dialogue.Reply(inst, "bookstation_make_room")
+        if command.recipe == "bookstation" then
+            Dialogue.Reply(inst, "bookstation_make_room")
+        end
         return Policy.GuardAction(inst, action)
     end
     if not TheWorld.Map:CanDeployRecipeAtPoint(point, recipe, 0, inst) then
-        return nil, "bookstation_blocked"
+        return nil, FailureKey(command, "bookstation_blocked")
     end
     if M.IsClear(command) then return end
-    return nil, "bookstation_blocked"
+    return nil, FailureKey(command, "bookstation_blocked")
 end
 
 return M

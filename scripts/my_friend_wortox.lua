@@ -5,7 +5,14 @@ local Dialogue = require("my_friend_dialogue")
 M.HEAL_START = .5
 M.HEAL_STOP = .8
 M.HEAL_RANGE = 20
+M.HEAL_DISTANCE = 4
 M.HEART_SOUL_COST = 10
+
+-- Native wortox hearts are normally linked during the player's skill-tree
+-- handshake. A companion does not have that login handshake, so keep the
+-- companion-owned link registry available before MakeHeart can run.
+local linked_hearts = setmetatable({}, {__mode = "k"})
+local RefreshHeart
 
 function M.CanMakeHeart(inst)
     return inst.prefab == "wortox" and inst:HasTag("my_friend")
@@ -30,6 +37,14 @@ function M.MakeHeart(inst)
     inst.components.inventory:ConsumeByName("wortox_soul", M.HEART_SOUL_COST)
     inst.components.inventory:GiveItem(heart, nil, inst:GetPosition())
     heart:OnBuilt(inst)
+    -- OnBuilt can only attach a native owner when the vanilla player skill
+    -- handshake has already run. Companions are ordinary entities, so make
+    -- the owner link explicit and keep it tied to the companion body ID.
+    if heart.components.linkeditem ~= nil and inst._my_friend_id ~= nil then
+        heart._my_friend_heart_owner_id = inst._my_friend_id
+        linked_hearts[heart] = true
+        RefreshHeart(heart, inst)
+    end
     inst:PushEvent("builditem", {item = heart, recipe = GetValidRecipe("wortox_reviver")})
     Dialogue.RandomReply(inst, "heart_made")
     return true
@@ -74,8 +89,6 @@ end
 
 -- Native hearts link to a user's login ID. NPC-made hearts instead keep the
 -- existing companion body ID; actual player-made hearts retain native links.
-local linked_hearts = setmetatable({}, {__mode = "k"})
-local RefreshHeart
 local function EnsureOwnerEvents(owner)
     if owner._my_friend_heart_events then return end
     owner._my_friend_heart_events = true
@@ -98,6 +111,27 @@ local function FindHeartOwner(id)
     local friend = TheWorld._my_friend
     if friend ~= nil and friend:IsValid() and friend._my_friend_id == id
         and friend.prefab == "wortox" then return friend end
+end
+
+local function HasSqueezeSkill(inst)
+    return inst ~= nil and inst:IsValid()
+        and inst.components ~= nil and inst.components.skilltreeupdater ~= nil
+        and inst.components.skilltreeupdater:IsActivated("wortox_lifebringer_3") == true
+end
+
+local function FindSessionSkillOwner(id)
+    if id == nil then return end
+    for _, player in ipairs(AllPlayers or {}) do
+        if player ~= nil and player:IsValid() and player._my_friend_id == id
+            and HasSqueezeSkill(player) then
+            return player
+        end
+    end
+    local friend = TheWorld ~= nil and TheWorld._my_friend or nil
+    if friend ~= nil and friend:IsValid() and friend._my_friend_id == id
+        and HasSqueezeSkill(friend) then
+        return friend
+    end
 end
 
 function M.RefreshLinkedHearts(owner)
@@ -139,7 +173,14 @@ RefreshHeart = function(heart, owner)
         and owner.components.skilltreeupdater:IsActivated("wortox_lifebringer_3") == true
     if heart._my_friend_heart_consumable ~= can_squeeze then
         heart._my_friend_heart_consumable = can_squeeze
-        if can_squeeze then linked:OnSkillTreeInitialized()
+        if can_squeeze then
+            -- OnSkillTreeInitialized only runs the native owner callback. A
+            -- companion has no player login handshake, so explicitly clear
+            -- the native WORTOX_REVIVER_LOCK as well.
+            if heart.SetAllowConsumption ~= nil then
+                heart:SetAllowConsumption(true)
+            end
+            linked:OnSkillTreeInitialized()
         else heart:SetAllowConsumption(false) end
     end
     if owner ~= nil then
@@ -151,6 +192,45 @@ RefreshHeart = function(heart, owner)
     return owner
 end
 
+function M.RefreshHeartFor(inst, heart)
+    if inst == nil or heart == nil or not heart:IsValid()
+        or inst._my_friend_id == nil then return false end
+    -- After an entity exchange the active player body carries the companion
+    -- session id, but it is marked `my_friend_possessed` instead of
+    -- `my_friend`.  A heart crafted from that body therefore keeps the
+    -- native player owner and would otherwise look like somebody else's
+    -- heart when the parked companion tries to squeeze it.  The session id
+    -- is the stable identity across both bodies, so adopt that link before
+    -- refreshing the owner and skill-tree state.
+    local linked = heart.components ~= nil and heart.components.linkeditem or nil
+    local native_owner = heart._my_friend_heart_owner
+        or linked ~= nil and linked:GetOwnerInst() or nil
+    if heart._my_friend_heart_owner_id == nil and native_owner ~= nil
+        and native_owner ~= inst and native_owner._my_friend_id == inst._my_friend_id then
+        heart._my_friend_heart_owner_id = inst._my_friend_id
+        linked_hearts[heart] = true
+    end
+    if heart._my_friend_heart_owner_id ~= inst._my_friend_id then return false end
+    RefreshHeart(heart, inst)
+    local owner = heart._my_friend_heart_owner or linked ~= nil and linked:GetOwnerInst() or nil
+    -- The skill can remain on the currently controlled body while the heart
+    -- is inside the restored companion body (or the reverse). The session ID
+    -- is stable across that exchange, so either body can provide the skill.
+    local skill_owner = HasSqueezeSkill(inst)
+        and inst or FindSessionSkillOwner(inst._my_friend_id)
+    local allowed = (owner == inst
+        or heart._my_friend_heart_owner_id == inst._my_friend_id)
+        and skill_owner ~= nil
+    if allowed and heart.SetAllowConsumption ~= nil then
+        heart._my_friend_heart_consumable = true
+        heart:SetAllowConsumption(true)
+        if linked ~= nil and linked.OnSkillTreeInitialized ~= nil then
+            linked:OnSkillTreeInitialized()
+        end
+    end
+    return allowed
+end
+
 function M.ConfigureHeart(heart)
     if not TheWorld.ismastersim or heart.components.linkeditem == nil then return end
     local linked = heart.components.linkeditem
@@ -160,10 +240,17 @@ function M.ConfigureHeart(heart)
             RefreshHeart(self)
             return
         end
-        if owner ~= nil and owner:HasTag("my_friend") and owner.prefab == "wortox"
-            and owner._my_friend_id ~= nil and linked:GetOwnerUserID() == nil
-            and owner.components.skilltreeupdater ~= nil
-            and owner.components.skilltreeupdater:IsActivated("wortox_lifebringer_1") then
+        -- A heart made while the player is controlling the companion body
+        -- must keep the companion session identity even though the native
+        -- linkeditem component only knows the player's userid. Do this before
+        -- the vanilla skill check; otherwise a heart made after an entity
+        -- exchange can lose its companion owner as soon as it is moved into
+        -- the parked companion's inventory.
+        local companion_owner = owner ~= nil
+            and (owner:HasTag("my_friend") or owner:HasTag("my_friend_possessed"))
+            and owner.prefab == "wortox" and owner._my_friend_id ~= nil
+        local linked_user = linked:GetOwnerUserID()
+        if companion_owner and (linked_user == nil or linked_user == owner.userid) then
             self._my_friend_heart_owner_id = owner._my_friend_id
             linked_hearts[self] = true
             RefreshHeart(self, owner)
@@ -239,11 +326,14 @@ function M.GetHealPlayerAction(inst)
         if CarriedSoul(inst, item) then soul = item break end
     end
     if soul == nil then return end
-    local point = patient:GetPosition()
+    -- Drop the soul at the companion's current position. Dropping it on the
+    -- player's exact position can push the player and is unnecessary: the
+    -- native soul seek/heal code already finds nearby players.
+    local point = inst:GetPosition()
     local action
-    if inst:GetDistanceSqToInst(patient) > 2^2 then
+    if inst:GetDistanceSqToInst(patient) > M.HEAL_DISTANCE^2 then
         action = BufferedAction(inst, patient, ACTIONS.WALKTO)
-        action.arrivedist = 2
+        action.arrivedist = M.HEAL_DISTANCE
     else
         action = BufferedAction(inst, nil, ACTIONS.DROP, soul, point)
         action.options.wholestack = false
@@ -259,7 +349,7 @@ function M.GetHealPlayerAction(inst)
             and Policy.InRange(inst, patient)
             and inst:GetDistanceSqToInst(patient) <= M.HEAL_RANGE^2
             and (action.action ~= ACTIONS.DROP
-                or patient:GetDistanceSqToPoint(point) < 2^2)
+                or patient:GetDistanceSqToPoint(point) <= (M.HEAL_DISTANCE + 1)^2)
     end
     action:AddFailAction(function()
         if not action._my_friend_cancelled then inst._my_friend_soul_heal_after = GetTime() + 5 end

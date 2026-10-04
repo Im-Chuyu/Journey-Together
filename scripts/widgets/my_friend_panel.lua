@@ -95,11 +95,15 @@ local function ParsePair(value)
     return tonumber(a) or 0, tonumber(b) or 0
 end
 
--- Trailing "|<flags>" field written by PushPanelData. 1 = the shared free
--- character change has not been used yet.
+-- Trailing flags: 1 = free character change, 2 = free rename.
 local function ParseFreeSwitch(raw)
-    local flags = (raw or ""):match("|([^|]*)$")
-    return flags == "1"
+    local flags = tonumber((raw or ""):match("|([^|]*)$")) or 0
+    return flags % 2 == 1
+end
+
+local function ParseFreeRename(raw)
+    local flags = tonumber((raw or ""):match("|([^|]*)$")) or 0
+    return math.floor(flags / 2) % 2 == 1
 end
 
 local function ParseData(raw)
@@ -210,9 +214,12 @@ local MyFriendPanel = Class(Widget, function(self, owner)
         end)
 
     self.rename = ActionButton(TextForLanguage("改名", "Rename"),
-        TextForLanguage("改名：好感度达到80可以改名", "Rename: requires 80 affinity"),
+        TextForLanguage(require("my_friend_strings").language == "zh_tw"
+            and "改名：首次免費，之後需80好感度" or "改名：首次免费，之后需80好感度",
+            "Rename: first use is free; later uses require 80 affinity",
+            "Имя: первая смена бесплатна; далее нужно 80 симпатии"),
         ACTION_X + ACTION_STEP * 2, function()
-            if self:GetAffinityScore() < 80 then
+            if not self:CanRename() then
                 SendModRPCToServer(GetModRPC("MyFriends", "PanelLocked"), self.friend, "rename")
             else
                 self:OpenRenameScreen()
@@ -242,6 +249,15 @@ function MyFriendPanel:GetAffinityScore()
     end
     return self.owner._my_friend_affinity_net ~= nil
         and self.owner._my_friend_affinity_net:value() or 20
+end
+
+function MyFriendPanel:CanRename()
+    local friend = self.friend
+    if friend == nil or not friend:IsValid() then return false end
+    local affinity = friend.components ~= nil and friend.components.my_friend_affinity or nil
+    if affinity ~= nil then return affinity:CanRename(self.owner) end
+    return friend._my_friend_panel_net ~= nil and ParseFreeRename(friend._my_friend_panel_net:value())
+        or self:GetAffinityScore() >= 80
 end
 
 function MyFriendPanel:OpenRenameScreen()
@@ -421,7 +437,7 @@ function MyFriendPanel:Refresh()
     end
     Dim(self.switch, self:CanSwitchCharacter())
     Dim(self.skin, score >= 40)
-    Dim(self.rename, score >= 80)
+    Dim(self.rename, self:CanRename())
     local hp, hpmax, hunger, hungermax, sanity, sanitymax
     local moisture, moisturemax = 0, 100
     if friend.components ~= nil and friend.components.health ~= nil then

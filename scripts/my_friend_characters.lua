@@ -42,13 +42,14 @@ end
 -- Cached, because FindFriend and the save hook ask about every entity in the
 -- world. The cache is keyed on the size of MODCHARACTERLIST so it rebuilds
 -- itself if a character mod that loads after this one registers late.
-local cache, cache_mods, cache_set = nil, nil, nil
+local cache, cache_mods, cache_dst, cache_set = nil, nil, nil, nil
 
 local function Rebuild()
     local mods = MODCHARACTERLIST or {}
-    if cache ~= nil and cache_mods == #mods then return end
-    cache, cache_set, cache_mods = {}, {}, #mods
-    for _, source in ipairs({ DST_CHARACTERLIST or {}, mods }) do
+    local vanilla = DST_CHARACTERLIST or {}
+    if cache ~= nil and cache_mods == #mods and cache_dst == #vanilla then return end
+    cache, cache_set, cache_mods, cache_dst = {}, {}, #mods, #vanilla
+    for _, source in ipairs({ vanilla, mods }) do
         for _, name in ipairs(source) do
             if type(name) == "string" and not cache_set[name] and not IsExcluded(name) then
                 cache_set[name] = true

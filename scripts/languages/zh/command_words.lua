@@ -1,13 +1,14 @@
 -- Language: zh
 -- Chinese command keywords.
 return {
-    { id = "squeeze_heart", label = "挤压双尾心", keywords = {"挤", "压", "按"} },
+    { id = "squeeze_heart", label = "挤压双尾心", keywords = {"挤", "压", "按", "捏"} },
     { id = "revive", zh = {"复活", "重生", "归来", "活"} },
     { id = "farewell_gift", zh = {"带走吧","拿走吧","不要了","送你"} },
     { id = "farewell_keep", zh = {"东西留下","留下东西","别带走"} },
     { id = "stop_follow", zh = {"别跟着我","别找我","走开","快走","离开","别烦我","你走","自己玩","一边去","取消跟随"} },
     { id = "stop_task", zh = {"停下来","停吧","别干了","休息","停止","别捡"} },
     { id = "hold_position", zh = {"留在这","在这等我","待在这","就在这","别动","在这","待着"} },
+    { id = "wait_for_me", zh = {"等我", "等等"} },
     { id = "set_base", zh = {"这是家","新基地","基地","家"} },
     { id = "allow_pickup", zh = {"没问题","可以","好的","行","好","可"} },
     { id = "follow", zh = {"跟着我","跟我来","来我这","找我","跟随我","跟随","陪我","一起走",

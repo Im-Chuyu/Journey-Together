@@ -67,6 +67,21 @@ function M.NeedsCrossing(inst, leader)
         and inst:GetCurrentPlatform() ~= leader:GetCurrentPlatform()
 end
 
+function M.ResetAfterPlatformChange(inst)
+    local platform = inst:GetCurrentPlatform()
+    if inst._my_friend_move_platform == platform then return end
+    inst._my_friend_move_platform = platform
+    local navigation = require("my_friend_navigation")
+    navigation.CancelSteering(inst)
+    navigation.ClearStuck(inst)
+    inst._my_friend_land_route = nil
+    inst._my_friend_long_follow = nil
+    inst._my_friend_last_move = nil
+    local locomotor = inst.components.locomotor
+    locomotor:ResetPath()
+    locomotor.lastdesttile = nil
+end
+
 function M.Target(inst, leader)
     local track = inst._my_friend_platform_track
     local crossing = track ~= nil and track.leader == leader and track.crossing or nil

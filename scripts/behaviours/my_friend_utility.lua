@@ -154,6 +154,8 @@ function Utility:Visit()
     local leader = Policy.GetLeader(self.inst)
     local context = self.context
     if context == nil or now >= (self.snapshot_at or 0)
+        or context.threat ~= nil and (not context.threat:IsValid()
+            or context.threat.components.health == nil or context.threat.components.health:IsDead())
         or self.leader ~= leader or self.inst._my_friend_replan_requested then
         context = self.snapshot(self.inst)
         self.snapshot_at = now + SNAPSHOT_PERIOD

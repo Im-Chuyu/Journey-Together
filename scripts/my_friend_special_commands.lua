@@ -25,6 +25,24 @@ local function Any(text, words)
     for _, word in ipairs(words) do if Has(text, word) then return true end end
 end
 
+-- Character command files are also the source used by the command wheel.
+-- Resolve their localized keywords here so chat and wheel requests use the
+-- same reviewed vocabulary in every language.
+local function HasCharacterCommand(text, prefab, id)
+    local configured = LanguageFiles.CharacterCommandWords(Language.language, prefab)
+    for _, entry in ipairs(configured or {}) do
+        if entry.id == id then
+            for _, keyword in ipairs(entry.keywords or {}) do
+                if type(keyword) == "string" and Has(text, keyword:lower()) then
+                    return true
+                end
+            end
+            return false
+        end
+    end
+    return false
+end
+
 local function AddAlias(entries, prefab, alias)
     for _, entry in ipairs(entries) do
         if entry.recipe == prefab then
@@ -147,6 +165,19 @@ function M.Parse(friend, text, has_general_command)
     if friend.prefab == "wendy" and Any(text,
         {"收回", "回去", "藏", "recall abigail", "recall"}) then
         return {special = "wendy_recall"}
+    end
+    if friend.prefab == "wendy"
+        and HasCharacterCommand(text, "wendy", "build_ash_urn") then
+        return {special = "build", recipe = "sisturn", center_tile = true}
+    end
+    if friend.prefab == "wanda" then
+        if HasCharacterCommand(text, "wanda", "wanda_make_weapon") then
+            return {special = "build", recipe = "pocketwatch_weapon"}
+        elseif HasCharacterCommand(text, "wanda", "wanda_make_heal_watch") then
+            return {special = "build", recipe = "pocketwatch_heal"}
+        elseif HasCharacterCommand(text, "wanda", "wanda_make_revive_watch") then
+            return {special = "build", recipe = "pocketwatch_revive"}
+        end
     end
     if friend.prefab == "wickerbottom" then
         if Any(text, {"书架", "書架", "书房", "bookshelf", "bookcase"})

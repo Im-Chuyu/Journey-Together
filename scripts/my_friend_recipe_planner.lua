@@ -38,7 +38,7 @@ function M.RecipeValue(inst, recipe)
         or recipe.foodtype == nil then return end
     local h, f, s = recipe.health or 0, recipe.hunger or 0, recipe.sanity or 0
     if h < 0 or f < 0 or s < 0 or h + f + s <= 0 then return end
-    if inst:HasTag("health_as_oldage") then h = 0 end
+    if not Food.CanHealWithFood(inst) then h = 0 end
     local eater = inst.components.eater
     if eater == nil or not AcceptsType(eater.caneat, recipe.foodtype)
         or not AcceptsType(eater.preferseating, recipe.foodtype) then return end
@@ -91,6 +91,7 @@ function M.EvaluateSpecific(inst, cooker, prefabs, wanted)
     local eater = inst.components.eater
     if eater == nil or not AcceptsType(eater.caneat, recipe.foodtype) then return end
     local health = recipe.health or 0
+    if not Food.CanHealWithFood(inst) then health = 0 end
     local hunger = recipe.hunger or 0
     local sanity = recipe.sanity or 0
     return health * 3 + hunger + sanity * 2, recipe.cooktime or 1

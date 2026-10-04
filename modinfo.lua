@@ -11,7 +11,7 @@ description = simplified_chinese and "在这片永恒大陆，我会与你并肩
     or russian and "На этом вечном континенте я буду путешествовать вместе с тобой."
     or "On this eternal continent, I will travel with you."
 author = "阮秀"
-version = "2.0.1"
+version = "2.0.6"
 forumthread = ""
 api_version = 10
 
@@ -30,6 +30,15 @@ local function ExtraKeyOptions()
     return result
 end
 
+local function UIButtonOptions()
+    return {
+        {description = simplified_chinese and "关闭" or traditional_chinese and "關閉"
+            or russian and "Отключено" or "Disabled", data = false},
+        {description = simplified_chinese and "开启" or traditional_chinese and "開啟"
+            or russian and "Включено" or "Enabled", data = true},
+    }
+end
+
 configuration_options = {
     {
         name = "command_wheel_extra_key",
@@ -37,7 +46,7 @@ configuration_options = {
             or russian and "Доп. клавиша колеса команд" or "Additional Command Wheel Key",
         hover = simplified_chinese and "保留原来的 Alt+字母快捷键。" or traditional_chinese and "保留原來的 Alt+字母快捷鍵。"
             or russian and "Сочетание Alt+буква продолжает работать." or "The existing Alt+letter shortcut still works.",
-        options = ExtraKeyOptions(), default = "F5",
+        options = ExtraKeyOptions(), default = "DISABLED",
     },
     {
         name = "companion_panel_extra_key",
@@ -45,7 +54,27 @@ configuration_options = {
             or russian and "Доп. клавиша панели спутника" or "Additional Companion Panel Key",
         hover = simplified_chinese and "保留 Alt+鼠标右键；优先打开鼠标下伙伴的面板。" or traditional_chinese and "保留 Alt+滑鼠右鍵；優先開啟滑鼠下夥伴的面板。"
             or russian and "Alt+ПКМ также работает. Приоритет у спутника под курсором." or "Alt+right-click still works. Prefers the companion under the cursor.",
-        options = ExtraKeyOptions(), default = "F6",
+        options = ExtraKeyOptions(), default = "DISABLED",
+    },
+    {
+        name = "companion_panel_ui_button",
+        label = simplified_chinese and "伙伴背包面板按钮" or traditional_chinese and "夥伴背包面板按鈕"
+            or russian and "Кнопка инвентаря спутника" or "Companion Inventory Button",
+        hover = simplified_chinese and "在屏幕顶部居中显示可点击或触摸的伙伴面板按钮。"
+            or traditional_chinese and "在螢幕頂部置中顯示可點擊或觸摸的夥伴面板按鈕。"
+            or russian and "Показывает вверху по центру экрана кнопку панели спутника для мыши и касаний."
+            or "Show a companion panel button at the top center for mouse or touch input.",
+        options = UIButtonOptions(), default = false,
+    },
+    {
+        name = "command_wheel_ui_button",
+        label = simplified_chinese and "指令轮盘按钮" or traditional_chinese and "指令輪盤按鈕"
+            or russian and "Кнопка колеса команд" or "Command Wheel Button",
+        hover = simplified_chinese and "在屏幕顶部居中显示可点击或触摸的指令轮盘按钮。"
+            or traditional_chinese and "在螢幕頂部置中顯示可點擊或觸摸的指令輪盤按鈕。"
+            or russian and "Показывает вверху по центру экрана кнопку колеса команд для мыши и касаний."
+            or "Show a command wheel button at the top center for mouse or touch input.",
+        options = UIButtonOptions(), default = false,
     },
     {
         name = "language",

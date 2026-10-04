@@ -9,6 +9,16 @@ local M = {}
 local RestoreCompanion
 local RestoreActiveSession
 local Characters = require("my_friend_characters")
+local WX78 = require("my_friend_wx78")
+
+local function DefaultSkin(prefab)
+    -- Vanilla characters have a registered prefab skin table and accept the
+    -- explicit <prefab>_none identifier. Mod characters may not, so preserve
+    -- the old nil behaviour for them.
+    if type(prefab) ~= "string" or Characters.IsModCharacter(prefab) then return nil end
+    return (PREFAB_SKINS == nil or PREFAB_SKINS[prefab] ~= nil)
+        and prefab .. "_none" or nil
+end
 
 local function PlayerOwnsCharacter(player, prefab)
     if player == nil or type(prefab) ~= "string" then return false end
@@ -19,11 +29,12 @@ local function PlayerOwnsCharacter(player, prefab)
 end
 
 local function SafeSkinForPlayer(player, prefab, skin)
+    local default = DefaultSkin(prefab)
     if type(skin) ~= "string" or skin == "" or skin == prefab
-        or skin == prefab .. "_none" then return nil end
+        or skin == prefab .. "_none" then return default end
     local owned = _G.MyFriendSkinNames ~= nil
         and _G.MyFriendSkinNames[player.userid] or nil
-    return owned ~= nil and owned[skin] == true and skin or nil
+    return owned ~= nil and owned[skin] == true and skin or default
 end
 
 local function SafeClothingForPlayer(player, clothing)
@@ -47,6 +58,38 @@ local function Sessions()
     if world == nil then return nil end
     world._my_friend_possessions = world._my_friend_possessions or {}
     return world._my_friend_possessions
+end
+
+function M.HasSessions()
+    return next(Sessions() or {}) ~= nil
+end
+
+function M.SessionOwner(friend)
+    if friend == nil then return end
+    for userid, sess in pairs(Sessions() or {}) do
+        if sess.temporary_companion == friend or sess.parked_friend == friend then
+            return userid
+        end
+    end
+end
+
+local function IsLiving(inst)
+    return inst ~= nil and inst:IsValid() and not inst._despawning
+        and not inst.is_snapshot_user_session
+        and not inst:HasTag("playerghost") and not inst:HasTag("corpse")
+        and inst.components ~= nil and inst.components.health ~= nil
+        and not inst.components.health:IsDead()
+end
+
+local function CanStartSwap(player, prefab, trusted)
+    local sw = player ~= nil and player.components ~= nil
+        and player.components.seamlessplayerswapper or nil
+    return IsLiving(player) and player.userid ~= nil and player.userid ~= ""
+        and player.components.skinner ~= nil and player.components.inventory ~= nil
+        and sw ~= nil and not sw._my_friend_swap_in_progress
+        and type(sw._StartSwap) == "function"
+        and (prefab == nil or Characters.IsCharacter(prefab)
+            and (trusted or PlayerOwnsCharacter(player, prefab)))
 end
 
 local function ClearInventory(inv)
@@ -93,7 +136,9 @@ local function DetachCompanionPets(inst)
         if pet ~= nil and pet:IsValid() then
             pets[#pets + 1] = pet
             leash:DetachPet(pet)
-            pet.persists = true
+            -- The session owns the saved pet record during the handover.
+            -- Saving it independently too would duplicate it after a reload.
+            pet.persists = false
             if inst.components.leader ~= nil and inst.components.leader:IsFollower(pet) then
                 inst.components.leader:RemoveFollower(pet)
             end
@@ -128,6 +173,8 @@ end
 local function SaveMeters(inst)
     local c = inst ~= nil and inst.components or nil
     return {
+        ghost = inst ~= nil and (inst:HasTag("playerghost")
+            or c ~= nil and c.health ~= nil and c.health:IsDead()) or nil,
         health = c ~= nil and c.health ~= nil and c.health:GetPercent() or nil,
         hunger = c ~= nil and c.hunger ~= nil and c.hunger:GetPercent() or nil,
         sanity = c ~= nil and c.sanity ~= nil and c.sanity:GetPercent() or nil,
@@ -141,7 +188,10 @@ end
 
 local function LoadMeters(inst, data)
     if inst == nil or data == nil or inst.components == nil then return end
-    if data.health ~= nil and inst.components.health ~= nil then
+    if data.ghost and not inst:HasTag("playerghost") then
+        inst:PushEvent("makeplayerghost", {loading = true})
+    end
+    if not data.ghost and data.health ~= nil and inst.components.health ~= nil then
         inst.components.health:SetPercent(data.health)
     end
     if data.hunger ~= nil and inst.components.hunger ~= nil then
@@ -167,6 +217,18 @@ end
 local SaveSkillTree = require("my_friend_skills").Save
 local ApplySkillTree = require("my_friend_skills").Apply
 
+local function LoadBodyTraits(inst, body, skill_data)
+    if body ~= nil and body.wx78 ~= nil and inst.prefab == "wx78" then
+        LoadMeters(inst, body.meters)
+        if body.wx78.sockets ~= nil then WX78.TakeSockets(inst) end
+        ApplySkillTree(inst, skill_data or body.skill_data)
+        WX78.Load(inst, body.wx78, function() LoadMeters(inst, body.meters) end)
+    else
+        LoadMeters(inst, body ~= nil and body.meters or nil)
+        ApplySkillTree(inst, skill_data or body ~= nil and body.skill_data or nil)
+    end
+end
+
 local function SaveSkin(inst)
     local skinner = inst.components.skinner
     if skinner == nil then return end
@@ -188,19 +250,82 @@ local function LoadAffinity(inst, data)
     end
 end
 
+-- Only serializable memory, never live entity references. The base module
+-- includes manual homes, automatic sites and temporary waiting memory.
+local function CaptureCompanionState(sess, friend)
+    if friend == nil or not friend:IsValid() then return end
+    local memory = {}
+    require("my_friend_base_ai").OnSave(friend, memory)
+    sess.friend_memory = deepcopy(memory)
+    sess.friend_home = sess.friend_memory.my_friend_home -- old-save compatibility
+    sess.friend_shard_homes = deepcopy(friend._my_friend_shard_homes)
+    sess.friend_switch_used = friend._my_friend_switch_used
+    sess.restore_affinity = deepcopy(SaveAffinity(friend))
+    local affinity = friend.components.my_friend_affinity
+    sess.friend_staying = affinity ~= nil and affinity.staying == true or false
+    local follower = friend.components.follower
+    local leader = follower ~= nil and follower:GetLeader() or nil
+    sess.friend_leader_userid = leader ~= nil and leader:IsValid() and leader.userid or nil
+    sess.was_following = sess.friend_leader_userid ~= nil
+        and sess.friend_leader_userid == sess.userid
+    sess.companion_custom_name = friend._my_friend_custom_name
+    sess.companion_name = friend:GetDisplayName()
+end
+
+local function CaptureTemporary(sess)
+    local friend = sess.temporary_companion
+    if friend == nil or not friend:IsValid() then return end
+    CaptureCompanionState(sess, friend)
+    local x, _, z = friend.Transform:GetWorldPosition()
+    sess.player_position = {x = x, z = z}
+    sess.player_prefab = friend.prefab
+    sess.temporary_companion_id = friend._my_friend_id
+    sess.player_skin_data = SaveSkin(friend)
+    sess.player_body = {
+        inv = CaptureInventory(friend), meters = SaveMeters(friend),
+        skill_data = SaveSkillTree(friend), custom_name = friend._my_friend_custom_name,
+        wx78 = WX78.Save(friend),
+    }
+    sess.companion_pet_data = friend.components.petleash ~= nil
+        and friend.components.petleash:OnSave() or nil
+end
+
+local function CopySession(sess)
+    local copy = {}
+    for key, value in pairs(sess) do
+        if key ~= "temporary_companion" and key ~= "restored_companion"
+            and key ~= "companion_pets" and key ~= "_despawn_task"
+            and key ~= "_restore_pending" and key ~= "_needs_restore"
+            and key ~= "_from_save"
+            and key ~= "parked_friend" then
+            copy[key] = value
+        end
+    end
+    if sess.phase ~= nil and sess.phase ~= "reload_enter" then
+        copy.active_body = sess.release_body or sess.companion_body
+        copy.active_prefab = sess.companion_prefab
+        copy.active_position = sess.release_position or sess.companion_position
+        copy.active_skin_data = sess.companion_skin_data
+    end
+    copy.phase = nil
+    return copy
+end
+
 local function StartSwap(player, prefab, skin, trusted)
-    local sw = player ~= nil and player.components ~= nil
-        and player.components.seamlessplayerswapper or nil
-    if sw == nil or sw._my_friend_swap_in_progress
-        or type(sw._StartSwap) ~= "function" then return false end
-    if prefab ~= nil and not Characters.IsCharacter(prefab) then return false end
-    if player.userid == nil or player.userid == "" then return false end
-    if not trusted and prefab ~= nil and not PlayerOwnsCharacter(player, prefab) then return false end
+    if not CanStartSwap(player, prefab, trusted) then return false end
+    local sw = player.components.seamlessplayerswapper
+    local old_main, old_swap = deepcopy(sw.main_data), deepcopy(sw.swap_data)
     sw._my_friend_swap_in_progress = true
     if prefab ~= nil then
         sw.swap_data = sw.swap_data or {}
+        -- SeamlessPlayerSwapper treats nil as "reuse whatever the current
+        -- body reports". That can make an unowned paid character render with
+        -- the previous body's default (often Wilson) for the first swap.
+        -- Always send an explicit target-character default when no owned skin
+        -- is available.
+        local target_skin = SafeSkinForPlayer(player, prefab, skin)
         sw.swap_data[prefab] = {
-            skin_base = SafeSkinForPlayer(player, prefab, skin),
+            skin_base = target_skin or DefaultSkin(prefab),
         }
     end
     -- Finish a spawn fade while its controller still exists. Native swapping
@@ -210,11 +335,18 @@ local function StartSwap(player, prefab, skin, trusted)
         and tween.t_colour_g == 1 and tween.t_colour_b == 1 then
         tween:EndTween()
     end
-    local ok = _G.pcall(function()
+    -- Native player reroll ejects socketed implants. Their body snapshot
+    -- already owns the records, so remove them before that callback can drop
+    -- a second copy into the world.
+    local sockets = WX78.TakeSockets(player)
+    local ok, err = _G.pcall(function()
         sw:_StartSwap(prefab)
     end)
     if not ok then
+        print("[MyFriends] Body exchange request failed: " .. tostring(err))
+        sw.main_data, sw.swap_data = old_main, old_swap
         sw._my_friend_swap_in_progress = nil
+        WX78.LoadSockets(player, sockets)
         return false
     end
     return true
@@ -230,17 +362,28 @@ local function FindOnlinePlayer(userid, excluded)
     if userid == nil then return nil end
     for _, player in ipairs(_G.AllPlayers or {}) do
         if player ~= nil and player ~= excluded and player:IsValid()
-            and not player._despawning and player.userid == userid then
+            and not player._despawning and not player.is_snapshot_user_session
+            and not player:HasTag("my_friend") and player.userid == userid then
             return player
         end
     end
     return nil
 end
 
+local function RestoreLeader(friend, sess, player)
+    if friend == nil or not friend:IsValid() or sess.friend_staying then return end
+    local leader = sess.was_following and player
+        or FindOnlinePlayer(sess.friend_leader_userid)
+    if leader ~= nil and leader:IsValid() and friend.components.follower ~= nil then
+        friend.components.follower:SetLeader(leader)
+    end
+end
+
 local function FindPossessingPlayer(userid)
     if userid == nil then return nil end
     for _, player in ipairs(_G.AllPlayers or {}) do
         if player ~= nil and player:IsValid() and not player._despawning
+            and not player.is_snapshot_user_session
             and player.userid == userid and player:HasTag("my_friend_possessing") then
             return player
         end
@@ -258,6 +401,7 @@ local function CaptureActiveSession(sess, player)
         inv = CaptureInventory(player),
         meters = SaveMeters(player),
         skill_data = SaveSkillTree(player),
+        wx78 = WX78.Save(player),
     }
     sess.active_position = {x = x, z = z}
     sess.active_prefab = player.prefab
@@ -272,8 +416,19 @@ end
 -- A seamless character change replaces the player entity.  Keep the
 -- possession marker and the parked companion attached to the replacement so
 -- the center wheel can release or continue the same session.
+local function UseBodySpeech(player)
+    local talker = player.components ~= nil and player.components.talker or nil
+    if talker ~= nil and Characters.IsCharacter(player.prefab) then
+        -- Native swapping keeps the original character's dialogue for Wonkey.
+        -- A full body exchange needs the new character's exclusive lines;
+        -- the old table contains only_used_by_* placeholders for those skills.
+        talker.speechproxy = nil
+    end
+end
+
 local function MarkPossessedPlayer(player, sess)
     if player == nil or not player:IsValid() or sess == nil then return end
+    UseBodySpeech(player)
     player:AddTag("my_friend_possessing")
     player:AddTag("my_friend_possessed")
     player._my_friend_id = sess.companion_id
@@ -285,11 +440,7 @@ local function MarkPossessedPlayer(player, sess)
         player.components.named:SetName(sess.companion_name)
     end
     require("my_friend_wortox").RefreshLinkedHearts(player)
-    if sess.temporary_companion ~= nil and sess.temporary_companion:IsValid()
-        and sess.was_following and sess.temporary_companion.components ~= nil
-        and sess.temporary_companion.components.follower ~= nil then
-        sess.temporary_companion.components.follower:SetLeader(player)
-    end
+    RestoreLeader(sess.temporary_companion, sess, player)
 end
 
 function M.IsPossessing(player)
@@ -302,11 +453,18 @@ end
 
 function M.Rebind(player)
     local sess = SessionFor(player)
-    if sess == nil or player == nil or not player:IsValid() then return false end
-    if sess.portal_reroll and sess.phase == nil and not player._despawning then
+    if sess == nil or player == nil or not player:IsValid()
+        or player._despawning or player.is_snapshot_user_session then return false end
+    if sess.phase == nil then CaptureTemporary(sess) end
+    if (sess.portal_reroll or sess.player_migrated) and sess.phase == nil and not player._despawning then
+        -- A player returning alone from another shard brings the current body
+        -- and inventory in their native save. Do not apply the departure copy.
+        sess.active_body, sess.active_position = nil, nil
+        sess.active_prefab, sess.active_skin_data = nil, nil
+        sess._needs_restore = nil
         sess.companion_prefab = player.prefab
         sess.companion_skin_data = SaveSkin(player)
-        sess.portal_reroll = nil
+        sess.portal_reroll, sess.player_migrated = nil, nil
     end
     if sess.phase ~= "enter" and sess.phase ~= "exit" then
         MarkPossessedPlayer(player, sess)
@@ -327,38 +485,45 @@ function M.GetCommandTarget(player)
     return target ~= nil and target:IsValid() and target or nil
 end
 
+-- Character changes can be requested for the autonomous body while the
+-- player is controlling the companion.  The farewell code removes that body
+-- and creates its replacement, so keep the possession session pointed at the
+-- replacement.  Otherwise Release() cannot remove it and creates a second
+-- companion from the controlled body.
+function M.ReplaceTemporaryCompanion(old, replacement)
+    if old == nil or replacement == nil or not replacement:IsValid() then return false end
+    for _, sess in pairs(Sessions() or {}) do
+        if sess ~= nil and sess.temporary_companion == old then
+            sess.temporary_companion = replacement
+            -- Possession owns this body until Release() completes.  It must
+            -- not be persisted as an independent main companion.
+            replacement.persists = false
+            CaptureTemporary(sess)
+            return true
+        end
+    end
+    return false
+end
+
 function M.SaveWorld(world, data)
     local sessions = world ~= nil and world._my_friend_possessions or nil
     if data == nil then return end
     local saved = {}
     for userid, sess in pairs(sessions or {}) do
         CaptureActiveSession(sess, FindPossessingPlayer(userid))
-        local friend = sess.temporary_companion
-        if friend ~= nil and friend:IsValid() then
-            sess.player_skin_data = SaveSkin(friend)
-            sess.player_body.inv = CaptureInventory(friend)
-            sess.player_body.meters = SaveMeters(friend)
-            sess.player_body.skill_data = SaveSkillTree(friend)
-            sess.companion_pet_data = friend.components.petleash ~= nil
-                and friend.components.petleash:OnSave() or nil
-        end
-        local copy = {}
-        for key, value in pairs(sess) do
-            if key ~= "temporary_companion" and key ~= "restored_companion"
-                and key ~= "companion_pets" and key ~= "_despawn_task"
-                and key ~= "_restore_pending" and key ~= "_needs_restore"
-                and key ~= "parked_friend" then
-                copy[key] = value
-            end
-        end
-        saved[userid] = copy
+        CaptureTemporary(sess)
+        -- A save can land inside the native asynchronous handover. Persist
+        -- both bodies as a recoverable active session, never a stranded phase.
+        saved[userid] = CopySession(sess)
     end
     data.my_friend_possessions = saved
 end
 
 function M.LoadWorld(world, data)
     world._my_friend_possessions = data ~= nil and data.my_friend_possessions or {}
-    for _, sess in pairs(world._my_friend_possessions) do
+    for userid, sess in pairs(world._my_friend_possessions) do
+        sess.userid = userid
+        sess._from_save = true
         sess._needs_restore = sess.active_body ~= nil or nil
     end
 end
@@ -375,8 +540,81 @@ function M.OnCharacterReroll(player)
     sess.friend_staying = true
     local friend = sess.temporary_companion
     if friend ~= nil and friend:IsValid() then
-        sess.friend_home = friend._my_friend_home
+        CaptureTemporary(sess)
     end
+end
+
+-- Follow the travelling AI body through the player's existing migration
+-- component. Leaving its session on the source shard would later recreate a
+-- duplicate there and leave the destination unable to release the exchange.
+function M.CaptureMigration(player, friend)
+    local sess = SessionFor(player)
+    if sess == nil or sess.phase ~= nil or sess.temporary_companion ~= friend then return end
+    CaptureActiveSession(sess, player)
+    CaptureTemporary(sess)
+    local saved = deepcopy(CopySession(sess))
+    Sessions()[player.userid] = nil
+    return saved
+end
+
+function M.RestoreMigration(player, saved, friend)
+    if saved == nil or player == nil or not player:IsValid()
+        or saved.userid ~= player.userid or friend == nil or not friend:IsValid()
+        or (saved.temporary_companion_id or saved.companion_id) ~= friend._my_friend_id then return false end
+    local sessions = Sessions()
+    if sessions == nil or next(sessions) ~= nil and sessions[player.userid] == nil then return false end
+    saved.phase, saved._needs_restore, saved._restore_pending = nil, nil, nil
+    saved.active_body, saved.active_position = nil, nil
+    saved.active_prefab, saved.active_skin_data = nil, nil
+    saved.temporary_companion = friend
+    sessions[player.userid] = saved
+    friend.persists = false
+    CaptureTemporary(saved) -- use the destination shard's base memory
+    MarkPossessedPlayer(player, saved)
+    return true
+end
+
+local function RestoreTemporary(sess, player)
+    local friend = sess.temporary_companion
+    if friend ~= nil and friend:IsValid() then
+        RestoreLeader(friend, sess, player)
+        return friend
+    end
+    local point = sess.player_position or sess.position or {x = 0, z = 0}
+    friend = RestoreCompanion(sess, sess.player_body, point.x, point.z, nil, true)
+    sess.temporary_companion = friend
+    if friend ~= nil then
+        friend.persists = false
+        RestoreCompanionPets(friend, sess)
+        RestoreLeader(friend, sess, player)
+    end
+    return friend
+end
+
+local function AfterSwap(sess, player, callback)
+    -- An entity-owned task is cancelled if the player disconnects during the
+    -- 0.1s handover. Use the world so session locks always get cleaned up.
+    local world = World()
+    world:DoTaskInTime(.1, function()
+        if Sessions()[sess.userid or player.userid] ~= sess then return end
+        if not player:IsValid() or player._despawning then
+            local saved = CopySession(sess)
+            sess.active_body = saved.active_body
+            sess.active_position = saved.active_position
+            sess.active_prefab = saved.active_prefab
+            sess.active_skin_data = saved.active_skin_data
+            sess.phase, sess._restore_pending = nil, nil
+            sess._needs_restore = true
+            RestoreTemporary(sess)
+            if sess.parked_friend ~= nil and sess.parked_friend:IsValid() then
+                sess.parked_friend:Remove()
+            end
+            sess.parked_friend = nil
+            world._my_friend_possession_active = nil
+            return
+        end
+        callback(player)
+    end)
 end
 
 local function RecoverSavedSessions(world)
@@ -384,12 +622,15 @@ local function RecoverSavedSessions(world)
     if sessions == nil then return end
     for userid, sess in pairs(sessions) do
         local player = FindOnlinePlayer(userid)
-        if sess ~= nil and sess._needs_restore and sess.active_body ~= nil and player ~= nil then
+        if sess ~= nil and sess._from_save and (sess.active_body ~= nil or sess.portal_reroll) then
+            RestoreTemporary(sess, player)
             -- The session was saved while the player was controlling the
             -- companion. Keep that body and its inventory instead of
             -- unwinding the possession back to the original character.
-            player:DoStaticTaskInTime(1, function(inst) M.Recover(inst) end)
-        elseif sess ~= nil and (sess.companion_record ~= nil or sess.record ~= nil
+            if player ~= nil and sess._needs_restore then
+                player:DoStaticTaskInTime(1, function(inst) M.Recover(inst) end)
+            end
+        elseif sess ~= nil and sess._from_save and (sess.companion_record ~= nil or sess.record ~= nil
             or sess.companion_prefab ~= nil) and sess.active_body == nil then
             -- Compatibility for saves made before active possession state
             -- was persisted: safely return the parked companion once.
@@ -405,6 +646,7 @@ local function RecoverSavedSessions(world)
                 end)
             end
         end
+        if sess ~= nil then sess._from_save = nil end
     end
 end
 
@@ -426,21 +668,23 @@ RestoreCompanion = function(sess, body, x, z, record, is_player_body)
         friend = _G.SpawnPrefab(sess.companion_prefab)
     end
     if friend == nil then return nil end
-    if sess.companion_id ~= nil then
-        friend._my_friend_id = sess.companion_id
+    local friend_id = is_player_body and sess.temporary_companion_id or sess.companion_id
+    friend_id = friend_id or sess.companion_id
+    if friend_id ~= nil then
+        friend._my_friend_id = friend_id
     end
+    require("my_friend_replication").ApplyDefaultAppearance(friend)
     if friend.Physics ~= nil then
         friend.Physics:Teleport(x, 0, z)
     elseif friend.Transform ~= nil then
         friend.Transform:SetPosition(x, 0, z)
     end
     LoadInventory(friend, body ~= nil and body.inv or nil)
-    LoadMeters(friend, body ~= nil and body.meters or nil)
     if M.ConfigureCompanion ~= nil then
         friend._my_friend_custom_name = body ~= nil and body.custom_name or nil
         M.ConfigureCompanion(friend)
     end
-    ApplySkillTree(friend, body ~= nil and body.skill_data or nil)
+    LoadBodyTraits(friend, body)
     LoadAffinity(friend, sess.restore_affinity or sess.companion_affinity)
     if is_player_body and sess.player_skin_data ~= nil then
         require("my_friend_replication").RestoreSkin(friend, {
@@ -453,13 +697,19 @@ RestoreCompanion = function(sess, body, x, z, record, is_player_body)
     end
     local world = World()
     if world ~= nil then world._my_friend = friend end
-    if sess.friend_home ~= nil then
+    if sess.friend_memory ~= nil then
+        require("my_friend_base_ai").OnLoad(friend, deepcopy(sess.friend_memory))
+    elseif sess.friend_home ~= nil then
         friend._my_friend_home = {
             x = sess.friend_home.x,
             z = sess.friend_home.z,
             mode = sess.friend_home.mode,
         }
         require("my_friend_home").Apply(friend)
+    end
+    if sess.friend_memory ~= nil or sess.friend_shard_homes ~= nil then
+        friend._my_friend_shard_homes = deepcopy(sess.friend_shard_homes)
+        friend._my_friend_switch_used = sess.friend_switch_used
     end
     if sess.friend_staying ~= nil then
         local affinity = friend.components ~= nil and friend.components.my_friend_affinity or nil
@@ -482,8 +732,7 @@ local function FinishRestoredSession(sess, player)
     local world = World()
     local body = sess.active_body
     LoadInventory(player, body.inv)
-    LoadMeters(player, body.meters)
-    ApplySkillTree(player, body.skill_data)
+    LoadBodyTraits(player, body)
     if sess.active_position ~= nil and player.Physics ~= nil then
         player.Physics:Teleport(sess.active_position.x, 0, sess.active_position.z)
     end
@@ -495,23 +744,10 @@ local function FinishRestoredSession(sess, player)
     MarkPossessedPlayer(player, sess)
     sess._restore_pending = true
     if world ~= nil then world._my_friend_possession_active = true end
-    player:DoTaskInTime(.1, function(inst)
+    AfterSwap(sess, player, function(inst)
         if not inst:IsValid() or SessionFor(inst) ~= sess then return end
+        RestoreTemporary(sess, inst)
         sess.phase = nil
-        local currentx, _, currentz = inst.Transform:GetWorldPosition()
-        local px = sess.player_position ~= nil and sess.player_position.x or currentx
-        local pz = sess.player_position ~= nil and sess.player_position.z or currentz
-        sess.temporary_companion = RestoreCompanion(sess, sess.player_body,
-            px, pz,
-            nil, true)
-        if sess.temporary_companion ~= nil then
-            RestoreCompanionPets(sess.temporary_companion, sess)
-            sess.temporary_companion.persists = false
-            if sess.was_following and sess.temporary_companion.components ~= nil
-                and sess.temporary_companion.components.follower ~= nil then
-                sess.temporary_companion.components.follower:SetLeader(inst)
-            end
-        end
         sess.active_body = nil
         sess.active_position = nil
         sess.active_prefab = nil
@@ -544,7 +780,7 @@ RestoreActiveSession = function(sess, player)
 end
 
 local function FinishSwap(_, player)
-    if player == nil or player.userid == nil then return end
+    if player == nil or not player:IsValid() or player.userid == nil then return end
     local sess = SessionFor(player)
     if sess == nil then return end
     local sw = player.components ~= nil and player.components.seamlessplayerswapper or nil
@@ -555,8 +791,7 @@ local function FinishSwap(_, player)
     elseif sess.phase == "enter" then
         sess.phase = "enter_ready"
         LoadInventory(player, sess.companion_body ~= nil and sess.companion_body.inv or nil)
-        LoadMeters(player, sess.companion_body ~= nil and sess.companion_body.meters or nil)
-        ApplySkillTree(player, sess.companion_skill_data)
+        LoadBodyTraits(player, sess.companion_body, sess.companion_skill_data)
         if sess.companion_skin_data ~= nil then
             require("my_friend_replication").RestoreSkin(player, {
                 my_friend_skin = sess.companion_skin_data,
@@ -565,37 +800,42 @@ local function FinishSwap(_, player)
         MarkPossessedPlayer(player, sess)
         local world = World()
         if world ~= nil then world._my_friend_possession_active = true end
-        player:DoTaskInTime(.1, function(inst)
+        AfterSwap(sess, player, function(inst)
             if not inst:IsValid() or SessionFor(inst) ~= sess then return end
-            sess.phase = nil
-            sess.temporary_companion = RestoreCompanion(sess, sess.player_body,
-                sess.player_position.x, sess.player_position.z, nil, true)
+            RestoreTemporary(sess, inst)
             if sess.temporary_companion ~= nil then
-                RestoreCompanionPets(sess.temporary_companion, sess)
                 require("my_friend_dialogue").RandomReply(sess.temporary_companion, "body_exchanged")
-                sess.temporary_companion.persists = false
-                if sess.was_following and sess.temporary_companion.components ~= nil
-                    and sess.temporary_companion.components.follower ~= nil then
-                    sess.temporary_companion.components.follower:SetLeader(inst)
-                end
             end
             if sess.parked_friend ~= nil and sess.parked_friend:IsValid() then
                 sess.parked_friend.persists = false
                 sess.parked_friend:Remove()
                 sess.parked_friend = nil
             end
+            sess.phase = nil
             if world ~= nil then
                 world._my_friend_possession_active = nil
             end
         end)
     elseif sess.phase == "exit" then
         sess.phase = "exit_ready"
-        player:DoTaskInTime(.1, function(inst)
+        UseBodySpeech(player)
+        AfterSwap(sess, player, function(inst)
             if not inst:IsValid() or SessionFor(inst) ~= sess then return end
             LoadInventory(inst, sess.player_body ~= nil and sess.player_body.inv or nil)
-            LoadMeters(inst, sess.player_body ~= nil and sess.player_body.meters or nil)
-            require("my_friend_replication").RestoreSkin(inst, {my_friend_skin = sess.player_skin_data})
-            ApplySkillTree(inst, sess.player_body ~= nil and sess.player_body.skill_data or nil)
+            local body = sess.player_body
+            local robot = body ~= nil and body.wx78 ~= nil and inst.prefab == "wx78"
+            if not robot then LoadMeters(inst, body ~= nil and body.meters or nil) end
+            local skin = sess.player_skin_data
+            require("my_friend_replication").RestoreSkin(inst, {my_friend_skin = {
+                owner = inst.userid,
+                skin_name = SafeSkinForPlayer(inst, inst.prefab, skin ~= nil and skin.skin_name),
+                clothing = SafeClothingForPlayer(inst, skin ~= nil and skin.clothing),
+            }})
+            if robot then
+                LoadBodyTraits(inst, body)
+            else
+                ApplySkillTree(inst, body ~= nil and body.skill_data or nil)
+            end
             if sess.release_position ~= nil and inst.Physics ~= nil then
                 inst.Physics:Teleport(sess.release_position.x, 0, sess.release_position.z)
             end
@@ -613,11 +853,7 @@ local function FinishSwap(_, player)
             if sess.restored_companion ~= nil then
                 require("my_friend_dialogue").RandomReply(sess.restored_companion, "body_exchanged")
             end
-            if sess.restored_companion ~= nil and sess.restored_companion:IsValid()
-                and sess.was_following and sess.restored_companion.components ~= nil
-                and sess.restored_companion.components.follower ~= nil then
-                sess.restored_companion.components.follower:SetLeader(inst)
-            end
+            RestoreLeader(sess.restored_companion, sess, inst)
             inst:RemoveTag("my_friend_possessing")
             inst:RemoveTag("my_friend_possessed")
             inst._my_friend_id = nil
@@ -627,6 +863,7 @@ local function FinishSwap(_, player)
             inst._my_friend_possessed_prefab = nil
             local sessions = Sessions()
             if sessions ~= nil then sessions[inst.userid] = nil end
+            if World() ~= nil then World()._my_friend_possession_active = nil end
         end)
     else
         -- A normal character change while possessing creates another player
@@ -636,67 +873,56 @@ local function FinishSwap(_, player)
     end
 end
 
+function M.OnPlayerDespawn(player)
+    local world = World()
+    if world == nil or world._my_friend_loading or player == nil
+        or not player:IsValid() or player.is_snapshot_user_session then return end
+    local sess = SessionFor(player)
+    if sess == nil or sess.phase ~= nil then return end
+    CaptureTemporary(sess)
+    if not sess.portal_reroll then
+        CaptureActiveSession(sess, player)
+        sess._needs_restore = sess.active_body ~= nil or nil
+    end
+    sess.player_migrated = player._my_friend_migrating or sess.player_migrated
+    -- Keep the autonomous body and its current memory. Rebuilding from the
+    -- entry snapshot here duplicated items already saved in the user session
+    -- and discarded everything the companion changed while being controlled.
+end
+
 function M.Init(world)
     if world == nil or not world.ismastersim or world._my_friend_possess_init then return end
     world._my_friend_possess_init = true
     world._my_friend_possessions = world._my_friend_possessions or {}
     world:ListenForEvent("ms_seamlesscharacterspawned", FinishSwap)
     world:ListenForEvent("ms_playerdespawn", function(_, player)
-        local sess = SessionFor(player)
-        if sess == nil or sess._despawn_task ~= nil then return end
-        -- Character changes can briefly despawn the old player entity before
-        -- the replacement is present.  Defer cleanup and keep the session if
-        -- the same userid appears again.
-        sess._despawn_task = world:DoTaskInTime(.5, function()
-            sess._despawn_task = nil
-            if Sessions() == nil or Sessions()[player.userid] ~= sess then return end
-            local replacement = FindOnlinePlayer(player.userid, player)
-            if replacement ~= nil then
-                MarkPossessedPlayer(replacement, sess)
-                return
-            end
-            local x, z = sess.position.x, sess.position.z
-            if player ~= nil and player:IsValid() and player.Transform ~= nil then
-                local px, _, pz = player.Transform:GetWorldPosition()
-                x, z = px, pz
-            end
-            if player ~= nil and player:IsValid() then
-                sess.companion_skill_data = SaveSkillTree(player)
-            end
-            local body = (player ~= nil and player:IsValid())
-                and {inv = SaveInventory(player),
-                    meters = SaveMeters(player),
-                    custom_name = sess.companion_custom_name,
-                    skill_data = SaveSkillTree(player)}
-                or sess.companion_body
-            if sess.temporary_companion ~= nil and sess.temporary_companion:IsValid() then
-                sess.temporary_companion.persists = false
-                sess.temporary_companion:Remove()
-            end
-            RestoreCompanion(sess, body, x, z, sess.companion_record, false)
-            local sessions = Sessions()
-            if sessions ~= nil then sessions[player.userid] = nil end
-        end)
+        M.OnPlayerDespawn(player)
     end)
     world:DoTaskInTime(1, function()
         RecoverSavedSessions(world)
     end)
 end
 
-function M.Possess(player, friend)
-    if player == nil or not player:IsValid() or player.userid == nil
-        or friend == nil or not friend:IsValid() then return false end
-    if M.IsPossessing(player) or player:HasTag("my_friend_possessing") then return false end
-    if player.components == nil or player.components.seamlessplayerswapper == nil
-        or not friend:HasTag("my_friend") or friend:HasTag("playerghost")
-        or friend.components == nil then return false end
-    if not PlayerOwnsCharacter(player, friend.prefab) then return false end
+function M.CanPossess(player, friend)
     local world = World()
-    if world == nil or not world.ismastersim then return false end
+    if world == nil or not world.ismastersim or world._my_friend_loading
+        or world._my_friend_possession_active or M.HasSessions()
+        or not IsLiving(friend) or not friend:HasTag("my_friend")
+        or friend._my_friend_possess_parked or friend._my_friend_departing
+        or friend.components.inventory == nil
+        or not CanStartSwap(player, friend.prefab)
+        or player:HasTag("my_friend_possessing")
+        or not require("my_friend_policy").IsLocalPlayer(player) then return false end
+    local affinity = friend.components.my_friend_affinity
     local follower = friend.components.follower
-    if follower ~= nil and follower:GetLeader() ~= nil and follower:GetLeader() ~= player then
-        return false
-    end
+    return affinity ~= nil and (affinity:Get(player) >= 90
+        or follower ~= nil and follower:GetLeader() == player)
+end
+
+function M.Possess(player, friend)
+    if not M.CanPossess(player, friend) then return false end
+    local world = World()
+    local follower = friend.components.follower
 
     local x, _, z = friend.Transform:GetWorldPosition()
     local px, _, pz = player.Transform:GetWorldPosition()
@@ -706,14 +932,16 @@ function M.Possess(player, friend)
     local clothing = skinner ~= nil and skinner:GetClothing() or nil
     local safe_companion_skin = SafeSkinForPlayer(player, friend.prefab,
         skinner ~= nil and skinner.skin_name or nil)
+    local leash = friend.components.petleash
+    local companion_pet_data = leash ~= nil and leash:OnSave() or nil
     local companion_pets = DetachCompanionPets(friend)
     local sessions = Sessions()
     if sessions == nil then return false end
 
     require("my_friend_commands").Clear(friend)
-    if follower ~= nil then follower:SetLeader(nil) end
 
     local session = {
+        userid = player.userid,
         phase = "enter",
         companion_name = friend:GetDisplayName(),
         companion_custom_name = friend._my_friend_custom_name,
@@ -732,6 +960,7 @@ function M.Possess(player, friend)
             meters = SaveMeters(friend),
             custom_name = friend._my_friend_custom_name,
             skill_data = SaveSkillTree(friend),
+            wx78 = WX78.Save(friend),
         },
         companion_affinity = SaveAffinity(friend),
         player_body = {
@@ -742,6 +971,7 @@ function M.Possess(player, friend)
             -- on that entity instead of leaking the player's name into it.
             custom_name = friend._my_friend_custom_name or friend:GetDisplayName(),
             skill_data = SaveSkillTree(player),
+            wx78 = WX78.Save(player),
         },
         companion_skill_data = SaveSkillTree(friend),
         player_prefab = player.prefab,
@@ -767,9 +997,18 @@ function M.Possess(player, friend)
         player_position = {x = px, z = pz},
         position = {x = x, z = z},
         companion_pets = companion_pets,
+        companion_pet_data = companion_pet_data,
     }
+    CaptureCompanionState(session, friend)
     sessions[player.userid] = session
     world._my_friend_possession_active = true
+    if follower ~= nil then follower:SetLeader(nil) end
+    if friend.StopBrain ~= nil then friend:StopBrain("my_friend_possess") end
+    friend:ClearBufferedAction()
+    if friend.components.locomotor ~= nil then
+        friend.components.locomotor:Clear()
+        friend.components.locomotor:Stop()
+    end
     -- Keep the old body valid until the native replacement event arrives.
     -- Removing it first leaves remote clients with a target they can still
     -- have selected for one or two frames.
@@ -783,20 +1022,21 @@ function M.Possess(player, friend)
     world._my_friend = nil
     if player.Physics ~= nil then player.Physics:Teleport(x, 0, z) end
     if not StartSwap(player, session.companion_prefab, session.companion_skin) then
-        if session.parked_friend ~= nil and session.parked_friend:IsValid() then
-            session.parked_friend.persists = false
-            session.parked_friend:Remove()
-            session.parked_friend = nil
-        end
-        local restored = RestoreCompanion(session, session.companion_body, x, z,
-            session.companion_record, false)
-        AttachCompanionPets(restored, session.companion_pets)
-        if restored ~= nil and session.was_following
-            and restored.components ~= nil and restored.components.follower ~= nil then
-            restored.components.follower:SetLeader(player)
-        end
+        friend._my_friend_possess_parked = nil
+        friend.persists = true
+        if friend.Physics ~= nil then friend.Physics:SetActive(true) end
+        if friend.DynamicShadow ~= nil then friend.DynamicShadow:Enable(true) end
+        if friend.MiniMapEntity ~= nil then friend.MiniMapEntity:SetEnabled(true) end
+        friend:Show()
+        LoadInventory(friend, session.companion_body.inv)
+        LoadMeters(friend, session.companion_body.meters)
+        AttachCompanionPets(friend, session.companion_pets)
+        RestoreLeader(friend, session, player)
+        if friend.RestartBrain ~= nil then friend:RestartBrain("my_friend_possess") end
+        world._my_friend = friend
         LoadInventory(player, session.player_body.inv)
         LoadMeters(player, session.player_body.meters)
+        if player.Physics ~= nil then player.Physics:Teleport(px, 0, pz) end
         world._my_friend_possession_active = nil
         sessions[player.userid] = nil
         return false
@@ -806,42 +1046,20 @@ end
 
 function M.Release(player)
     local sess = SessionFor(player)
-    if sess == nil or sess.phase ~= nil or player == nil or not player:IsValid() then
+    local temporary = sess ~= nil and sess.temporary_companion or nil
+    if sess == nil or sess.phase ~= nil or sess._restore_pending
+        or not IsLiving(temporary) or temporary._my_friend_departing
+        or temporary._my_friend_possess_parked
+        or not CanStartSwap(player, temporary.prefab) then
         return false
     end
+    CaptureTemporary(sess)
     local x, _, z = player.Transform:GetWorldPosition()
     sess.companion_skill_data = SaveSkillTree(player)
     sess.companion_skin_data = SaveSkin(player)
     sess.companion_prefab = player.prefab
     local body = {inv = SaveInventory(player), meters = SaveMeters(player),
-        skill_data = sess.companion_skill_data}
-    local temporary = sess.temporary_companion
-    local affinity = temporary ~= nil and temporary.components ~= nil
-        and temporary.components.my_friend_affinity or nil
-    if affinity ~= nil then
-        sess.restore_affinity = SaveAffinity(temporary)
-        sess.friend_staying = affinity.staying == true
-    end
-    if temporary ~= nil and temporary.components ~= nil
-        and temporary.components.follower ~= nil then
-        sess.was_following = temporary.components.follower:GetLeader() == player
-    end
-    if temporary ~= nil and temporary._my_friend_home ~= nil then
-        sess.friend_home = {
-            x = temporary._my_friend_home.x,
-            z = temporary._my_friend_home.z,
-            mode = temporary._my_friend_home.mode,
-        }
-    end
-    if temporary ~= nil and temporary:IsValid() then
-        sess.player_skin_data = SaveSkin(temporary)
-        sess.player_body.inv = SaveInventory(temporary)
-        sess.player_body.meters = SaveMeters(temporary)
-        sess.player_body.skill_data = SaveSkillTree(temporary)
-        sess.companion_pets = DetachCompanionPets(temporary)
-        temporary.persists = false
-        temporary:Remove()
-    end
+        skill_data = sess.companion_skill_data, wx78 = WX78.Save(player)}
     body.custom_name = sess.companion_custom_name
     sess.release_body = body
     sess.release_position = {x = x, z = z}
@@ -850,16 +1068,28 @@ function M.Release(player)
     -- swapper's main_data with the companion prefab. Restore the original
     -- player's identity before requesting the return swap.
     local sw = player.components ~= nil and player.components.seamlessplayerswapper or nil
+    local previous_main = deepcopy(sw.main_data)
     if sw ~= nil then
         sw.main_data = sw.main_data or {}
         sw.main_data.prefab = sess.player_prefab
-        sw.main_data.skin_base = sess.player_skin_data ~= nil
-            and sess.player_skin_data.skin_name or nil
+        sw.main_data.skin_base = SafeSkinForPlayer(player, sess.player_prefab,
+            sess.player_skin_data ~= nil and sess.player_skin_data.skin_name or nil)
     end
     if not StartSwap(player, nil, nil) then
+        sw.main_data = previous_main
+        LoadInventory(player, body.inv)
         sess.phase = nil
+        sess.release_body, sess.release_position = nil, nil
         return false
     end
+    -- The native request has been accepted. Until this point the AI body,
+    -- inventory and pets remain intact so a failed request is reversible.
+    if World() ~= nil then World()._my_friend_possession_active = true end
+    sess.companion_pets = DetachCompanionPets(temporary)
+    ClearInventory(temporary.components.inventory)
+    temporary.persists = false
+    temporary:Remove()
+    sess.temporary_companion = nil
     return true
 end
 

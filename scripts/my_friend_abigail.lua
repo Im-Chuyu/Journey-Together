@@ -1,4 +1,5 @@
 local M = {}
+local Wendy = require("my_friend_wendy")
 
 -- Abigail belongs to Wendy's ghostlybond. Every entry point is gated on it so
 -- that a companion switched to any other character runs none of this code.
@@ -82,6 +83,9 @@ function M.Update(inst)
     local hp = ghost.components.health
     if hp == nil then return end
     M.ConfigureGhost(inst, ghost)
+    -- Wendy's companion uses the same native Abigail behaviour switch as the
+    -- real player. Manual commands temporarily override this automatic mode.
+    Wendy.Update(inst)
     -- A companion is not an online player. Keep its summoned ghost simulating
     -- outside player range so the native Abigail brain can fly back normally.
     ghost.entity:SetCanSleep(not bond.summoned)
