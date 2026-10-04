@@ -1607,7 +1607,7 @@ AddClassPostConstruct("widgets/controls", function(self)
     local extra_handlers = {}
     local function AddExtraKey(value, callback)
         if type(value) ~= "string" or value == "DISABLED" then return end
-        local code = rawget(_G, "KEY_" .. value)
+        local code = _G.rawget(_G, "KEY_" .. value)
         if code == nil or _G.TheInput == nil then return end
         local held = false
         extra_handlers[#extra_handlers + 1] = _G.TheInput:AddKeyDownHandler(code, function()
