@@ -247,7 +247,7 @@ function MyFriendPanel:GetAffinityScore()
         and friend.components.my_friend_affinity ~= nil then
         return friend.components.my_friend_affinity:Get(self.owner)
     end
-    return self.owner._my_friend_affinity_net ~= nil
+    return self.owner ~= nil and self.owner._my_friend_affinity_net ~= nil
         and self.owner._my_friend_affinity_net:value() or 20
 end
 
@@ -255,34 +255,57 @@ function MyFriendPanel:CanRename()
     local friend = self.friend
     if friend == nil or not friend:IsValid() then return false end
     local affinity = friend.components ~= nil and friend.components.my_friend_affinity or nil
-    if affinity ~= nil then return affinity:CanRename(self.owner) end
+    if affinity ~= nil and affinity.CanRename ~= nil then return affinity:CanRename(self.owner) end
     return friend._my_friend_panel_net ~= nil and ParseFreeRename(friend._my_friend_panel_net:value())
         or self:GetAffinityScore() >= 80
 end
 
 function MyFriendPanel:OpenRenameScreen()
     local friend = self.friend
-    if friend == nil or not friend:IsValid() then return end
+    if friend == nil or not friend:IsValid() or not self:CanRename() then return end
     local InputDialog = require "screens/redux/inputdialog"
     local dialog
-    local submitted = false
-    local function Submit()
-        if submitted then return end
-        submitted = true
-        if friend:IsValid() then
-            SendModRPCToServer(GetModRPC("MyFriends", "Rename"), friend, dialog:GetActualString())
+    local finished = false
+    local function Close()
+        if finished or dialog == nil then return end
+        finished = true
+        if type(dialog.Close) == "function" then
+            dialog:Close()
+        else
+            TheFrontEnd:PopScreen(dialog)
         end
-        dialog:Close()
+    end
+    local function Submit()
+        if finished or dialog == nil then return end
+        local edit = dialog.edit_text
+        local name = ""
+        if edit ~= nil then
+            if type(edit.GetLineEditString) == "function" then
+                name = edit:GetLineEditString()
+            elseif type(edit.GetString) == "function" then
+                name = edit:GetString()
+            end
+        end
+        Close()
+        if friend:IsValid() then
+            SendModRPCToServer(GetModRPC("MyFriends", "Rename"), friend, name)
+        end
     end
     dialog = InputDialog(TextForLanguage("伙伴改名", "Rename Companion"), {
         {text = TextForLanguage("确定", "Confirm"), cb = Submit},
-        {text = TextForLanguage("取消", "Cancel"), cb = function() dialog:Close() end},
-    }, true, true)
-    dialog.edit_text:SetTextLengthLimit(48)
-    dialog.edit_text:EnableWordWrap(false)
-    dialog.edit_text:EnableScrollEditWindow(true)
+        {text = TextForLanguage("取消", "Cancel"), cb = Close},
+    }, true)
+    -- Android input widgets do not all expose the desktop length-limit API.
+    -- The server validates name length regardless of client input support.
+    if type(dialog.edit_text.SetTextLengthLimit) == "function" then
+        dialog.edit_text:SetTextLengthLimit(48)
+    end
     dialog.edit_text.OnTextEntered = Submit
-    dialog:OverrideText(friend:GetDisplayName())
+    if type(dialog.OverrideText) == "function" then
+        dialog:OverrideText(friend:GetDisplayName())
+    else
+        dialog.edit_text:SetString(friend:GetDisplayName())
+    end
     self:HideFriend()
     TheFrontEnd:PushScreen(dialog)
 end

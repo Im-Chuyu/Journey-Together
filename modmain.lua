@@ -1040,12 +1040,15 @@ local function CanPossess(player, friend)
 end
 
 AddModRPCHandler("MyFriends", "Rename", function(player, friend, name)
-    if not CanManage(player, friend) then return end
+    -- Renaming uses its own shared free-use/affinity permission. The input
+    -- dialog may stay open while an independent companion walks away.
+    if not CanManage(player, friend, true, true) then return end
     if require("my_friend_commands").Rename(friend, player, name) then PushPanelData(friend) end
 end)
 
 AddModRPCHandler("MyFriends", "PanelLocked", function(player, friend, kind)
-    if not CanManage(player, friend) or friend.components.my_friend_affinity == nil then return end
+    if not CanManage(player, friend, kind == "rename", kind == "rename")
+        or friend.components.my_friend_affinity == nil then return end
     if kind == "switch" then
         -- Either the free change is spent and this is not the leader, or the
         -- leader simply is not liked enough yet.

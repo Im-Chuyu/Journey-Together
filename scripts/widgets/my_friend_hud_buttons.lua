@@ -20,6 +20,7 @@ local HUDButtons = Class(Widget, function(self, show_panel, show_wheel, toggle_p
     local function Button(hover, callback)
         local button = self:AddChild(ImageButton("images/button_icons.xml", "circle.tex"))
         button:ForceImageSize(64, 64)
+        button:SetScale(1.1)
         button:SetImageNormalColour(.12, .12, .14, .95)
         button:SetImageFocusColour(.3, .25, .12, 1)
         -- Offset only the background; the icon stays at the button centre.
