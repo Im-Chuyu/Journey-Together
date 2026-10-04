@@ -11,7 +11,7 @@ description = simplified_chinese and "在这片永恒大陆，我会与你并肩
     or russian and "На этом вечном континенте я буду путешествовать вместе с тобой."
     or "On this eternal continent, I will travel with you."
 author = "阮秀"
-version = "2.0.7"
+version = "2.0.8"
 forumthread = ""
 api_version = 10
 

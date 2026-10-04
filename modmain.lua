@@ -1564,7 +1564,7 @@ AddClassPostConstruct("widgets/controls", function(self)
         local panel = self.my_friend_panel
         if panel:IsVisible() then panel:HideFriend() return end
         local target = _G.TheInput ~= nil and _G.TheInput:GetWorldEntityUnderMouse() or nil
-        if not IsActualCompanion(target) then target = self.my_friend_command_wheel:FindFriend() end
+        if not IsActualCompanion(target) then target = self.my_friend_command_wheel:FindFriend(true) end
         if IsActualCompanion(target) then
             panel:ShowFriend(target)
             panel:MoveToFront()

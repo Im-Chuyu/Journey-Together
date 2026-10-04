@@ -306,8 +306,10 @@ function MyFriendCommandWheel:CloseCommandPicker()
     self.picker:Hide()
 end
 
-function MyFriendCommandWheel:FindFriend()
-    if self.owner ~= nil and self.owner:IsValid()
+function MyFriendCommandWheel:FindFriend(ai_only)
+    -- The wheel targets the controlled body to release possession. Inventory
+    -- panels instead need the autonomous companion that remains in the world.
+    if not ai_only and self.owner ~= nil and self.owner:IsValid()
         and self.owner:HasTag("my_friend_possessing") then
         return self.owner
     end
