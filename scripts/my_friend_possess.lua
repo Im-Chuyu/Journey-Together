@@ -38,16 +38,23 @@ local function SafeSkinForPlayer(player, prefab, skin)
     return owned ~= nil and owned[skin] == true and skin or default
 end
 
-local function SafeClothingForPlayer(player, clothing)
-    local safe = {}
-    local owned = _G.MyFriendSkinNames ~= nil
-        and _G.MyFriendSkinNames[player.userid] or nil
-    for _, part in ipairs({"body", "hand", "legs", "feet"}) do
-        local value = clothing ~= nil and clothing[part] or nil
-        safe[part] = type(value) == "string" and value ~= ""
-            and owned ~= nil and owned[value] == true and value or ""
+-- Skin data captured from an entity has already passed the server-side
+-- wardrobe validation. Do not require the asynchronous client ownership
+-- report again during a body exchange; it may not have arrived yet after
+-- joining or reopening the wardrobe. Reject only a skin for another prefab.
+local function SkinBelongsToCharacter(prefab, skin)
+    if type(prefab) ~= "string" or type(skin) ~= "string" or skin == "" then return false end
+    if skin == prefab or skin == prefab .. "_none" then return true end
+    local data = type(GetSkinData) == "function" and GetSkinData(skin) or nil
+    if type(data) == "table" and type(data.base_prefab) == "string" then
+        return data.base_prefab == prefab
     end
-    return safe
+    return skin:sub(1, #prefab + 1) == prefab .. "_"
+end
+
+local function SkinForBody(player, prefab, skin)
+    return SkinBelongsToCharacter(prefab, skin)
+        and skin or SafeSkinForPlayer(player, prefab, skin)
 end
 
 local function World()
@@ -201,7 +208,12 @@ end
 local function SaveSkin(inst)
     local skinner = inst.components.skinner
     if skinner == nil then return end
-    return {skin_name = skinner.skin_name, clothing = skinner:GetClothing(),
+    local clothing = skinner:GetClothing()
+    local skin_name = skinner.skin_name
+    if (type(skin_name) ~= "string" or skin_name == "") and clothing ~= nil then
+        skin_name = clothing.base
+    end
+    return {skin_name = skin_name, clothing = clothing,
         skin_mode = skinner.skintype, owner = inst._my_friend_skin_owner or inst.userid}
 end
 
@@ -288,11 +300,9 @@ local function StartSwap(player, prefab, skin, trusted)
     if prefab ~= nil then
         sw.swap_data = sw.swap_data or {}
         -- SeamlessPlayerSwapper treats nil as "reuse whatever the current
-        -- body reports". That can make an unowned paid character render with
-        -- the previous body's default (often Wilson) for the first swap.
-        -- Always send an explicit target-character default when no owned skin
-        -- is available.
-        local target_skin = SafeSkinForPlayer(player, prefab, skin)
+        -- body reports". Always send an explicit target-character skin so a
+        -- body exchange cannot inherit the previous body's default build.
+        local target_skin = SkinForBody(player, prefab, skin)
         sw.swap_data[prefab] = {
             skin_base = target_skin or DefaultSkin(prefab),
         }
@@ -365,7 +375,6 @@ local function CaptureActiveSession(sess, player)
         or sess.phase ~= nil then return end
     if SessionFor(player) ~= sess then return end
     local x, _, z = player.Transform:GetWorldPosition()
-    local skinner = player.components ~= nil and player.components.skinner or nil
     sess.active_body = {
         inv = CaptureInventory(player),
         meters = SaveMeters(player),
@@ -374,12 +383,7 @@ local function CaptureActiveSession(sess, player)
     }
     sess.active_position = {x = x, z = z}
     sess.active_prefab = player.prefab
-    sess.active_skin_data = skinner ~= nil and {
-        owner = player._my_friend_skin_owner or player.userid,
-        skin_name = skinner.skin_name,
-        clothing = skinner:GetClothing(),
-        skin_mode = skinner.skintype,
-    } or nil
+    sess.active_skin_data = SaveSkin(player)
 end
 
 -- A seamless character change replaces the player entity.  Keep the
@@ -797,8 +801,9 @@ local function FinishSwap(_, player)
             local skin = sess.player_skin_data
             require("my_friend_replication").RestoreSkin(inst, {my_friend_skin = {
                 owner = inst.userid,
-                skin_name = SafeSkinForPlayer(inst, inst.prefab, skin ~= nil and skin.skin_name),
-                clothing = SafeClothingForPlayer(inst, skin ~= nil and skin.clothing),
+                skin_name = SkinForBody(inst, inst.prefab, skin ~= nil and skin.skin_name),
+                clothing = skin ~= nil and skin.clothing or {},
+                skin_mode = skin ~= nil and skin.skin_mode or nil,
             }})
             if robot then
                 LoadBodyTraits(inst, body)
@@ -893,12 +898,11 @@ function M.Possess(player, friend)
 
     local x, _, z = friend.Transform:GetWorldPosition()
     local px, _, pz = player.Transform:GetWorldPosition()
-    local skinner = friend.components.skinner
     local was_following = follower ~= nil and follower:GetLeader() == player
     local affinity = friend.components.my_friend_affinity
-    local clothing = skinner ~= nil and skinner:GetClothing() or nil
-    local safe_companion_skin = SafeSkinForPlayer(player, friend.prefab,
-        skinner ~= nil and skinner.skin_name or nil)
+    local companion_skin_data = SaveSkin(friend)
+    local safe_companion_skin = SkinForBody(player, friend.prefab,
+        companion_skin_data ~= nil and companion_skin_data.skin_name or nil)
     local leash = friend.components.petleash
     local companion_pet_data = leash ~= nil and leash:OnSave() or nil
     local companion_pets = DetachCompanionPets(friend)
@@ -916,12 +920,7 @@ function M.Possess(player, friend)
         companion_prefab = friend.prefab,
         companion_id = friend._my_friend_id,
         companion_skin = safe_companion_skin,
-        companion_skin_data = {
-            owner = friend._my_friend_skin_owner or player.userid,
-            skin_name = safe_companion_skin,
-            clothing = SafeClothingForPlayer(player, clothing),
-            skin_mode = skinner ~= nil and skinner.skintype or nil,
-        },
+        companion_skin_data = companion_skin_data,
         companion_body = {
             inv = SaveAndClearInventory(friend),
             meters = SaveMeters(friend),
@@ -955,12 +954,7 @@ function M.Possess(player, friend)
             z = friend._my_friend_home.z,
             mode = friend._my_friend_home.mode,
         } or nil,
-        player_skin_data = player.components.skinner ~= nil and {
-            owner = player._my_friend_skin_owner or player.userid,
-            skin_name = player.components.skinner.skin_name,
-            clothing = player.components.skinner:GetClothing(),
-            skin_mode = player.components.skinner.skintype,
-        } or nil,
+        player_skin_data = SaveSkin(player),
         player_position = {x = px, z = pz},
         position = {x = x, z = z},
         companion_pets = companion_pets,
@@ -1038,7 +1032,7 @@ function M.Release(player)
     if sw ~= nil then
         sw.main_data = sw.main_data or {}
         sw.main_data.prefab = sess.player_prefab
-        sw.main_data.skin_base = SafeSkinForPlayer(player, sess.player_prefab,
+        sw.main_data.skin_base = SkinForBody(player, sess.player_prefab,
             sess.player_skin_data ~= nil and sess.player_skin_data.skin_name or nil)
     end
     if not StartSwap(player, nil, nil) then

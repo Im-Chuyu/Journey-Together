@@ -715,8 +715,12 @@ local function ConfigureFriend(inst)
             -- player skin restore path at the same time as the panel replica.
             if self.components.skinner ~= nil then
                 local clothing = self.components.skinner:GetClothing()
+                local skin_name = self.components.skinner.skin_name
+                if (type(skin_name) ~= "string" or skin_name == "") and clothing ~= nil then
+                    skin_name = clothing.base
+                end
                 data.my_friend_skin = {
-                    skin_name = self.components.skinner.skin_name,
+                    skin_name = skin_name,
                     owner = self._my_friend_skin_owner,
                     clothing = clothing,
                     skin_mode = self.components.skinner.skintype,
