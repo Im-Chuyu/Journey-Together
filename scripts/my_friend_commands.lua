@@ -188,8 +188,9 @@ function M.Rename(friend, player, name)
         Reply(friend, "affinity_name")
         return false
     end
-    name = name:match("^%s*(.-)%s*$")
-    if #name == 0 or #name > 48 or name:find("[%c<>|]") then
+    local Names = require("my_friend_names")
+    name = Names.Normalize(name)
+    if not Names.IsValid(name) then
         Reply(friend, "name_invalid")
         return false
     end

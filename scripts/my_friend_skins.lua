@@ -6,6 +6,34 @@ local Characters = require("my_friend_characters")
 
 local M = {}
 
+-- Older/mobile profiles lack the Redux wardrobe's character-skin methods.
+-- Keep the adapter private to this screen; never patch the global profile.
+function M.LoadoutProfile(profile, character, initial)
+    if profile ~= nil and type(profile.GetSkinsForCharacter) == "function"
+        and type(profile.SetSkinsForCharacter) == "function" then return profile end
+    local saved = {}
+    local function Copy(skins)
+        local result = {}
+        for key, value in pairs(skins or {}) do result[key] = value end
+        return result
+    end
+    saved[character] = Copy(initial)
+    local adapter = {}
+    function adapter:GetSkinsForCharacter(prefab)
+        return Copy(saved[prefab] or {base = prefab .. "_none"})
+    end
+    function adapter:SetSkinsForCharacter(prefab, skins)
+        saved[prefab] = Copy(skins)
+    end
+    return setmetatable(adapter, {__index = function(_, key)
+        local value = profile ~= nil and profile[key] or nil
+        if type(value) == "function" then
+            return function(_, ...) return value(profile, ...) end
+        end
+        return value
+    end})
+end
+
 -- Every clothing skin this client owns for one character, grouped by slot.
 function M.Scan(character)
     local owned, sets = {}, { body = {}, hand = {}, legs = {}, feet = {} }

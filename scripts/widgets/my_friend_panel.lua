@@ -264,8 +264,12 @@ function MyFriendPanel:OpenRenameScreen()
     local friend = self.friend
     if friend == nil or not friend:IsValid() or not self:CanRename() then return end
     local InputDialog = require "screens/redux/inputdialog"
+    local Names = require "my_friend_names"
+    local initial_name = friend:GetDisplayName()
     local dialog
     local finished = false
+    local submitting = false
+    local entered_text
     local function Close()
         if finished or dialog == nil then return end
         finished = true
@@ -276,16 +280,18 @@ function MyFriendPanel:OpenRenameScreen()
         end
     end
     local function Submit()
-        if finished or dialog == nil then return end
-        local edit = dialog.edit_text
-        local name = ""
-        if edit ~= nil then
-            if type(edit.GetLineEditString) == "function" then
-                name = edit:GetLineEditString()
-            elseif type(edit.GetString) == "function" then
-                name = edit:GetString()
-            end
+        if finished or submitting or dialog == nil then return end
+        submitting = true
+        -- Commit pending keyboard input before reading the widget. Some
+        -- mobile builds only update their text getter when input is flushed.
+        if TheInputProxy ~= nil and type(TheInputProxy.FlushInput) == "function" then
+            pcall(TheInputProxy.FlushInput, TheInputProxy)
         end
+        local name = Names.ReadInput(dialog, entered_text, initial_name)
+        entered_text = nil
+        submitting = false
+        -- An uncommitted mobile input buffer must not spend the free rename.
+        if name == "" then return end
         Close()
         if friend:IsValid() then
             SendModRPCToServer(GetModRPC("MyFriends", "Rename"), friend, name)
@@ -300,11 +306,15 @@ function MyFriendPanel:OpenRenameScreen()
     if type(dialog.edit_text.SetTextLengthLimit) == "function" then
         dialog.edit_text:SetTextLengthLimit(48)
     end
-    dialog.edit_text.OnTextEntered = Submit
+    dialog.edit_text.OnTextEntered = function(value, text)
+        entered_text = type(value) == "string" and value
+            or type(text) == "string" and text or nil
+        Submit()
+    end
     if type(dialog.OverrideText) == "function" then
-        dialog:OverrideText(friend:GetDisplayName())
+        dialog:OverrideText(initial_name)
     else
-        dialog.edit_text:SetString(friend:GetDisplayName())
+        dialog.edit_text:SetString(initial_name)
     end
     self:HideFriend()
     TheFrontEnd:PushScreen(dialog)

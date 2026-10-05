@@ -29,8 +29,9 @@ local FriendSkinScreen = Class(Screen, function(self, friend, owner)
     initial.body, initial.hand = body or "", hand or ""
     initial.legs, initial.feet = legs or "", feet or ""
 
+    local profile = require("my_friend_skins").LoadoutProfile(Profile, character, initial)
     self.loadout = self.proot:AddChild(LoadoutSelect(
-        Profile, character, nil, true, nil, true, initial
+        profile, character, nil, true, nil, true, initial
     ))
     self.character = character
     self.loadout:SetPosition(-306, 0)
