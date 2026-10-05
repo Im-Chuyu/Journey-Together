@@ -7,6 +7,8 @@ M.OPTIONAL_HEAL_AGE = 65
 M.HEAL_ROLL_INTERVAL = 10
 M.HEAL_CHANCE = .1
 M.FUEL_RANGE = 20
+M.DREADSTONE_RELEASE_PERCENT = 1
+M.REFUEL_CHECK_INTERVAL = 2
 
 function M.Configure(inst)
     -- SpawnPrefab skips the character's load/new-spawn initialization. Reuse
@@ -19,6 +21,67 @@ end
 local function Carried(inst, item)
     local ii = item ~= nil and item:IsValid() and item.components.inventoryitem or nil
     return ii ~= nil and not ii.islockedinslot and ii:GetGrandOwner() == inst
+end
+
+local function DurabilityPercent(item)
+    local armor = item ~= nil and item:IsValid() and item.components ~= nil
+        and item.components.armor or nil
+    if armor == nil or armor.maxcondition == nil or armor.maxcondition <= 0 then return 1 end
+    return math.max(0, math.min(1, (armor.condition or 0) / armor.maxcondition))
+end
+
+local function FindDreadstone(inst, items, prefab)
+    for _, item in ipairs(items) do
+        if item ~= nil and item:IsValid() and item.prefab == prefab
+            and item.components ~= nil and item.components.armor ~= nil
+            and Carried(inst, item) and DurabilityPercent(item) < M.DREADSTONE_RELEASE_PERCENT then
+            return item
+        end
+    end
+end
+
+local function ClearDreadstonePending(inst, item)
+    if inst._my_friend_wanda_dreadstone_pending == item then
+        inst._my_friend_wanda_dreadstone_pending = nil
+        inst._my_friend_wanda_dreadstone_pending_until = nil
+    end
+end
+
+local function QueueDreadstoneEquip(inst, item)
+    local inventory = inst.components.inventory
+    if inventory == nil or item == nil or not item:IsValid() then return end
+    local deadline = GetTime() + 3
+    inst._my_friend_wanda_dreadstone_pending = item
+    inst._my_friend_wanda_dreadstone_pending_until = deadline
+    local action = BufferedAction(inst, nil, ACTIONS.EQUIP, item)
+    action.validfn = function()
+        return GetTime() < deadline and inst._my_friend_wanda_dreadstone_pending == item
+            and item:IsValid() and Carried(inst, item)
+    end
+    action:AddSuccessAction(function()
+        ClearDreadstonePending(inst, item)
+    end)
+    action:AddFailAction(function() ClearDreadstonePending(inst, item) end)
+    return action
+end
+
+function M.GetDreadstoneAction(inst)
+    if inst.prefab ~= "wanda" or Policy.IsBusy(inst)
+        or inst.components.inventory == nil then return end
+    local inventory = inst.components.inventory
+    local items = inventory:ReferenceAllItems()
+    local head = inventory:GetEquippedItem(EQUIPSLOTS.HEAD)
+    local body = inventory:GetEquippedItem(EQUIPSLOTS.BODY)
+    local damaged_head = FindDreadstone(inst, items, "dreadstonehat")
+    local damaged_body = FindDreadstone(inst, items, "armordreadstone")
+
+    if damaged_head ~= nil and head ~= damaged_head then
+        return QueueDreadstoneEquip(inst, damaged_head)
+    end
+    if damaged_body ~= nil and body == nil then
+        return QueueDreadstoneEquip(inst, damaged_body)
+    end
+
 end
 
 function M.GetAge(inst)
@@ -101,22 +164,66 @@ local function NeedsFuel(inst, item)
         and item.components.fueled ~= nil and item.components.fueled:GetPercent() < .1
 end
 
+local function RefuelActive(inst, item)
+    return item ~= nil and item:IsValid() and item.prefab == "pocketwatch_weapon"
+        and Carried(inst, item) and item.components.fueled ~= nil
+        and item.components.fueled:GetPercent() <= .9
+end
+
 function M.GetRefuelAction(inst)
     if inst.prefab ~= "wanda" or Policy.IsBusy(inst)
         or GetTime() < (inst._my_friend_wanda_refuel_after or 0) then return end
-    inst._my_friend_wanda_refuel_after = GetTime() + 3
-    local watch, fuel
-    for _, item in ipairs(inst.components.inventory:ReferenceAllItems()) do
-        if NeedsFuel(inst, item) then watch = watch or item end
-        if item.prefab == "nightmarefuel" and Carried(inst, item) then fuel = fuel or item end
+    local now = GetTime()
+    local watch = inst._my_friend_wanda_refuel_watch
+    if not RefuelActive(inst, watch) then
+        if now < (inst._my_friend_wanda_refuel_check_after or 0) then return end
+        inst._my_friend_wanda_refuel_check_after = now + M.REFUEL_CHECK_INTERVAL
+        watch = nil
+        for _, item in ipairs(inst.components.inventory:ReferenceAllItems()) do
+            if NeedsFuel(inst, item) then watch = item break end
+        end
+        if watch == nil then return end
+        inst._my_friend_wanda_refuel_watch = watch
+    end
+    if not RefuelActive(inst, watch) then
+        inst._my_friend_wanda_refuel_watch = nil
+        inst._my_friend_wanda_refuel_fuel = nil
+        return
+    end
+    local fuel = inst._my_friend_wanda_refuel_fuel
+    if fuel == nil or not Carried(inst, fuel)
+        or not watch.components.fueled:CanAcceptFuelItem(fuel) then
+        if now < (inst._my_friend_wanda_refuel_fuel_check_after or 0) then return end
+        inst._my_friend_wanda_refuel_fuel_check_after = now + 2
+        fuel = nil
+        for _, item in ipairs(inst.components.inventory:ReferenceAllItems()) do
+            if item.prefab == "nightmarefuel" and Carried(inst, item) then
+                fuel = item
+                break
+            end
+        end
+        inst._my_friend_wanda_refuel_fuel = fuel
     end
     if watch == nil or fuel == nil or not watch.components.fueled:CanAcceptFuelItem(fuel) then return end
+    inst._my_friend_wanda_refuel_after = now + .35
     local action = BufferedAction(inst, watch, ACTIONS.ADDFUEL, fuel)
     action.validfn = function()
-        return NeedsFuel(inst, watch) and Carried(inst, fuel)
+        return RefuelActive(inst, watch) and Carried(inst, fuel)
             and watch.components.fueled:CanAcceptFuelItem(fuel)
     end
-    action:AddSuccessAction(function() Dialogue.Say(inst, "activity_wanda_refuel") end)
+    action:AddSuccessAction(function()
+        if RefuelActive(inst, watch) then
+            inst._my_friend_wanda_refuel_after = GetTime() + .15
+            if not Carried(inst, fuel) then
+                inst._my_friend_wanda_refuel_fuel = nil
+                inst._my_friend_wanda_refuel_fuel_check_after = 0
+            end
+        else
+            inst._my_friend_wanda_refuel_watch = nil
+            inst._my_friend_wanda_refuel_fuel = nil
+            Dialogue.Say(inst, "activity_wanda_refuel")
+        end
+    end)
     return action
 end
 

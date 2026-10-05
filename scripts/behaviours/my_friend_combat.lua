@@ -25,11 +25,18 @@ local function IsValidThreat(inst, target)
         or target.components.health:IsDead() or target.components.combat == nil then return false end
     local player_attack_target = BehaviourAI.GetLeaderAttackCount(inst, target) > 0
     local assisting = target == inst._my_friend_assist_target
+    local pending_player_attack = inst._my_friend_assist_scan ~= nil
+        and inst._my_friend_assist_scan.target == target
+    local self_defending = BehaviourAI.IsThreat(inst, target)
+    local engaged = assisting or self_defending
     return target ~= nil and target:IsValid()
-        and (BehaviourAI.IsThreat(inst, target) or player_attack_target
-            or target == inst._my_friend_assist_target)
-        and Policy.InRange(inst, target, assisting and 32 or 7)
-        and DistanceSq(inst, target) <= (assisting and 32 or BehaviourAI.THREAT_RANGE)^2
+        and (self_defending or player_attack_target
+            or pending_player_attack)
+        and (engaged or Policy.InRange(inst, target, 7))
+        and (not engaged or DistanceSq(inst, target) <= BehaviourAI.ASSIST_RANGE
+            * BehaviourAI.ASSIST_RANGE)
+        and DistanceSq(inst, target) <= (engaged and BehaviourAI.ASSIST_RANGE
+            or BehaviourAI.THREAT_RANGE)^2
 end
 
 local function IsBoss(target)
@@ -88,7 +95,10 @@ function MyFriendCombat:Visit()
         self:Sleep(.1)
         return
     end
-    if not Policy.InRange(self.inst, self.inst, 7) then
+    local assisting = self.target == self.inst._my_friend_assist_target
+    local self_defending = BehaviourAI.IsThreat(self.inst, self.target)
+    if not assisting and not self_defending
+        and not Policy.InRange(self.inst, self.inst, 7) then
         local leader = Policy.GetLeader(self.inst)
         combat:SetTarget(nil)
         if leader ~= nil then

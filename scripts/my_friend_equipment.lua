@@ -58,13 +58,15 @@ function M.Wrap(inventory)
     inventory.Equip = function(self, item, ...)
         local component = item ~= nil and item.components.equippable or nil
         if self.inst:HasTag("my_friend") and component ~= nil and not self.isloading
-            and not self.inst._my_friend_player_equipping then
+            and not self.inst._my_friend_player_equipping
+            and not self.inst._my_friend_wanda_dreadstone_pending then
             local current = self:GetEquippedItem(component.equipslot)
             if current ~= nil and current ~= item and current:HasTag("heavy") then return false end
         end
         if self.inst:HasTag("my_friend") and component ~= nil and not self.isloading
             and not self.inst._my_friend_player_equipping
-            and not self.inst._my_friend_light_equip_override then
+            and not self.inst._my_friend_light_equip_override
+            and not self.inst._my_friend_wanda_dreadstone_pending then
             local carry_heavy = self.inst._my_friend_command ~= nil
                 and self.inst._my_friend_command.id == "carry_statue"
                 and item ~= nil and item:HasTag("heavy")

@@ -493,6 +493,7 @@ function MyFriendBrain:OnStart()
                 and id ~= "carry_backpack"
                 and id ~= "touch_tower"
                 and id ~= "squeeze_heart" and id ~= "make_heart" and id ~= "watch_heal" and id ~= "wormwood_heal"
+                and id ~= "wanda_dreadstone" and id ~= "wanda_refuel"
                 and not ((id == "food" or id == "container_food" or id == "cook")
                     and inst.components.hunger:GetPercent() < .2) then return end
             if command ~= nil and (command.id == "seeds" or command.id == "tidy" or command.id == "equipment")
@@ -500,11 +501,13 @@ function MyFriendBrain:OnStart()
                 and id ~= "command" and id ~= "wormhole" and id ~= "revive" and id ~= "rescue" and id ~= "light"
                 and id ~= "hurt" and id ~= "eat" and id ~= "temperature"
                 and id ~= "seek_light" and id ~= "emergency_fire" and id ~= "revive_return"
-                and id ~= "watch_heal" and id ~= "wormwood_heal" then return end
+                and id ~= "watch_heal" and id ~= "wormwood_heal"
+                and id ~= "wanda_dreadstone" and id ~= "wanda_refuel" then return end
             if LightAI.IsDark(inst) and id ~= "farewell" and id ~= "light" and id ~= "seek_light"
                 and id ~= "emergency_light_supply" and id ~= "emergency_fire"
                 and id ~= "base_fire" and id ~= "hurt" and id ~= "eat"
-                and id ~= "revive" and id ~= "temperature" and id ~= "watch_heal" and id ~= "wormwood_heal" then return end
+                and id ~= "revive" and id ~= "temperature" and id ~= "watch_heal" and id ~= "wormwood_heal"
+                and id ~= "wanda_dreadstone" and id ~= "wanda_refuel" then return end
             local action = getter(inst)
             if action ~= nil and Policy.IsRoaming(inst) then
                 action = require("my_friend_exploration_riding").PrepareAction(inst, action)
@@ -579,7 +582,8 @@ function MyFriendBrain:OnStart()
             and c.canfight and not c.urgent_repair and 125 or 0 end),
         WhileNode(function()
             local threat = BehaviourAI.FindThreat(inst)
-            if threat == nil or not Policy.InRange(inst, threat, 32)
+            if threat == nil
+                or Policy.DistanceSq(inst, threat) > BehaviourAI.ASSIST_RANGE^2
                 or not BehaviourAI.CanCounterAttack(inst, threat) then return false end
             inst.components.combat:SetTarget(threat)
             return true
@@ -607,11 +611,14 @@ function MyFriendBrain:OnStart()
     Action("watch_heal", Alive(function()
         return require("my_friend_wanda").GetHealScore(inst)
     end), require("my_friend_character_actions").GetHealAction, "正在使用不老表", 8)
+    Action("wanda_dreadstone", Alive(function(c)
+        return inst.prefab == "wanda" and not c.hurt and not c.hurt_evade and 136 or 0
+    end), require("my_friend_wanda").GetDreadstoneAction, nil, 8, true)
     Action("wormwood_heal", Alive(function()
         return require("my_friend_wormwood").GetHealScore(inst)
     end), require("my_friend_wormwood").GetHealAction, "正在治疗伤口", 8)
     Action("wanda_refuel", Alive(function(c)
-        return inst.prefab == "wanda" and not c.hurt and not c.hurt_evade and 130 or 0
+        return inst.prefab == "wanda" and not c.hurt and not c.hurt_evade and 150 or 0
     end), require("my_friend_wanda").GetRefuelAction, "正在给警钟补充噩梦燃料", 8, true)
     Action("wortox_heal_player", Alive(function(c)
         return inst.prefab == "wortox" and not c.threat and not c.dark
@@ -851,6 +858,7 @@ function MyFriendBrain:OnStart()
         end
         if leader == nil and not ghost then BaseAI.EnsureBase(inst) end
         BehaviourAI.UpdateFireRetreat(inst)
+        BehaviourAI.UpdateHazardRetreat(inst)
         local hurt_evade = GetTime() < (inst._my_friend_hurt_evade_until or 0)
         local threat = not ghost and not hurt_evade
             and BehaviourAI.FindThreat(inst) or nil

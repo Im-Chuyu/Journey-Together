@@ -856,6 +856,7 @@ local function ConfigureFriend(inst)
                 require("my_friend_behavior_ai").StartHurtRetreat(inst, source)
             end
         end
+        require("my_friend_behavior_ai").OnEnvironmentalDamage(inst, data)
     end)
     inst:ListenForEvent("buildstructure", function(_, data)
         BaseAI.OnBuildStructure(inst, data ~= nil and data.item or nil)

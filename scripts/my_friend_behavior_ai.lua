@@ -13,7 +13,11 @@ M.COLLECT_RETRY_DELAY = 20
 M.THREAT_RANGE = 24
 M.THREAT_SAFE_DISTANCE = 28
 M.RECENT_ATTACKER_TIME = 10
+M.ASSIST_ATTACK_WINDOW = 10
 M.LEADER_RETURN_DISTANCE = 20
+M.ASSIST_RANGE = 32
+M.HAZARD_RETREAT_TIME = 8
+M.HAZARD_RETREAT_RADIUS = 6
 M.COMBAT_DODGE_PADDING = .75
 M.COMBAT_DODGE_MIN_TIME = .2
 M.COMBAT_DODGE_MAX_TIME = .65
@@ -369,48 +373,55 @@ end
 
 function M.FindAssistTarget(inst)
     local leader = Policy.GetLeader(inst)
-    if leader == nil or not Policy.InRange(inst, inst, 32) then return end
+    if leader == nil or not Policy.InRange(inst, inst, M.ASSIST_RANGE) then return end
     local now = GetTime()
+    local buffered = leader.GetBufferedAction ~= nil and leader:GetBufferedAction() or nil
+    local action_target = buffered ~= nil and buffered.action == ACTIONS.ATTACK
+        and buffered.target or nil
     local cached = inst._my_friend_assist_scan
     if cached ~= nil and cached.leader == leader and now < cached.untiltime then
-        -- Keep the scan interval even when a cached enemy has disappeared.
-        return IsAlive(cached.target) and cached.target or nil
+        local recent = M.GetLeaderAttackCount(inst, cached.target) > 0
+            or action_target == cached.target
+        return recent and IsAlive(cached.target) and cached.target or nil
     end
-    local x, y, z = leader.Transform:GetWorldPosition()
     local function ValidTarget(entity)
         return entity ~= nil and entity ~= inst and entity ~= leader and IsAlive(entity)
             and not entity:HasAnyTag("player", "my_friend", "structure", "wall")
             and entity.components ~= nil and entity.components.combat ~= nil
-            and Policy.InRange(inst, entity, 32)
+            and Policy.InRange(inst, entity, M.ASSIST_RANGE)
+            and DistanceSq(inst, entity) <= M.ASSIST_RANGE * M.ASSIST_RANGE
     end
-    local leader_target = leader.components ~= nil and leader.components.combat ~= nil
-        and leader.components.combat.target or nil
-    if ValidTarget(leader_target) then
+    -- The buffered attack exists before the player's combat target is synced.
+    -- Read it so the companion does not miss the first attack tick.
+    if ValidTarget(action_target) then
         inst._my_friend_assist_scan = {
-            leader = leader, target = leader_target, untiltime = now + 1,
+            leader = leader, target = action_target, untiltime = now + .25,
         }
-        return leader_target
+        return action_target
     end
-
-    local best, distance
-    for _, entity in ipairs(TheSim:FindEntities(x, y, z, 32, {"_combat"}, THREAT_CANT_TAGS)) do
-        if ValidTarget(entity) and (entity.components.combat.target == leader
-            or entity.components.combat.target == inst
-            or M.GetLeaderAttackCount(inst, entity) > 0) then
-            if entity == inst._my_friend_assist_target then return entity end
-            local d = inst:GetDistanceSqToInst(entity)
-            if distance == nil or d < distance then best, distance = entity, d end
-        end
+    local candidate = inst._my_friend_assist_candidate
+    if candidate ~= nil and now < (inst._my_friend_assist_until or 0)
+        and ValidTarget(candidate) and M.GetLeaderAttackCount(inst, candidate) > 0 then
+        inst._my_friend_assist_scan = {
+            leader = leader, target = candidate, untiltime = now + .25,
+        }
+        return candidate
     end
+    inst._my_friend_assist_candidate = nil
+    inst._my_friend_assist_until = nil
     inst._my_friend_assist_scan = {
-        leader = leader, target = best, untiltime = now + 1,
+        leader = leader, target = nil, untiltime = now + .25,
     }
-    return best
+    return nil
 end
 
 function M.StartHurtRetreat(inst, source, fire_distance)
     if source == nil or not source:IsValid() or not IsAlive(inst)
         or inst:HasTag("playerghost") then return end
+    if source ~= inst then
+        inst._my_friend_hazard_position = nil
+        inst._my_friend_hazard_until = nil
+    end
     -- Repeated damage within one retreat must not move its origin or extend it.
     if GetTime() < (inst._my_friend_hurt_evade_until or 0)
         and (fire_distance == nil or inst._my_friend_hurt_fire_distance ~= nil) then return end
@@ -422,6 +433,8 @@ function M.StartHurtRetreat(inst, source, fire_distance)
     inst._my_friend_hurt_until = GetTime() + 3
     inst._my_friend_hurt_evade_until = GetTime() + 3.5
     inst._my_friend_assist_target = nil
+    inst._my_friend_assist_candidate = nil
+    inst._my_friend_assist_until = nil
     inst._my_friend_assist_scan = nil
     inst._my_friend_threat_scan = nil
     inst.components.combat:SetTarget(nil)
@@ -441,6 +454,40 @@ function M.OnFireDamage(inst)
     if source ~= nil then
         inst._my_friend_fire_source = source
         M.StartHurtRetreat(inst, source, distance + 1)
+    end
+end
+
+function M.OnEnvironmentalDamage(inst, data)
+    if not IsAlive(inst) or inst:HasTag("playerghost") or data == nil
+        or (data.amount or 0) >= 0 then return end
+    if data.cause == "fire" or data.cause == "hot"
+        or data.cause == "hunger" or data.cause == "starvation"
+        or data.cause == "cold" or data.cause == "freezing"
+        or data.cause == "oldage" or data.cause == "health_as_oldage"
+        or data.cause == "sanity" or data.cause == "sanityloss"
+        or data.afflicter ~= nil and data.afflicter.IsValid ~= nil
+            and data.afflicter:IsValid() then return end
+    local now = GetTime()
+    local x, _, z = inst.Transform:GetWorldPosition()
+    inst._my_friend_hazard_position = {x = x, z = z}
+    inst._my_friend_hazard_until = now + M.HAZARD_RETREAT_TIME
+    M.StartHurtRetreat(inst, inst, M.HAZARD_RETREAT_RADIUS)
+end
+
+function M.UpdateHazardRetreat(inst)
+    local untiltime = inst._my_friend_hazard_until or 0
+    local point = inst._my_friend_hazard_position
+    if point == nil or GetTime() >= untiltime then
+        inst._my_friend_hazard_position = nil
+        inst._my_friend_hazard_until = nil
+        return
+    end
+    local x, _, z = inst.Transform:GetWorldPosition()
+    if (x - point.x)^2 + (z - point.z)^2 <= M.HAZARD_RETREAT_RADIUS^2 then
+        M.StartHurtRetreat(inst, inst, M.HAZARD_RETREAT_RADIUS)
+    else
+        inst._my_friend_hazard_position = nil
+        inst._my_friend_hazard_until = nil
     end
 end
 
@@ -534,11 +581,18 @@ function M.RecordPlayerAttack(player, data)
     local records = target._my_friend_player_attacks or {}
     target._my_friend_player_attacks = records
     for owner, record in pairs(records) do
-        if now - record.time > 120 then records[owner] = nil end
+        if now - record.time > M.ASSIST_ATTACK_WINDOW then records[owner] = nil end
     end
     local key = player.userid or player
     local old = records[key]
     records[key] = {count = (old ~= nil and old.count or 0) + 1, time = now}
+    local friend = TheWorld ~= nil and TheWorld._my_friend or nil
+    if friend ~= nil and friend:IsValid() and M.GetLeaderAttackCount ~= nil
+        and Policy.GetLeader(friend) == player then
+        friend._my_friend_assist_candidate = target
+        friend._my_friend_assist_until = now + M.ASSIST_ATTACK_WINDOW
+        friend._my_friend_assist_scan = nil
+    end
 end
 
 function M.GetLeaderAttackCount(inst, target)
@@ -547,7 +601,8 @@ function M.GetLeaderAttackCount(inst, target)
         or target:HasAnyTag("structure", "wall", "INLIMBO", "player", "my_friend") then return 0 end
     local records = target._my_friend_player_attacks
     local record = records ~= nil and records[leader.userid or leader] or nil
-    return record ~= nil and GetTime() - record.time <= 120 and record.count or 0
+    return record ~= nil and GetTime() - record.time <= M.ASSIST_ATTACK_WINDOW
+        and record.count or 0
 end
 
 function M.FindThreat(inst, range)
@@ -794,16 +849,33 @@ function M.CanCounterAttack(inst, target)
     end
     local inventory = inst.components.inventory
     local hand = inventory:GetEquippedItem(EQUIPSLOTS.HANDS)
+    local leader = Policy.GetLeader(inst)
+    local self_defending = M.IsThreat(inst, target)
+    local assisting = leader ~= nil
+        and (inst._my_friend_assist_scan ~= nil
+                and inst._my_friend_assist_scan.target == target
+            or M.GetLeaderAttackCount(inst, target) > 0)
+        and Policy.InRange(inst, inst, M.ASSIST_RANGE)
+        and Policy.InRange(inst, target, M.ASSIST_RANGE)
+        and DistanceSq(inst, target) <= M.ASSIST_RANGE * M.ASSIST_RANGE
     local weaponitem, damage = M.FindBestCombatWeapon(inst, target)
     if weaponitem == nil or not weaponitem:IsValid() or type(damage) ~= "number" or damage <= 25
-        or weaponitem ~= hand and IsActiveLight(hand) then return false end
+        or weaponitem ~= hand and IsActiveLight(hand) then
+        if not assisting and not self_defending then return false end
+        local health = inst.components.health
+        return health == nil or health.GetPercent == nil or health:GetPercent() >= .15
+    end
     if weaponitem ~= hand and inventory.Equip ~= nil then
         if inventory:Equip(weaponitem) ~= true then return false end
         if not IsAlive(target) then return false end
         weaponitem = inventory:GetEquippedItem(EQUIPSLOTS.HANDS)
         damage = WeaponDamage(inst, target, weaponitem) or 0
     end
-    if weaponitem == nil or not weaponitem:IsValid() or damage <= 25 then return false end
+    if weaponitem == nil or not weaponitem:IsValid() or damage <= 25 then
+        if not assisting and not self_defending then return false end
+        local health = inst.components.health
+        return health == nil or health.GetPercent == nil or health:GetPercent() >= .15
+    end
     -- Keep the hand slot stable while this target remains relevant. The
     -- survival loadout must not replace a weapon with an umbrella between
     -- combat ticks during rain.
@@ -826,16 +898,18 @@ function M.CanCounterAttack(inst, target)
         inventory, target, enemyweapon)
     if not IsAlive(target) or not IsAlive(inst) then return false end
     local leader = Policy.GetLeader(inst)
-    local leader_target = leader ~= nil and leader.components ~= nil
-        and leader.components.combat ~= nil and leader.components.combat.target or nil
-    local assisting = leader ~= nil and enemycombat ~= nil
-        and (enemycombat.target == leader or leader_target == target
-            or target == inst._my_friend_assist_target)
-        and Policy.InRange(inst, inst, 32) and Policy.InRange(inst, target, 32)
+    local self_defending = M.IsThreat(inst, target)
+    local assisting = leader ~= nil
+        and (inst._my_friend_assist_scan ~= nil
+                and inst._my_friend_assist_scan.target == target
+            or M.GetLeaderAttackCount(inst, target) > 0)
+        and Policy.InRange(inst, inst, M.ASSIST_RANGE)
+        and Policy.InRange(inst, target, M.ASSIST_RANGE)
+        and DistanceSq(inst, target) <= M.ASSIST_RANGE * M.ASSIST_RANGE
     -- Assistance is deliberately more decisive than self-defence. Once the
     -- companion has a working weapon and armour, it helps the leader instead
     -- of waiting for the conservative damage/survival estimate to pass.
-    if assisting then
+    if assisting or self_defending then
         return is_wanda or health == nil or health.GetPercent == nil
             or health:GetPercent() >= .15
     end
