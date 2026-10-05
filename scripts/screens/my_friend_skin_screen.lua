@@ -2,7 +2,9 @@ local Widget = require "widgets/widget"
 local Screen = require "widgets/screen"
 local Menu = require "widgets/menu"
 local Image = require "widgets/image"
-local LoadoutSelect = require "widgets/redux/loadoutselect"
+local Text = require "widgets/text"
+local ImageButton = require "widgets/imagebutton"
+local TextForLanguage = require("my_friend_strings").Text
 
 local FriendSkinScreen = Class(Screen, function(self, friend, owner)
     Screen._ctor(self, "MyFriendSkinScreen")
@@ -29,22 +31,83 @@ local FriendSkinScreen = Class(Screen, function(self, friend, owner)
     initial.body, initial.hand = body or "", hand or ""
     initial.legs, initial.feet = legs or "", feet or ""
 
-    local profile = require("my_friend_skins").LoadoutProfile(Profile, character, initial)
-    self.loadout = self.proot:AddChild(LoadoutSelect(
-        profile, character, nil, true, nil, true, initial
-    ))
+    local ok, loadout = false, nil
+    if Profile ~= nil and type(Profile.GetSkinsForCharacter) == "function"
+        and type(Profile.SetSkinsForCharacter) == "function" then
+        ok, loadout = pcall(function()
+            local LoadoutSelect = require "widgets/redux/loadoutselect"
+            return LoadoutSelect(Profile, character, nil, true, nil, true, initial)
+        end)
+    end
+    if ok and loadout ~= nil then
+        self.loadout = self.proot:AddChild(loadout)
+    else
+        -- Mobile clients can ship LoadoutSelect without its required profile API.
+        self.loadout = self.proot:AddChild(Widget("MobileLoadout"))
+        self.loadout.selected_skins = {
+            base = initial.base, body = initial.body, hand = initial.hand,
+            legs = initial.legs, feet = initial.feet,
+        }
+        local owned, sets = require("my_friend_skins").Scan(character)
+        local function Choices(current, default, available)
+            local result, seen = {}, {}
+            for _, skin in ipairs({current, default}) do
+                if not seen[skin] then result[#result + 1], seen[skin] = skin, true end
+            end
+            for _, skin in ipairs(available) do
+                if not seen[skin] then result[#result + 1], seen[skin] = skin, true end
+            end
+            return result
+        end
+        local choices = {base = Choices(initial.base, character .. "_none", owned)}
+        for _, part in ipairs({"body", "hand", "legs", "feet"}) do
+            choices[part] = Choices(initial[part], "", sets[part] or {})
+        end
+        local y = 150
+        local function AddChoice(part, zh, en)
+            local button = self.loadout:AddChild(ImageButton("images/global.xml", "square.tex"))
+            button:ForceImageSize(330, 42)
+            button:SetPosition(0, y)
+            button:SetImageNormalColour(.12, .12, .14, .95)
+            button:SetImageFocusColour(.32, .26, .12, 1)
+            button.scale_on_focus = false
+            button.label = button:AddChild(Text(DEFAULTFONT, 18, ""))
+            button.label:SetColour(1, .78, .28, 1)
+            local index = 1
+            local function Refresh()
+                local value = choices[part][index]
+                self.loadout.selected_skins[part] = value
+                button.label:SetString(TextForLanguage(zh, en) .. ": "
+                    .. (value == "" and TextForLanguage("默认", "Default") or value))
+            end
+            button:SetOnClick(function()
+                index = index % #choices[part] + 1
+                Refresh()
+            end)
+            Refresh()
+            self.fallback_focus = self.fallback_focus or button
+            y = y - 52
+        end
+        AddChoice("base", "基础", "Base")
+        AddChoice("body", "身体", "Body")
+        AddChoice("hand", "手部", "Hand")
+        AddChoice("legs", "腿部", "Legs")
+        AddChoice("feet", "足部", "Feet")
+    end
     self.character = character
     self.loadout:SetPosition(-306, 0)
-    self.loadout:SetDefaultMenuOption()
+    if type(self.loadout.SetDefaultMenuOption) == "function" then
+        self.loadout:SetDefaultMenuOption()
+    end
 
     self.menu = self.proot:AddChild(Menu({
         { text = STRINGS.UI.WARDROBE_POPUP.CANCEL, cb = function() self:Cancel() end },
         { text = STRINGS.UI.WARDROBE_POPUP.SET, cb = function() self:Apply() end },
     }, 70, false, "carny_long", nil, 30))
     self.menu:SetPosition(493, -260, 0)
-    self.default_focus = self.loadout
-    self.menu:SetFocusChangeDir(MOVE_LEFT, self.loadout)
-    self.loadout:SetFocusChangeDir(MOVE_RIGHT, self.menu)
+    self.default_focus = self.fallback_focus or self.loadout
+    self.menu:SetFocusChangeDir(MOVE_LEFT, self.default_focus)
+    self.default_focus:SetFocusChangeDir(MOVE_RIGHT, self.menu)
     SetAutopaused(true)
 end)
 
@@ -82,7 +145,7 @@ function FriendSkinScreen:Apply()
 end
 
 function FriendSkinScreen:OnUpdate(dt)
-    self.loadout:OnUpdate(dt)
+    if type(self.loadout.OnUpdate) == "function" then self.loadout:OnUpdate(dt) end
 end
 
 function FriendSkinScreen:OnDestroy()

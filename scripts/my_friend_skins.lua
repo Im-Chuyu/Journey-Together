@@ -6,52 +6,38 @@ local Characters = require("my_friend_characters")
 
 local M = {}
 
--- Older/mobile profiles lack the Redux wardrobe's character-skin methods.
--- Keep the adapter private to this screen; never patch the global profile.
-function M.LoadoutProfile(profile, character, initial)
-    if profile ~= nil and type(profile.GetSkinsForCharacter) == "function"
-        and type(profile.SetSkinsForCharacter) == "function" then return profile end
-    local saved = {}
-    local function Copy(skins)
-        local result = {}
-        for key, value in pairs(skins or {}) do result[key] = value end
-        return result
-    end
-    saved[character] = Copy(initial)
-    local adapter = {}
-    function adapter:GetSkinsForCharacter(prefab)
-        return Copy(saved[prefab] or {base = prefab .. "_none"})
-    end
-    function adapter:SetSkinsForCharacter(prefab, skins)
-        saved[prefab] = Copy(skins)
-    end
-    return setmetatable(adapter, {__index = function(_, key)
-        local value = profile ~= nil and profile[key] or nil
-        if type(value) == "function" then
-            return function(_, ...) return value(profile, ...) end
-        end
-        return value
-    end})
-end
-
 -- Every clothing skin this client owns for one character, grouped by slot.
 function M.Scan(character)
     local owned, sets = {}, { body = {}, hand = {}, legs = {}, feet = {} }
-    if TheInventory == nil or PREFAB_SKINS == nil or GetSkinData == nil then
+    if TheInventory == nil or type(TheInventory.CheckOwnership) ~= "function" then
         return owned, sets
     end
-    for _, skins in pairs(PREFAB_SKINS) do
-        for _, skin in ipairs(skins) do
-            local data = GetSkinData(skin)
-            if data ~= nil and data.base_prefab == character
-                and not skin:match("_none$")
-                and not (PREFAB_SKINS_SHOULD_NOT_SELECT ~= nil
-                    and PREFAB_SKINS_SHOULD_NOT_SELECT[skin])
+    if type(PREFAB_SKINS) == "table" then
+        for prefab, skins in pairs(PREFAB_SKINS) do
+            if type(skins) == "table" then
+                for _, skin in ipairs(skins) do
+                    local data = type(skin) == "string" and type(GetSkinData) == "function"
+                        and GetSkinData(skin) or nil
+                    local base_prefab = type(data) == "table" and data.base_prefab or nil
+                    if type(skin) == "string"
+                        and (base_prefab == character
+                            or base_prefab == nil and prefab == character)
+                        and not skin:match("_none$")
+                        and not (PREFAB_SKINS_SHOULD_NOT_SELECT ~= nil
+                            and PREFAB_SKINS_SHOULD_NOT_SELECT[skin])
+                        and (CLOTHING == nil or CLOTHING[skin] == nil)
+                        and TheInventory:CheckOwnership(skin) then
+                        table.insert(owned, skin)
+                    end
+                end
+            end
+        end
+    end
+    if type(CLOTHING) == "table" then
+        for skin, data in pairs(CLOTHING) do
+            if data ~= nil and sets[data.type] ~= nil
                 and TheInventory:CheckOwnership(skin) then
-                table.insert(owned, skin)
-                local slot = CLOTHING ~= nil and CLOTHING[skin] ~= nil
-                    and CLOTHING[skin].type or skin:match("_(body|hand|legs|feet)$")
-                if slot ~= nil and sets[slot] ~= nil then table.insert(sets[slot], skin) end
+                table.insert(sets[data.type], skin)
             end
         end
     end
@@ -70,7 +56,8 @@ function M.Report(character)
     local owned = M.Scan(character)
     local reported_skins = {}
     for _, skin in ipairs(owned) do reported_skins[skin] = true end
-    if TheInventory ~= nil and CLOTHING ~= nil then
+    if TheInventory ~= nil and type(TheInventory.CheckOwnership) == "function"
+        and type(CLOTHING) == "table" then
         for skin in pairs(CLOTHING) do
             if TheInventory:CheckOwnership(skin) then reported_skins[skin] = true end
         end

@@ -40,14 +40,10 @@ local Home = require("my_friend_home")
 -- scripts/prefabs/my_friend_characters.lua rebuilds the real character.
 PrefabFiles = { "my_friend_characters" }
 
--- Each sound bank contains 70 dialogue events. Keep the banks registered as
--- assets so additional friend_sN files can be added without changing the
--- dialogue code. Missing future banks are harmless until their files are
--- supplied in the mod's sound/ directory.
+-- Each sound bank contains 70 dialogue events. Register every supplied bank
+-- used by the current dialogue catalogue.
 Assets = Assets or {}
--- The current simplified-Chinese catalogue has 601 entries (9 banks).
--- Increase this upper bound when a later catalogue adds another bank.
-for sound_bank = 1, 9 do
+for sound_bank = 1, 10 do
     table.insert(Assets, Asset("SOUNDPACKAGE",
         "sound/fs" .. sound_bank .. ".fev"))
     table.insert(Assets, Asset("SOUND",

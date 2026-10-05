@@ -38,6 +38,10 @@ function M.CanRevivePlayer(player)
         or player.sg:HasAnyStateTag("dead", "busy")
         or player.sg.currentstate.name == "death"
         or player.sg.currentstate.name == "appear" then return false end
+    local swapper = player.components.seamlessplayerswapper
+    if swapper ~= nil and swapper._my_friend_swap_in_progress then return false end
+    if require("my_friend_possess").IsPossessing(player)
+        and not player:HasTag("my_friend_possessing") then return false end
     if player._my_friend_rescue_ready_after == nil then
         -- Also handle ghosts loaded before the listeners were installed.
         player._my_friend_rescue_ready_after = GetTime() + M.GHOST_READY_DELAY

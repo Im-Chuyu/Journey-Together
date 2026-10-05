@@ -66,7 +66,7 @@ end
 local function BelongsToCharacter(skin, prefab)
     if type(skin) ~= "string" or skin == "" or type(prefab) ~= "string" then return false end
     if skin == prefab or skin == prefab .. "_none" then return true end
-    local data = GetSkinData ~= nil and GetSkinData(skin) or nil
+    local data = type(GetSkinData) == "function" and GetSkinData(skin) or nil
     if type(data) == "table" and type(data.base_prefab) == "string" then
         return data.base_prefab == prefab
     end
@@ -132,8 +132,10 @@ function M.ApplyWardrobe(inst, player, base, clothing, owned)
         or base ~= inst.prefab .. "_none" and not (owned or {})[base] then return false end
     for _, part in ipairs({"body", "hand", "legs", "feet"}) do
         local skin = clothing[part]
-        if type(skin) ~= "string" or skin ~= "" and (IsValidClothing == nil
-            or not IsValidClothing(skin) or CLOTHING[skin].type ~= part) then return false end
+        local entry = type(CLOTHING) == "table" and CLOTHING[skin] or nil
+        if type(skin) ~= "string" or skin ~= "" and (type(IsValidClothing) ~= "function"
+            or not IsValidClothing(skin) or type(entry) ~= "table"
+            or entry.type ~= part) then return false end
     end
     local before = skinner:GetClothing()
     -- Like dressing a vanilla mannequin, the skin owner is the player who
@@ -164,7 +166,8 @@ function M.RestoreSkin(inst, data)
     local skinner = inst.components.skinner
     local saved = data ~= nil and (data.my_friend_skin or data.skinner) or nil
     if skinner == nil or saved == nil then return end
-    if inst.userid ~= nil and not inst:HasTag("my_friend")
+    if type(POSTACTIVATEHANDSHAKE) == "table" and POSTACTIVATEHANDSHAKE.READY ~= nil
+        and inst.userid ~= nil and not inst:HasTag("my_friend")
         and inst._PostActivateHandshakeState_Server ~= POSTACTIVATEHANDSHAKE.READY then
         inst._my_friend_pending_skin = saved
         if inst._my_friend_skin_ready_fn == nil then

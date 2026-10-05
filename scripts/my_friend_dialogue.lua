@@ -4,7 +4,7 @@ local PERSONAL = {fed = true, fed_careful = true, gift = true,
     gift_food = true, gift_food_settled = true, gift_sack = true, pickup_allowed = true,
     ask_pickup = true, revived_thanks = true, revive_player = true, skin_changed = true,
     revive_drop = true, player_attack = true, player_takes_food = true, player_takes_sack = true,
-    activity_wortox_heal = true}
+    activity_wortox_heal = true, heart_made = true, heart_make_failed = true}
 
 local function Alive(inst)
     return inst:IsValid() and inst:HasTag("my_friend") and not inst:HasTag("playerghost")
@@ -164,10 +164,13 @@ function M.PublicSay(inst, kind, argument)
     local count = Speech.CountFor(inst, kind)
     if count == 0 then return false end
     local index = math.random(count)
-    local text = Speech.Text(Speech.Key(inst, kind), index, argument)
+    local key = Speech.Key(inst, kind)
+    local text = Speech.Text(key, index, argument)
     if text == nil then return false end
     TheNet:Announce(text)
-    require("my_friend_voice").Play(inst, {duration = 2})
+    local voice = require("my_friend_voice")
+    voice.Play(inst, {duration = 2})
+    voice.PlayLine(inst, key, index)
     return true
 end
 
@@ -256,7 +259,11 @@ function M.Configure(inst)
             and target:HasAnyTag("epic", "largecreature", "boss")
         M.Say(inst, boss and "fight_boss" or "fight")
     end)
-    inst:ListenForEvent("builditem", function() M.Say(inst, "build") end)
+    inst:ListenForEvent("builditem", function(_, data)
+        if data == nil or data.item == nil or data.item.prefab ~= "wortox_reviver" then
+            M.Say(inst, "build")
+        end
+    end)
     inst:ListenForEvent("buildstructure", function() M.Say(inst, "build") end)
 end
 

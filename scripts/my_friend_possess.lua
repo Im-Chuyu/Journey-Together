@@ -10,6 +10,7 @@ local RestoreCompanion
 local RestoreActiveSession
 local Characters = require("my_friend_characters")
 local WX78 = require("my_friend_wx78")
+local InventoryTransfer = require("my_friend_inventory_transfer")
 
 local function DefaultSkin(prefab)
     -- Vanilla characters have a registered prefab skin table and accept the
@@ -92,41 +93,9 @@ local function CanStartSwap(player, prefab, trusted)
             and (trusted or PlayerOwnsCharacter(player, prefab)))
 end
 
-local function ClearInventory(inv)
-    if inv == nil or inv.ForEachItem == nil then return end
-    local items = {}
-    inv:ForEachItem(function(item)
-        items[#items + 1] = item
-    end)
-    for _, item in ipairs(items) do
-        if item ~= nil and item:IsValid() then item:Remove() end
-    end
-end
-
-local function SaveInventory(inst)
-    local inv = inst ~= nil and inst.components ~= nil and inst.components.inventory or nil
-    if inv == nil or inv.OnSave == nil then return nil end
-    local data = inv:OnSave()
-    ClearInventory(inv)
-    return data
-end
-
--- World saving must not clear a live player's inventory.  The possession
--- swap path uses SaveInventory because it immediately removes the old body;
--- this read-only variant is for an active session that will continue after a
--- save/reload.
-local function CaptureInventory(inst)
-    local inv = inst ~= nil and inst.components ~= nil and inst.components.inventory or nil
-    if inv == nil or inv.OnSave == nil then return nil end
-    return inv:OnSave()
-end
-
-local function LoadInventory(inst, data)
-    local inv = inst ~= nil and inst.components ~= nil and inst.components.inventory or nil
-    if inv == nil then return end
-    ClearInventory(inv)
-    if data ~= nil and inv.OnLoad ~= nil then inv:OnLoad(data, {}) end
-end
+local SaveAndClearInventory = InventoryTransfer.SaveAndClear
+local CaptureInventory = InventoryTransfer.Capture
+local LoadInventory = InventoryTransfer.Load
 
 local function DetachCompanionPets(inst)
     local pets = {}
@@ -914,9 +883,7 @@ function M.CanPossess(player, friend)
         or player:HasTag("my_friend_possessing")
         or not require("my_friend_policy").IsLocalPlayer(player) then return false end
     local affinity = friend.components.my_friend_affinity
-    local follower = friend.components.follower
-    return affinity ~= nil and (affinity:Get(player) >= 90
-        or follower ~= nil and follower:GetLeader() == player)
+    return affinity ~= nil and affinity:Get(player) >= 25
 end
 
 function M.Possess(player, friend)
@@ -937,7 +904,7 @@ function M.Possess(player, friend)
     local companion_pets = DetachCompanionPets(friend)
     local sessions = Sessions()
     if sessions == nil then return false end
-
+    world._my_friend_possession_active = true
     require("my_friend_commands").Clear(friend)
 
     local session = {
@@ -956,7 +923,7 @@ function M.Possess(player, friend)
             skin_mode = skinner ~= nil and skinner.skintype or nil,
         },
         companion_body = {
-            inv = SaveInventory(friend),
+            inv = SaveAndClearInventory(friend),
             meters = SaveMeters(friend),
             custom_name = friend._my_friend_custom_name,
             skill_data = SaveSkillTree(friend),
@@ -964,7 +931,7 @@ function M.Possess(player, friend)
         },
         companion_affinity = SaveAffinity(friend),
         player_body = {
-            inv = SaveInventory(player),
+            inv = SaveAndClearInventory(player),
             meters = SaveMeters(player),
             -- The autonomous body represents the companion while the player
             -- is controlling the companion body, so keep the companion name
@@ -1001,7 +968,6 @@ function M.Possess(player, friend)
     }
     CaptureCompanionState(session, friend)
     sessions[player.userid] = session
-    world._my_friend_possession_active = true
     if follower ~= nil then follower:SetLeader(nil) end
     if friend.StopBrain ~= nil then friend:StopBrain("my_friend_possess") end
     friend:ClearBufferedAction()
@@ -1058,7 +1024,7 @@ function M.Release(player)
     sess.companion_skill_data = SaveSkillTree(player)
     sess.companion_skin_data = SaveSkin(player)
     sess.companion_prefab = player.prefab
-    local body = {inv = SaveInventory(player), meters = SaveMeters(player),
+    local body = {inv = SaveAndClearInventory(player), meters = SaveMeters(player),
         skill_data = sess.companion_skill_data, wx78 = WX78.Save(player)}
     body.custom_name = sess.companion_custom_name
     sess.release_body = body
@@ -1086,7 +1052,7 @@ function M.Release(player)
     -- inventory and pets remain intact so a failed request is reversible.
     if World() ~= nil then World()._my_friend_possession_active = true end
     sess.companion_pets = DetachCompanionPets(temporary)
-    ClearInventory(temporary.components.inventory)
+    InventoryTransfer.Clear(temporary)
     temporary.persists = false
     temporary:Remove()
     sess.temporary_companion = nil

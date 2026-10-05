@@ -156,6 +156,7 @@ local MyFriendPanel = Class(Widget, function(self, owner)
     self.slots = {}
     self.equips = EquipSlots.Panel(owner)
     self.backpackslots = {}
+    self.backpack_scroll = nil
     for i = 1, 15 do
         local col, row = (i - 1) % 5, math.floor((i - 1) / 5)
         self.slots[i] = { col = col, row = row }
@@ -340,6 +341,10 @@ function MyFriendPanel:OpenSkinScreen()
 end
 
 function MyFriendPanel:ClearSlots()
+    if self.backpack_scroll ~= nil then
+        self.backpack_scroll:Kill()
+        self.backpack_scroll = nil
+    end
     for _, slot in ipairs(self.slots) do
         if slot.widget ~= nil then
             slot.widget:Kill()
@@ -348,9 +353,6 @@ function MyFriendPanel:ClearSlots()
     end
     for _, slot in ipairs(self.equips) do
         if slot.widget ~= nil then slot.widget:Kill(); slot.widget = nil end
-    end
-    for _, slot in ipairs(self.backpackslots or {}) do
-        if slot.widget ~= nil then slot.widget:Kill() end
     end
     self.backpackslots = {}
 end
@@ -377,13 +379,54 @@ function MyFriendPanel:RebuildSlots()
     self.shown_overflow = overflow
     self.shown_overflow_slots = overflow ~= nil and overflow:GetNumSlots() or 0
     if overflow ~= nil then
+        local items = {}
         for i = 1, overflow:GetNumSlots() do
-            local entry = {num = i}
-            entry.widget = self:AddChild(FriendInvSlot(i, self.owner, overflow, true))
-            entry.widget:SetPosition(276 + ((i - 1) % 5) * 72,
-                70 - math.floor((i - 1) / 5) * 72)
-            self.backpackslots[i] = entry
+            items[i] = i
         end
+        local function ItemCtor(_, _)
+            return FriendInvSlot(1, self.owner, overflow, true)
+        end
+        local function ApplyItem(_, widget, num)
+            if widget.num ~= num then
+                widget:ClearFocus()
+                widget:CancelScaleTo()
+                widget.big = false
+                widget.highlight = false
+                widget:SetScale(1)
+                widget.num = num
+            end
+            if num == nil then
+                if widget.tile ~= nil then widget:SetTile(nil) end
+                if widget.shown then widget:Hide() end
+                return
+            end
+            if not widget.shown then widget:Show() end
+            local item = EquipSlots.ContainerItem(overflow, num)
+            if item == nil then
+                if widget.tile ~= nil then widget:SetTile(nil) end
+            elseif widget.tile == nil or widget.tile.item ~= item then
+                widget:SetTile(ItemTile(item))
+            else
+                widget.tile:Refresh()
+            end
+        end
+        local TEMPLATES = require("widgets/redux/templates")
+        self.backpack_scroll = self:AddChild(TEMPLATES.ScrollingGrid(items, {
+            scroll_context = {},
+            peek_height = 0,
+            widget_width = 72,
+            widget_height = 72,
+            num_visible_rows = 3,
+            num_columns = 5,
+            end_offset = 0,
+            allow_bottom_empty_row = true,
+            item_ctor_fn = ItemCtor,
+            apply_fn = ApplyItem,
+            scrollbar_offset = 20,
+            scrollbar_height_offset = -60,
+        }))
+        self.backpackslots = self.backpack_scroll:GetListWidgets()
+        self.backpack_scroll:SetPosition(420, -2)
     end
 end
 
@@ -542,15 +585,16 @@ function MyFriendPanel:Refresh()
         end
         local overflow = EquipSlots.BackpackContainer(inventory)
         for _, slot in ipairs(self.backpackslots or {}) do
-            -- The NPC keeps the backpack open itself, so the local player has
-            -- no vanilla container opener. Read the published classified data.
-            local item = EquipSlots.ContainerItem(overflow, slot.num)
-            if item == nil then
-                slot.widget:SetTile(nil)
-            elseif slot.widget.tile == nil or slot.widget.tile.item ~= item then
-                slot.widget:SetTile(ItemTile(item))
-            else
-                slot.widget.tile:Refresh()
+            if slot.num ~= nil then
+                -- Read the published data; the NPC opens its own backpack.
+                local item = EquipSlots.ContainerItem(overflow, slot.num)
+                if item == nil then
+                    if slot.tile ~= nil then slot:SetTile(nil) end
+                elseif slot.tile == nil or slot.tile.item ~= item then
+                    slot:SetTile(ItemTile(item))
+                else
+                    slot.tile:Refresh()
+                end
             end
         end
     end

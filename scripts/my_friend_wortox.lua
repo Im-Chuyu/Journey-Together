@@ -16,6 +16,8 @@ local RefreshHeart
 
 function M.CanMakeHeart(inst)
     return inst.prefab == "wortox" and inst:HasTag("my_friend")
+        and not (TheWorld ~= nil and TheWorld._my_friend_possession_active)
+        and not inst._my_friend_possess_parked
         and not inst:HasTag("playerghost") and inst.components.health ~= nil
         and not inst.components.health:IsDead() and inst.components.inventory ~= nil
         and inst.components.inventory:Has("wortox_soul", M.HEART_SOUL_COST) == true
@@ -46,7 +48,7 @@ function M.MakeHeart(inst)
         RefreshHeart(heart, inst)
     end
     inst:PushEvent("builditem", {item = heart, recipe = GetValidRecipe("wortox_reviver")})
-    Dialogue.RandomReply(inst, "heart_made")
+    Dialogue.Say(inst, "heart_made")
     return true
 end
 
@@ -66,9 +68,12 @@ function M.GetMakeHeartAction(inst, ghost)
             if inst._my_friend_command == command then Commands.Clear(inst) end
         end)
         action:AddFailAction(function()
-            if not action._my_friend_cancelled and inst._my_friend_command == command then
+            if not action._my_friend_cancelled
+                and not (TheWorld ~= nil and TheWorld._my_friend_possession_active)
+                and not inst._my_friend_possess_parked
+                and inst._my_friend_command == command then
                 Commands.Clear(inst)
-                Dialogue.RandomReply(inst, "heart_make_failed")
+                Dialogue.Say(inst, "heart_make_failed")
             end
         end)
     end
@@ -76,12 +81,13 @@ function M.GetMakeHeartAction(inst, ghost)
 end
 
 function M.GetMakeHeartCommandAction(inst)
+    if TheWorld ~= nil and TheWorld._my_friend_possession_active then return end
     local Commands = require("my_friend_commands")
     local command = Commands.Get(inst)
     if command == nil or command.id ~= "make_heart" or Policy.IsBusy(inst) then return end
     if not M.CanMakeHeart(inst) then
         Commands.Clear(inst)
-        Dialogue.RandomReply(inst, "heart_make_failed")
+        Dialogue.Say(inst, "heart_make_failed")
         return
     end
     return M.GetMakeHeartAction(inst)
@@ -104,8 +110,9 @@ local function FindHeartOwner(id)
     -- player. The parked AI body shares the session ID and must not win.
     for _, player in ipairs(AllPlayers) do
         if player:IsValid() and player._my_friend_id == id
-            and player:HasTag("my_friend_possessed") then
-            return player.prefab == "wortox" and player or nil
+            and player:HasTag("my_friend_possessed")
+            and player.prefab == "wortox" then
+            return player
         end
     end
     local friend = TheWorld._my_friend
@@ -139,8 +146,7 @@ function M.RefreshLinkedHearts(owner)
     EnsureOwnerEvents(owner)
     for heart in pairs(linked_hearts) do
         if heart:IsValid() and heart._my_friend_heart_owner_id == owner._my_friend_id then
-            RefreshHeart(heart, FindHeartOwner(owner._my_friend_id)
-                or owner.prefab == "wortox" and owner or nil)
+            RefreshHeart(heart)
         end
     end
 end
@@ -148,8 +154,14 @@ end
 RefreshHeart = function(heart, owner)
     local linked = heart.components.linkeditem
     if heart._my_friend_heart_owner_id == nil then return linked.owner_inst end
-    owner = owner or FindHeartOwner(heart._my_friend_heart_owner_id)
     local old = heart._my_friend_heart_owner
+    if owner == nil and old ~= nil and old:IsValid()
+        and not old._my_friend_possess_parked
+        and old.prefab == "wortox"
+        and old._my_friend_id == heart._my_friend_heart_owner_id then
+        owner = old
+    end
+    owner = owner or FindHeartOwner(heart._my_friend_heart_owner_id)
     if old ~= owner then
         if old ~= nil then
             heart:RemoveEventCallback("onremove", heart._my_friend_heart_removed, old)
