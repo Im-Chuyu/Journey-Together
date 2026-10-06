@@ -219,18 +219,25 @@ local function AddressedMessage(friend, message)
         local current = friend._my_friend_custom_name or friend:GetDisplayName()
         if type(current) == "string" and current ~= "" then names[#names + 1] = "奶"..current:lower() end
     end
-    local name_length
+    local name_start, name_length
     for _, name in ipairs(names) do
-        -- Commands start with an address. A name merely mentioned later in a
-        -- conversation, or embedded in a longer English word, is not an order.
-        if name ~= "" and text:sub(1, #name) == name
-            and (not name:find("[a-z]") or not text:sub(#name + 1, #name + 1):match("[%a%d_]"))
-            and (name_length == nil or #name > name_length) then
-            name_length = #name
+        local first, last
+        if name ~= "" then first, last = text:find(name, 1, true) end
+        local before = first ~= nil and text:sub(first - 1, first - 1) or ""
+        local after = last ~= nil and text:sub(last + 1, last + 1) or ""
+        local latin_boundary = not name:find("[a-z]")
+            or not before:match("[%a%d_]") and not after:match("[%a%d_]")
+        if first ~= nil and latin_boundary
+            and (name_start == nil or first < name_start
+                or first == name_start and #name > name_length) then
+            name_start, name_length = first, #name
         end
     end
-    if name_length ~= nil then
-        return message:sub(offset + name_length)
+    if name_start ~= nil then
+        -- Lua treats a negative substring end as an offset from the tail.
+        local prefix = name_start > 1 and message:sub(offset, offset + name_start - 2) or ""
+        local suffix = message:sub(offset + name_start + name_length - 1)
+        return prefix .. suffix
     end
 end
 

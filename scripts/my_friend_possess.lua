@@ -10,6 +10,7 @@ local RestoreCompanion
 local RestoreActiveSession
 local Characters = require("my_friend_characters")
 local WX78 = require("my_friend_wx78")
+local Abigail = require("my_friend_abigail")
 local InventoryTransfer = require("my_friend_inventory_transfer")
 
 local function DefaultSkin(prefab)
@@ -203,6 +204,7 @@ local function LoadBodyTraits(inst, body, skill_data)
         LoadMeters(inst, body ~= nil and body.meters or nil)
         ApplySkillTree(inst, skill_data or body ~= nil and body.skill_data or nil)
     end
+    Abigail.LoadBody(inst, body ~= nil and body.abigail or nil)
 end
 
 local function SaveSkin(inst)
@@ -266,6 +268,7 @@ local function CaptureTemporary(sess)
         inv = CaptureInventory(friend), meters = SaveMeters(friend),
         skill_data = SaveSkillTree(friend), custom_name = friend._my_friend_custom_name,
         wx78 = WX78.Save(friend),
+        abigail = Abigail.SaveBody(friend),
     }
     sess.companion_pet_data = friend.components.petleash ~= nil
         and friend.components.petleash:OnSave() or nil
@@ -328,6 +331,7 @@ local function StartSwap(player, prefab, skin, trusted)
         WX78.LoadSockets(player, sockets)
         return false
     end
+    Abigail.RemoveSource(player)
     return true
 end
 
@@ -380,6 +384,7 @@ local function CaptureActiveSession(sess, player)
         meters = SaveMeters(player),
         skill_data = SaveSkillTree(player),
         wx78 = WX78.Save(player),
+        abigail = Abigail.SaveBody(player),
     }
     sess.active_position = {x = x, z = z}
     sess.active_prefab = player.prefab
@@ -709,6 +714,7 @@ local function FinishRestoredSession(sess, player)
     if sess.active_position ~= nil and player.Physics ~= nil then
         player.Physics:Teleport(sess.active_position.x, 0, sess.active_position.z)
     end
+    Abigail.Place(player)
     if sess.active_skin_data ~= nil then
         require("my_friend_replication").RestoreSkin(player, {
             my_friend_skin = sess.active_skin_data,
@@ -809,10 +815,12 @@ local function FinishSwap(_, player)
                 LoadBodyTraits(inst, body)
             else
                 ApplySkillTree(inst, body ~= nil and body.skill_data or nil)
+                Abigail.LoadBody(inst, body ~= nil and body.abigail or nil)
             end
             if sess.release_position ~= nil and inst.Physics ~= nil then
                 inst.Physics:Teleport(sess.release_position.x, 0, sess.release_position.z)
             end
+            Abigail.Place(inst)
             if inst.components ~= nil and inst.components.named ~= nil
                 and sess.player_name ~= nil then
                 inst.components.named:SetName(sess.player_name)
@@ -901,6 +909,8 @@ function M.Possess(player, friend)
     local was_following = follower ~= nil and follower:GetLeader() == player
     local affinity = friend.components.my_friend_affinity
     local companion_skin_data = SaveSkin(friend)
+    local companion_abigail = Abigail.SaveBody(friend)
+    local player_abigail = Abigail.SaveBody(player)
     local safe_companion_skin = SkinForBody(player, friend.prefab,
         companion_skin_data ~= nil and companion_skin_data.skin_name or nil)
     local leash = friend.components.petleash
@@ -927,6 +937,7 @@ function M.Possess(player, friend)
             custom_name = friend._my_friend_custom_name,
             skill_data = SaveSkillTree(friend),
             wx78 = WX78.Save(friend),
+            abigail = companion_abigail,
         },
         companion_affinity = SaveAffinity(friend),
         player_body = {
@@ -938,6 +949,7 @@ function M.Possess(player, friend)
             custom_name = friend._my_friend_custom_name or friend:GetDisplayName(),
             skill_data = SaveSkillTree(player),
             wx78 = WX78.Save(player),
+            abigail = player_abigail,
         },
         companion_skill_data = SaveSkillTree(friend),
         player_prefab = player.prefab,
@@ -1001,6 +1013,7 @@ function M.Possess(player, friend)
         sessions[player.userid] = nil
         return false
     end
+    Abigail.RemoveSource(friend)
     return true
 end
 
@@ -1018,8 +1031,10 @@ function M.Release(player)
     sess.companion_skill_data = SaveSkillTree(player)
     sess.companion_skin_data = SaveSkin(player)
     sess.companion_prefab = player.prefab
+    local abigail = Abigail.SaveBody(player)
     local body = {inv = SaveAndClearInventory(player), meters = SaveMeters(player),
-        skill_data = sess.companion_skill_data, wx78 = WX78.Save(player)}
+        skill_data = sess.companion_skill_data, wx78 = WX78.Save(player),
+        abigail = abigail}
     body.custom_name = sess.companion_custom_name
     sess.release_body = body
     sess.release_position = {x = x, z = z}

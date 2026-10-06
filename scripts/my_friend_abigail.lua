@@ -8,6 +8,70 @@ function M.IsOwner(inst)
         and inst.components.ghostlybond ~= nil
 end
 
+function M.SaveBody(inst)
+    if not M.IsOwner(inst) then return end
+    if inst._my_friend_pending_abigail ~= nil then
+        return deepcopy(inst._my_friend_pending_abigail)
+    end
+    local bond = inst.components.ghostlybond
+    local ghost = bond.ghost
+    local hp = ghost ~= nil and ghost:IsValid() and ghost.components.health or nil
+    local data = bond:OnSave()
+    -- Abigail spawns with level-one health before LinkToPlayer sets her level.
+    -- Save the maximum too so the native load cannot clamp a level-three HP.
+    if hp ~= nil and data.ghost ~= nil and data.ghost.data ~= nil
+        and data.ghost.data.health ~= nil then
+        data.ghost.data.health.maxhealth = hp.maxhealth
+    end
+    return {
+        bond = data,
+        health_percent = hp ~= nil and hp:GetPercent() or nil,
+        defensive = ghost ~= nil and ghost.is_defensive,
+        skin = inst._my_friend_abigail_skin or ghost ~= nil and ghost.skinname or nil,
+        resting = inst._my_friend_abigail_resting,
+        summon_delay = math.max(0, (inst._my_friend_abigail_next or 0) - GetTime()),
+    }
+end
+
+function M.LoadBody(inst, data)
+    if not M.IsOwner(inst) or data == nil or data.bond == nil then return end
+    if type(POSTACTIVATEHANDSHAKE) == "table" and POSTACTIVATEHANDSHAKE.READY ~= nil
+        and inst.userid ~= nil and not inst:HasTag("my_friend")
+        and inst._PostActivateHandshakeState_Server ~= POSTACTIVATEHANDSHAKE.READY then
+        inst._my_friend_pending_abigail = data
+        if inst._my_friend_abigail_ready_fn == nil then
+            inst._my_friend_abigail_ready_fn = function()
+                local pending = inst._my_friend_pending_abigail
+                inst._my_friend_pending_abigail = nil
+                inst:RemoveEventCallback("ms_skilltreeinitialized", inst._my_friend_abigail_ready_fn)
+                inst._my_friend_abigail_ready_fn = nil
+                M.LoadBody(inst, pending)
+            end
+            inst:ListenForEvent("ms_skilltreeinitialized", inst._my_friend_abigail_ready_fn)
+        end
+        return
+    end
+    local bond = inst.components.ghostlybond
+    M.RemoveSource(inst)
+    bond:OnLoad(deepcopy(data.bond))
+    inst._my_friend_abigail_skin = data.skin
+    inst._my_friend_abigail_resting = data.resting
+    inst._my_friend_abigail_next = GetTime() + (data.summon_delay or 0)
+    local ghost = bond.ghost
+    if ghost == nil or not ghost:IsValid() then
+        bond:SpawnGhost()
+        bond:SetBondLevel(data.bond.bondlevel or 1, data.bond.elapsedtime, true)
+        ghost = bond.ghost
+    end
+    if inst._bondlevel ~= nil then inst._bondlevel:set(bond.bondlevel) end
+    if data.health_percent ~= nil and ghost.components.health ~= nil then
+        ghost.components.health:SetPercent(data.health_percent, true, "file_load")
+    end
+    if data.defensive == false then ghost:BecomeAggressive() end
+    if inst:HasTag("my_friend") then M.ConfigureGhost(inst, ghost) end
+    M.Place(inst)
+end
+
 -- The Clean Sweeper only reskins a pet whose _playerlink is the caster. The
 -- companion's Abigail is linked to the companion, so the vanilla check is
 -- lifted for players the companion likes (same 50 affinity as its own outfit).

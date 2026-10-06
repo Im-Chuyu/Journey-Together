@@ -922,26 +922,43 @@ AddPlayerPostInit(function(inst)
 end)
 
 local OldNetworkingSay = _G.Networking_Say
-local function IsCommandChat(_, isemote)
-    -- Whisper messages still arrive through Networking_Say and should be
-    -- understood by the companion. Emotes are kept out because their text is
-    -- not ordinary player chat and can otherwise trigger commands accidentally.
-    local emote = isemote == true or isemote == 1 or isemote == "emote"
-    return not emote
-end
+local ChatCommands = require("my_friend_chat")
+
+AddModRPCHandler("MyFriends", "ChatCommand", function(player, message)
+    ChatCommands.Dispatch(player, message, "rpc")
+end)
+
+AddClassPostConstruct("screens/chatinputscreen", function(self)
+    local run = self.Run
+    self.Run = function(screen, ...)
+        local message = screen.chat_edit ~= nil and screen.chat_edit:GetString() or nil
+        message = type(message) == "string" and message:match("^%s*(.-%S)%s*$") or nil
+        local result = run(screen, ...)
+        if message ~= nil and message:sub(1, 1) ~= "/"
+            and message:utf8len() <= _G.MAX_CHAT_INPUT_LENGTH then
+            ChatCommands.Forward(_G.ThePlayer, message, "input")
+        end
+        return result
+    end
+end)
 
 _G.Networking_Say = function(guid, userid, name, prefab, message, colour, whisper, isemote, ...)
-    if _G.TheWorld ~= nil and _G.TheWorld.ismastersim and IsCommandChat(whisper, isemote)
+    if _G.TheWorld ~= nil and ChatCommands.IsCommandChat(isemote)
         and type(message) == "string" then
-        local player
-        -- Chat's GUID is not guaranteed to be the local player entity GUID.
-        for _, online in ipairs(_G.AllPlayers or {}) do
-            if online.userid == userid and not online:HasTag("my_friend") then player = online break end
-        end
-        local friend = _G.TheWorld._my_friend
-        if player ~= nil and player:IsValid() and player.userid == userid
-            and friend ~= nil and friend:IsValid() and friend.components.my_friend_affinity ~= nil then
-            Commands.Dispatch(friend, player, message)
+        if _G.TheWorld.ismastersim then
+            -- Resolve by userid because a seamless swap changes the entity GUID.
+            for _, online in ipairs(_G.AllPlayers or {}) do
+                if online.userid == userid and online:IsValid()
+                    and not online:HasTag("my_friend") and not online._despawning then
+                    ChatCommands.Dispatch(online, message, "native")
+                    break
+                end
+            end
+        elseif _G.ThePlayer ~= nil and _G.ThePlayer:IsValid()
+            and _G.ThePlayer.userid == userid then
+            -- Dedicated servers may not run the presentation-side chat callback.
+            -- Only the sender forwards it; the RPC authenticates the player.
+            ChatCommands.Forward(_G.ThePlayer, message, "echo")
         end
     end
     return OldNetworkingSay(guid, userid, name, prefab, message, colour, whisper, isemote, ...)
