@@ -17,6 +17,7 @@ function M.Available(inst, item)
     local inv = item ~= nil and item:IsValid() and item.components.inventoryitem or nil
     if inv == nil or inv.islockedinslot or Storage.IsReserved(inst, item)
         or Food.IsForbiddenFood(item)
+        or inst.prefab ~= "warly" and (item.prefab == "lightninggoathorn" or item.prefab == "boneshard")
         or item:HasAnyTag("spoiled", "irreplaceable") then return false end
     local owner = inv.owner
     local c = owner ~= nil and owner.components.container or nil
