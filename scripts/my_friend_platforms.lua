@@ -1,5 +1,6 @@
 local Policy = require("my_friend_policy")
 local M = {}
+M.OBSERVE_PERIOD = .5
 
 local function Capture(point, platform)
     if platform ~= nil and platform:IsValid() then

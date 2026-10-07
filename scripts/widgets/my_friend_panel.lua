@@ -603,7 +603,7 @@ end
 function MyFriendPanel:OnUpdate(dt)
     if not self.shown then return end
     self.refresh_timer = self.refresh_timer + dt
-    if self.refresh_timer >= .1 then
+    if self.refresh_timer >= .25 then
         self.refresh_timer = 0
         self:Refresh()
     end

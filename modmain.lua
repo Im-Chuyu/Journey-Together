@@ -571,7 +571,6 @@ _G.STRINGS.CHARACTERS.GENERIC.DESCRIBE.MY_FRIEND = Text("这是我的伙伴。",
 local function PushPanelData(inst)
     if not inst:IsValid() or not inst:HasTag("my_friend")
         or inst._my_friend_panel_net == nil or inst.components == nil then return end
-    FriendReplication.Sync(inst)
     local health, hunger, sanity = inst.components.health, inst.components.hunger, inst.components.sanity
     -- Trailing flags: 1 = free character change, 2 = free rename.
     local affinity = inst.components.my_friend_affinity
@@ -591,16 +590,19 @@ local function PushPanelData(inst)
         inst._my_friend_panel_payload = panel
         inst._my_friend_panel_net:set(panel)
     end
+end
+
+local function PushSkinData(inst)
+    if not inst:IsValid() or not inst:HasTag("my_friend") or inst._my_friend_skin_net == nil
+        or inst.components == nil or inst.components.skinner == nil then return end
     local skinner = inst.components.skinner
-    if inst._my_friend_skin_net ~= nil and skinner ~= nil then
-        local skins = skinner:GetClothing()
-        local skin_payload = string.format("%s|%s|%s|%s|%s",
-            skins.base or (inst.prefab .. "_none"), skins.body or "", skins.hand or "",
-            skins.legs or "", skins.feet or "")
-        if inst._my_friend_skin_payload ~= skin_payload then
-            inst._my_friend_skin_payload = skin_payload
-            inst._my_friend_skin_net:set(skin_payload)
-        end
+    local skins = skinner:GetClothing()
+    local skin_payload = string.format("%s|%s|%s|%s|%s",
+        skins.base or (inst.prefab .. "_none"), skins.body or "", skins.hand or "",
+        skins.legs or "", skins.feet or "")
+    if inst._my_friend_skin_payload ~= skin_payload then
+        inst._my_friend_skin_payload = skin_payload
+        inst._my_friend_skin_net:set(skin_payload)
     end
 end
 
@@ -762,17 +764,20 @@ local function ConfigureFriend(inst)
         inst._my_friend_save_hooks_added = true
     end
     PushPanelData(inst)
+    FriendReplication.Configure(inst)
+    inst:ListenForEvent("my_friend_skin_changed", PushSkinData)
+    PushSkinData(inst)
     inst._my_friend_panel_task = inst:DoPeriodicTask(.5, PushPanelData)
-    inst._my_friend_greeting_task = inst:DoPeriodicTask(.5, CoreAI.UpdateGreetings)
-    inst._my_friend_inventory_task = inst:DoPeriodicTask(1, CoreAI.MergeOneStack)
+    inst._my_friend_greeting_task = inst:DoPeriodicTask(CoreAI.GREETING_INTERVAL, CoreAI.UpdateGreetings)
     Dialogue.Configure(inst)
     require("my_friend_survival_ai").ConfigureShelter(inst)
     require("my_friend_offscreen").Configure(inst)
-    inst._my_friend_platform_task = inst:DoPeriodicTask(.1, require("my_friend_platforms").Observe)
-    inst._my_friend_care_task = inst:DoPeriodicTask(2, require("my_friend_social_ai").UpdateCare)
+    local Platforms = require("my_friend_platforms")
+    inst._my_friend_platform_task = inst:DoPeriodicTask(Platforms.OBSERVE_PERIOD, Platforms.Observe)
+    inst._my_friend_care_task = inst:DoPeriodicTask(5, require("my_friend_social_ai").UpdateCare)
     inst._my_friend_beefalo_leash_task = inst:DoPeriodicTask(3,
         require("my_friend_riding").UpdateLeashing)
-    inst._my_friend_permission_task = inst:DoPeriodicTask(3, Home.UpdateAsk)
+    inst._my_friend_permission_task = inst:DoPeriodicTask(5, Home.UpdateAsk)
     inst._my_friend_farewell_task = inst:DoPeriodicTask(1,
         require("my_friend_farewell").Update)
     inst:ListenForEvent("leaderchanged", function(_, data)
@@ -1315,6 +1320,7 @@ AddModRPCHandler("MyFriends", "PanelOpen", function(player, friend)
     if CanManage(player, friend) then
         player._my_friend_panel_target = friend
         FriendReplication.ForceRefresh(friend)
+        FriendReplication.Sync(friend, true)
         PushPanelData(friend)
     end
 end)
@@ -1586,6 +1592,8 @@ AddClassPostConstruct("widgets/controls", function(self)
         if IsActualCompanion(target) then
             panel:ShowFriend(target)
             panel:MoveToFront()
+            if self.mousefollow ~= nil then self.mousefollow:MoveToFront() end
+            if self.hover ~= nil then self.hover:MoveToFront() end
         end
     end
     if panel_ui_button or wheel_ui_button then

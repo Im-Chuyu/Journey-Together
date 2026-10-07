@@ -1,6 +1,7 @@
 local M = {}
 local EquipSlots = require("my_friend_equip_slots")
 local SYNC_PERIOD = 1.5
+local REFERENCE_CACHE_PERIOD = .5
 
 -- NPC inventories have no owning client. Publish their read-only replicas;
 -- all transfers still pass the existing server-side distance/affinity checks.
@@ -21,9 +22,9 @@ function M.ForceRefresh(inst)
     end
 end
 
-function M.Sync(inst)
+function M.Sync(inst, force)
     local now = GetTime()
-    if now < (inst._my_friend_replication_next or 0) then return end
+    if not force and now < (inst._my_friend_replication_next or 0) then return end
     inst._my_friend_replication_next = now + SYNC_PERIOD
     local inventory = inst.components.inventory
     if inventory == nil then return end
@@ -59,6 +60,145 @@ function M.Sync(inst)
             container.classified.Network:SetClassifiedTarget(nil)
         end
     end
+end
+
+local OWNER_EVENTS = {"itemget", "itemlose", "equip", "unequip", "setoverflow", "newactiveitem"}
+
+local function InvalidateReferenceCache(inst)
+    local inventory = inst.components ~= nil and inst.components.inventory or nil
+    if inventory ~= nil then
+        inventory._my_friend_reference_items = nil
+        inventory._my_friend_reference_items_at = nil
+    end
+end
+
+local function InstallReferenceCache(inst)
+    local inventory = inst.components.inventory
+    if inventory._my_friend_reference_items_original ~= nil then return end
+    local original = inventory.ReferenceAllItems
+    inventory._my_friend_reference_items_original = original
+    inventory.ReferenceAllItems = function(self, ...)
+        local now = GetTime()
+        local items = self._my_friend_reference_items
+        if items == nil or now >= (self._my_friend_reference_items_at or 0) then
+            items = original(self, ...)
+            self._my_friend_reference_items = items
+            self._my_friend_reference_items_at = now + REFERENCE_CACHE_PERIOD
+        end
+        -- Some callers append the active item; never expose the cached array.
+        local result = {}
+        for index, item in ipairs(items) do result[index] = item end
+        return result
+    end
+end
+
+local function ClearWatchers(inst)
+    for _, field in ipairs({"_my_friend_inventory_item_watchers", "_my_friend_inventory_container_watchers"}) do
+        for entity, handler in pairs(inst[field] or {}) do
+            if entity:IsValid() then
+                local events = field == "_my_friend_inventory_item_watchers"
+                    and {"stacksizechange"} or {"itemget", "itemlose"}
+                for _, event in ipairs(events) do entity:RemoveEventCallback(event, handler) end
+            end
+        end
+        inst[field] = nil
+    end
+end
+
+local function MarkChanged(inst, merge)
+    if not inst:IsValid() then return end
+    InvalidateReferenceCache(inst)
+    inst._my_friend_inventory_merge_dirty = inst._my_friend_inventory_merge_dirty or merge == true
+    if inst._my_friend_inventory_event_task ~= nil then return end
+    inst._my_friend_inventory_event_task = inst:DoTaskInTime(.1, function(owner)
+        owner._my_friend_inventory_event_task = nil
+        if not owner:IsValid() then return end
+        M.RefreshInventoryWatchers(owner)
+        M.Sync(owner, true)
+        if owner._my_friend_inventory_merge_dirty then
+            owner._my_friend_inventory_merge_dirty = nil
+            if require("my_friend_core_ai").MergeOneStack(owner) then
+                MarkChanged(owner, true)
+            end
+        end
+    end)
+end
+
+local function UpdateWatchers(inst, field, current, events, callback)
+    local watched = inst[field] or {}
+    for entity, handler in pairs(watched) do
+        if current[entity] then
+            current[entity] = nil
+        elseif entity:IsValid() then
+            for _, event in ipairs(events) do
+                entity:RemoveEventCallback(event, handler)
+            end
+            watched[entity] = nil
+        else
+            watched[entity] = nil
+        end
+    end
+    for entity in pairs(current) do
+        local handler = function() callback(inst) end
+        watched[entity] = handler
+        for _, event in ipairs(events) do entity:ListenForEvent(event, handler) end
+    end
+    inst[field] = watched
+end
+
+function M.RefreshInventoryWatchers(inst)
+    local inventory = inst.components ~= nil and inst.components.inventory or nil
+    if inventory == nil then return end
+    local items, containers, pending, scanned = {}, {}, {}, {}
+    for _, item in ipairs(inventory:ReferenceAllItems()) do
+        if item ~= nil and item:IsValid() then
+            items[item] = true
+            if item.components ~= nil and item.components.container ~= nil then
+                pending[#pending + 1] = item
+            end
+        end
+    end
+    local overflow = EquipSlots.BackpackContainer(inventory)
+    local overflow_inst = overflow ~= nil and overflow.inst or nil
+    if overflow_inst ~= nil and overflow_inst:IsValid() then pending[#pending + 1] = overflow_inst end
+    while #pending > 0 do
+        local entity = table.remove(pending)
+        if entity ~= nil and entity:IsValid() and not scanned[entity] then
+            scanned[entity], containers[entity] = true, true
+            local container = entity.components ~= nil and entity.components.container or nil
+            for _, item in pairs(container ~= nil and container:GetAllItems() or {}) do
+                if item ~= nil and item:IsValid() then
+                    items[item] = true
+                    if item.components ~= nil and item.components.container ~= nil then
+                        pending[#pending + 1] = item
+                    end
+                end
+            end
+        end
+    end
+    UpdateWatchers(inst, "_my_friend_inventory_item_watchers", items,
+        {"stacksizechange"}, function(owner) MarkChanged(owner, true) end)
+    UpdateWatchers(inst, "_my_friend_inventory_container_watchers", containers,
+        {"itemget", "itemlose"}, function(owner) MarkChanged(owner, true) end)
+end
+
+function M.Configure(inst)
+    if inst._my_friend_inventory_events_configured
+        or inst.components == nil or inst.components.inventory == nil then return end
+    inst._my_friend_inventory_events_configured = true
+    InstallReferenceCache(inst)
+    for _, event in ipairs(OWNER_EVENTS) do
+        inst:ListenForEvent(event, function() MarkChanged(inst, true) end)
+    end
+    inst:ListenForEvent("onremove", function()
+        if inst._my_friend_inventory_event_task ~= nil then
+            inst._my_friend_inventory_event_task:Cancel()
+            inst._my_friend_inventory_event_task = nil
+        end
+        ClearWatchers(inst)
+    end)
+    M.RefreshInventoryWatchers(inst)
+    MarkChanged(inst, false)
 end
 
 -- A base skin is per character: applying "wendy_none" to Wilson makes him

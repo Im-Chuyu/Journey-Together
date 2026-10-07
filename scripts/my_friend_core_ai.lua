@@ -69,7 +69,6 @@ end
 
 function M.GetOpportunityAction(inst)
     if not CanMaintainInventory(inst) then return end
-    M.MergeOneStack(inst)
 
     local action = BehaviourAI.GetFoodOrResourceAction(inst)
     if action == nil then
@@ -136,7 +135,7 @@ function M.UpdateGreetings(inst)
     local players = AllPlayers or {}
     local count = #players
     if count == 0 then
-        inst._my_friend_next_greeting = now + .5
+        inst._my_friend_next_greeting = now + M.GREETING_INTERVAL
         return false
     end
     local start = (inst._my_friend_greeting_index or 0) % count + 1
@@ -156,7 +155,7 @@ function M.UpdateGreetings(inst)
             return true
         end
     end
-    inst._my_friend_next_greeting = now + .5
+    inst._my_friend_next_greeting = now + M.GREETING_INTERVAL
     return false
 end
 

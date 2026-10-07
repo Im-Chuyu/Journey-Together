@@ -259,15 +259,28 @@ function M.Find(inst, cooker, pool, wanted)
         signature[#signature + 1] = group.prefab .. "=" .. group.count
     end
     signature = table.concat(signature, ":")
+    local now = GetTime()
     local searches = inst._my_friend_recipe_search or {}
     inst._my_friend_recipe_search = searches
+    local oldest_key, oldest_time
+    for key, entry in pairs(searches) do
+        if now - (entry.last_used or 0) > 30 then
+            searches[key] = nil
+        elseif oldest_time == nil or entry.last_used < oldest_time then
+            oldest_key, oldest_time = key, entry.last_used
+        end
+    end
     local search = searches[signature]
     if search == nil then
+        local count = 0
+        for _ in pairs(searches) do count = count + 1 end
+        if count >= 8 and oldest_key ~= nil then searches[oldest_key] = nil end
         search = {thread = coroutine.create(function()
             return SpecificSearch(inst, cooker, ingredients, wanted)
         end)}
         searches[signature] = search
     end
+    search.last_used = now
     if coroutine.status(search.thread) ~= "dead" then
         local ok, plan = coroutine.resume(search.thread)
         if not ok then error(plan) end
