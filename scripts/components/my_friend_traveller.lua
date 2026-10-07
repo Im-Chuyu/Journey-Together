@@ -19,6 +19,27 @@ function Traveller:Capture()
     friend.components.inventory:CloseAllChestContainers()
     local record = friend:GetSaveRecord()
     if record == nil then return end
+    -- The bell's save record already contains the bound beefalo. The source
+    -- entity must be removed before the companion leaves this shard, or the
+    -- non-persistent beefalo remains in the old world while the destination
+    -- shard reconstructs another copy from the bell.
+    local inventory = friend.components.inventory
+    local removed = {}
+    for _, item in ipairs(inventory ~= nil and inventory:ReferenceAllItems() or {}) do
+        if item ~= nil and item:IsValid() and item:HasTag("bell")
+            and item.GetBeefalo ~= nil then
+            local ok, beefalo = pcall(item.GetBeefalo, item)
+            if ok and beefalo ~= nil and beefalo:IsValid() and not removed[beefalo] then
+                removed[beefalo] = true
+                beefalo.persists = false
+                local leader = item.components ~= nil and item.components.leader or nil
+                local onremove = leader ~= nil and leader.onremovefollower or nil
+                if leader ~= nil then leader.onremovefollower = nil end
+                beefalo:Remove()
+                if leader ~= nil then leader.onremovefollower = onremove end
+            end
+        end
+    end
     self.record = record
     self.userid = self.inst.userid
     self.possession = require("my_friend_possess").CaptureMigration(self.inst, friend)
