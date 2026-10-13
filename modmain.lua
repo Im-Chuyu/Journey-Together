@@ -1333,8 +1333,9 @@ AddModRPCHandler("MyFriends", "WheelCommand", function(player, friend, command_i
         end
         return
     end
-    if type(command_id) ~= "string" or not CanManage(player, friend, true,
-        command_id == "read_book" or command_id == "squeeze_heart") then return end
+    -- Dispatch owns command-specific permissions. In particular, a follow
+    -- request must reach affinity even when someone else is the leader.
+    if type(command_id) ~= "string" or not CanManage(player, friend, true, true) then return end
     require("my_friend_commands").DispatchWheel(friend, player, command_id)
 end)
 

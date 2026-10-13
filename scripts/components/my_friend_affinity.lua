@@ -284,15 +284,15 @@ function Affinity:RequestFollow(player)
     local userid = UserID(player)
     if userid == nil or not Policy.IsLocalPlayer(player) or not self:CanFollow(userid)
         or player:HasTag("playerghost") or player:HasTag("my_friend") then return false end
+    -- An idle companion must not reserve an old requester's priority.
+    if Policy.GetLeader(self.inst) == nil then self.requests = {} end
     require("my_friend_home").Resume(self.inst)
     self.staying = false
-    for _, id in ipairs(self.requests) do
-        if id == userid then
-            self:UpdateLeader()
-            return true
-        end
+    for index = #self.requests, 1, -1 do
+        if self.requests[index] == userid then table.remove(self.requests, index) end
     end
-    self.requests[#self.requests + 1] = userid
+    -- Latest request wins within a priority tier, including repeated requests.
+    table.insert(self.requests, 1, userid)
     self:UpdateLeader()
     return true
 end

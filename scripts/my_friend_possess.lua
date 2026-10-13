@@ -96,6 +96,8 @@ local function CanStartSwap(player, prefab, trusted)
     return IsLiving(player) and player.userid ~= nil and player.userid ~= ""
         and player.components.skinner ~= nil and player.components.inventory ~= nil
         and sw ~= nil and not sw._my_friend_swap_in_progress
+        and (player._PostActivateHandshakeState_Server == nil
+            or player._PostActivateHandshakeState_Server == POSTACTIVATEHANDSHAKE.READY)
         and type(sw._StartSwap) == "function"
         and (prefab == nil or Characters.IsCharacter(prefab)
             and (trusted or PlayerOwnsCharacter(player, prefab)))
@@ -570,10 +572,11 @@ local function RestoreTemporary(sess, player)
 end
 
 local function AfterSwap(sess, player, callback)
-    -- An entity-owned task is cancelled if the player disconnects during the
-    -- 0.1s handover. Use the world so session locks always get cleaned up.
+    -- Server spawning precedes the remote HUD/classified handover. Keep the
+    -- session locked until the native client activation handshake completes.
+    -- World-owned tasks also clean up when the player disconnects mid-swap.
     local world = World()
-    world:DoTaskInTime(.1, function()
+    local function Finish()
         if Sessions()[sess.userid or player.userid] ~= sess then return end
         if not player:IsValid() or player._despawning then
             local saved = CopySession(sess)
@@ -591,8 +594,14 @@ local function AfterSwap(sess, player, callback)
             world._my_friend_possession_active = nil
             return
         end
+        if player._PostActivateHandshakeState_Server ~= nil
+            and player._PostActivateHandshakeState_Server ~= POSTACTIVATEHANDSHAKE.READY then
+            world:DoTaskInTime(.1, Finish)
+            return
+        end
         callback(player)
-    end)
+    end
+    world:DoTaskInTime(.1, Finish)
 end
 
 local function RecoverSavedSessions(world)
@@ -708,23 +717,23 @@ local function FinishRestoredSession(sess, player)
     if sess == nil or player == nil or not player:IsValid()
         or sess.active_body == nil then return end
     local world = World()
-    local body = sess.active_body
-    LoadInventory(player, body.inv)
-    LoadBodyTraits(player, body)
-    if sess.active_position ~= nil and player.Physics ~= nil then
-        player.Physics:Teleport(sess.active_position.x, 0, sess.active_position.z)
-    end
-    Abigail.Place(player)
-    if sess.active_skin_data ~= nil then
-        require("my_friend_replication").RestoreSkin(player, {
-            my_friend_skin = sess.active_skin_data,
-        })
-    end
     MarkPossessedPlayer(player, sess)
     sess._restore_pending = true
     if world ~= nil then world._my_friend_possession_active = true end
     AfterSwap(sess, player, function(inst)
         if not inst:IsValid() or SessionFor(inst) ~= sess then return end
+        local body = sess.active_body
+        LoadInventory(inst, body.inv)
+        LoadBodyTraits(inst, body)
+        if sess.active_position ~= nil and inst.Physics ~= nil then
+            inst.Physics:Teleport(sess.active_position.x, 0, sess.active_position.z)
+        end
+        Abigail.Place(inst)
+        if sess.active_skin_data ~= nil then
+            require("my_friend_replication").RestoreSkin(inst, {
+                my_friend_skin = sess.active_skin_data,
+            })
+        end
         RestoreTemporary(sess, inst)
         sess.phase = nil
         sess.active_body = nil
@@ -769,18 +778,18 @@ local function FinishSwap(_, player)
         FinishRestoredSession(sess, player)
     elseif sess.phase == "enter" then
         sess.phase = "enter_ready"
-        LoadInventory(player, sess.companion_body ~= nil and sess.companion_body.inv or nil)
-        LoadBodyTraits(player, sess.companion_body, sess.companion_skill_data)
-        if sess.companion_skin_data ~= nil then
-            require("my_friend_replication").RestoreSkin(player, {
-                my_friend_skin = sess.companion_skin_data,
-            })
-        end
         MarkPossessedPlayer(player, sess)
         local world = World()
         if world ~= nil then world._my_friend_possession_active = true end
         AfterSwap(sess, player, function(inst)
             if not inst:IsValid() or SessionFor(inst) ~= sess then return end
+            LoadInventory(inst, sess.companion_body ~= nil and sess.companion_body.inv or nil)
+            LoadBodyTraits(inst, sess.companion_body, sess.companion_skill_data)
+            if sess.companion_skin_data ~= nil then
+                require("my_friend_replication").RestoreSkin(inst, {
+                    my_friend_skin = sess.companion_skin_data,
+                })
+            end
             RestoreTemporary(sess, inst)
             if sess.temporary_companion ~= nil then
                 require("my_friend_dialogue").RandomReply(sess.temporary_companion, "body_exchanged")

@@ -8,6 +8,12 @@ local function IsTower(target)
         and target.components.channelable ~= nil
 end
 
+local function IsActiveTower(target)
+    local teleporter = target ~= nil and target.components ~= nil
+        and target.components.teleporter or nil
+    return IsTower(target) and teleporter ~= nil and teleporter:IsActive()
+end
+
 function M.IsChanneling(inst)
     local command = inst._my_friend_command
     return command ~= nil and command.id == "touch_tower" and IsTower(command.target)
@@ -36,17 +42,19 @@ function M.GetAction(inst, command)
         local origin = atbase and base or command.origin or inst:GetPosition()
         local best
         for _, entity in ipairs(TheSim:FindEntities(origin.x, 0, origin.z,
-            atbase and 40 or M.RANGE, {"channelable"}, {"INLIMBO", "burnt", "fire"})) do
-            if IsTower(entity) and entity.components.channelable:GetEnabled()
-                and not entity.components.channelable:IsChanneling() then
+            atbase and 40 or M.RANGE, nil, {"INLIMBO", "burnt", "fire"})) do
+            if IsTower(entity) and (IsActiveTower(entity)
+                or entity.components.channelable:GetEnabled()
+                    and not entity.components.channelable:IsChanneling()) then
                 local distance = inst:GetDistanceSqToInst(entity)
                 if best == nil or distance < best then target, best = entity, distance end
             end
         end
         command.target = target
     end
-    if not IsTower(target) or not target.components.channelable:GetEnabled()
-        or target.components.channelable:IsChanneling() then
+    if not IsTower(target) or not (IsActiveTower(target)
+        or target.components.channelable:GetEnabled()
+            and not target.components.channelable:IsChanneling()) then
         require("my_friend_commands").Clear(inst)
         require("my_friend_dialogue").RandomReply(inst, "tower_missing")
         return
@@ -55,16 +63,26 @@ function M.GetAction(inst, command)
         require("my_friend_riding").StopRide(inst)
         return BufferedAction(inst, nil, ACTIONS.DISMOUNT)
     end
-    local action = BufferedAction(inst, target, ACTIONS.STARTCHANNELING)
+    -- A linked/activated town portal disables channelable after pairing. Use
+    -- the vanilla teleport action for it; only an unlinked tower can be
+    -- activated through STARTCHANNELING.
+    local active = IsActiveTower(target)
+    local action = BufferedAction(inst, target,
+        active and ACTIONS.TELEPORT or ACTIONS.STARTCHANNELING)
     action._my_friend_tower_command = command
     action.validfn = function()
         return inst._my_friend_command == command and IsTower(target)
-            and target.components.channelable:GetEnabled()
-            and not target.components.channelable:IsChanneling()
+            and (IsActiveTower(target)
+                or target.components.channelable:GetEnabled()
+                    and not target.components.channelable:IsChanneling())
     end
     action:AddSuccessAction(function()
-        command.channel_started = true
-        require("my_friend_dialogue").RandomReply(inst, "tower_channel")
+        if active then
+            require("my_friend_commands").Clear(inst)
+        else
+            command.channel_started = true
+            require("my_friend_dialogue").RandomReply(inst, "tower_channel")
+        end
     end)
     action:AddFailAction(function()
         if not action._my_friend_cancelled then require("my_friend_commands").Clear(inst) end
