@@ -2322,6 +2322,18 @@ local function GetProtectedCounts(inst)
             end
         end
     end
+    if Reserves.IsLateWorld() then
+        local keep = Reserves.MinimumKeep()
+        -- Actual jobs may reserve their ingredients, but there is no generic
+        -- rock/gold/log stock to replenish after day 150.
+        local command = inst._my_friend_command
+        if command ~= nil and command.special == "build" and command.recipe ~= nil then
+            ReserveRecipe(keep, command.recipe, 1, 0)
+        end
+        if inst._my_friend_pending_recipe ~= nil then ReserveRecipe(keep, inst._my_friend_pending_recipe, 1, 0) end
+        if inst._my_friend_equipment_recipe ~= nil then ReserveRecipe(keep, inst._my_friend_equipment_recipe, 1, 0) end
+        return keep
+    end
     local targets = { cutgrass = 2, twigs = 2, log = 2, flint = 2 }
     local function ProtectRecovery(reserves)
         if inst._my_friend_recover_death_drops and FindTool(inst, ACTIONS.HAMMER) == nil then
@@ -2851,6 +2863,7 @@ local function GetTreePlantAction(inst)
 end
 
 local function GetBaseWoodAction(inst)
+    if Reserves.IsLateWorld() then return end
     local plot = EnsureForest(inst)
     if plot == nil or plot.returning or M.IsStockStorageFull(inst)
         or M.IsExtremeSeason(inst) or not M.CanUseHandToolInCurrentLight(inst)
@@ -2967,6 +2980,7 @@ end
 
 local function GetMaintenanceNeeds(inst)
     local needs = {}
+    if Reserves.IsLateWorld() then return needs end
     if M.IsStockStorageFull(inst) then return needs end
     for prefab, target in pairs(REQUIRED_STOCK_TARGETS) do
         local carried_surplus = math.max(0, CountInventory(inst, prefab) - (CARRIED_RESERVES[prefab] or 0))
@@ -3270,7 +3284,9 @@ function M.GetSurplusStoreAction(inst)
     if not near_base and not full and forest ~= nil and forest.batch ~= nil
         and not forest.returning then return end
     local surplus = 0
+    local late_keep = Reserves.IsLateWorld() and Reserves.MinimumKeep() or nil
     for prefab, reserve in pairs(CARRIED_RESERVES) do
+        if late_keep ~= nil then reserve = late_keep[prefab] or 0 end
         surplus = surplus + math.max(0, CountCarriedForStorage(inst, prefab) - reserve)
     end
     -- Unload promptly at home, but finish a useful batch before a remote trip.
@@ -3693,7 +3709,7 @@ function M.GetCommandAction(inst)
     if command ~= nil and command.id == "squeeze_heart" then
         return require("my_friend_character_actions").GetSqueezeAction(inst)
     end
-    if command == nil or command.special ~= "read" and (leader == nil or command.player ~= leader)
+    if command == nil or not require("my_friend_special_commands").IsPublic(command) and (leader == nil or command.player ~= leader)
         or GetTime() > (command.deadline or 0) then
         if command ~= nil then inst._my_friend_command = nil end
         return
@@ -3863,6 +3879,7 @@ function M.GetStoragePressure(inst)
 end
 
 function M.GetReserveAction(inst)
+    if Reserves.IsLateWorld() then return end
     if not CanAct(inst) then return end
     if not HasLeader(inst) and not M.IsComplete(inst) then return end
     local cleanup, cleaning = GetWorkCleanupAction(inst)

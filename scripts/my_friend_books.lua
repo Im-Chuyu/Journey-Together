@@ -1,6 +1,7 @@
 local Policy = require("my_friend_policy")
 local Inventory = require("my_friend_inventory")
 local Dialogue = require("my_friend_dialogue")
+local Wickerbottom = require("my_friend_wickerbottom")
 
 local M = {}
 
@@ -15,12 +16,12 @@ end
 
 local function Accessible(inst, station)
     if station == nil or not station:IsValid() or station.prefab ~= "bookstation"
-        or station:HasTag("burnt") then return false end
+        or station:HasAnyTag("INLIMBO", "burnt", "fire") then return false end
     local c = station.components.container
     local leader = Policy.GetLeader(inst)
     return c ~= nil and not c.readonlycontainer and not c:IsRestricted(inst)
         and (not c:IsOpenedByOthers(inst) or leader ~= nil and c:IsOpenedBy(leader))
-        and Policy.InRange(inst, station)
+        and (Policy.InRange(inst, station) or Wickerbottom.IsRemembered(inst, station))
 end
 
 local function IsOpen(inst, station)
@@ -29,9 +30,9 @@ local function IsOpen(inst, station)
 end
 
 local function Stations(inst)
-    local x, y, z = inst.Transform:GetWorldPosition()
+    if inst.prefab ~= "wickerbottom" then return {} end
     local stations = {}
-    for _, station in ipairs(TheSim:FindEntities(x, y, z, 20, nil, {"INLIMBO", "burnt"})) do
+    for _, station in ipairs(Wickerbottom.Stations(inst)) do
         if Accessible(inst, station) then stations[#stations + 1] = station end
     end
     table.sort(stations, function(a, b) return inst:GetDistanceSqToInst(a) < inst:GetDistanceSqToInst(b) end)
@@ -83,6 +84,8 @@ function M.Close(inst, command)
 end
 
 function M.PrepareCommand(inst, command)
+    if inst.prefab ~= "wickerbottom" then return end
+    Wickerbottom.Prune(inst)
     local previous = inst._my_friend_book_request
     command.use_last_book = previous ~= nil and previous.prefab == command.target
         and previous.player == command.player and GetTime() - previous.time <= 30
@@ -105,10 +108,15 @@ local function StoreAction(inst, station, book, command)
             and not station.components.container:IsOpenedByOthers(inst)
             and station.components.container:CanAcceptCount(book, 1) >= 1
     end
-    return Policy.GuardAction(inst, action)
+    return Wickerbottom.Guard(inst, action, station)
 end
 
 function M.GetReadAction(inst, command)
+    if inst.prefab ~= "wickerbottom" then return end
+    if not Wickerbottom.HasRecords(inst) and not command.bookstations_scanned then
+        command.bookstations_scanned = true
+        Wickerbottom.Scan(inst)
+    end
     local stations, carried, stored = Stations(inst), {}, {}
     for _, book in ipairs(inst.components.inventory:ReferenceAllItems()) do
         if (command.target == nil or book.prefab == command.target)
@@ -141,6 +149,10 @@ function M.GetReadAction(inst, command)
             end
             return Policy.GuardAction(inst, action)
         end
+    end
+    if chosen == nil or Uses(chosen.book) < 2 and not command.use_last_book then
+        local visit = Wickerbottom.GetVisitAction(inst, command)
+        if visit ~= nil then return visit end
     end
     if chosen == nil then return end
     local count = #carried + #stored + #ground
@@ -176,7 +188,7 @@ function M.GetReadAction(inst, command)
                 return inst._my_friend_command == command and Accessible(inst, station)
                     and book:IsValid() and book.components.inventoryitem.owner == station
             end
-            return Policy.GuardAction(inst, action)
+            return Wickerbottom.Guard(inst, action, station)
         end
     end
     -- The open action already brought us within reach. A local READ lets
@@ -201,7 +213,7 @@ function M.GetReadAction(inst, command)
             Finish(inst, command)
         else M.Close(inst, command) end
     end)
-    return Policy.GuardAction(inst, action)
+    return Wickerbottom.Guard(inst, action, station)
 end
 
 function M.GetStoreAction(inst)
@@ -215,6 +227,7 @@ function M.GetStoreAction(inst)
         if book.components.book ~= nil and Carried(inst, book) and Uses(book) < 2 then
             local station = StoreStation(inst, book, stations)
             if station ~= nil then return StoreAction(inst, station, book) end
+            return Wickerbottom.GetVisitAction(inst)
         end
     end
 end

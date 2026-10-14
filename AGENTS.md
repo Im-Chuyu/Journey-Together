@@ -25,6 +25,10 @@
 | 伙伴面板、HUD 按钮、指令轮盘与选择界面 | `scripts/widgets/my_friend_*.lua`、`scripts/screens/my_friend_*.lua` |
 | 家园、跨分片迁移、切换角色与附身 | `scripts/my_friend_home.lua`、`scripts/my_friend_shard_home.lua`、`scripts/my_friend_migration.lua`、`scripts/my_friend_switch.lua`、`scripts/my_friend_possess.lua` |
 | 角色专属逻辑 | `scripts/my_friend_wendy.lua`、`scripts/my_friend_abigail.lua`、`scripts/my_friend_wortox.lua`、`scripts/my_friend_wanda.lua`、`scripts/my_friend_wormwood.lua`、`scripts/my_friend_wx78.lua` 等 |
+| 薇格弗德专属冲刺、武器询问与奔雷矛指令 | `scripts/my_friend_wathgrithr.lua`、`scripts/languages/<code>/characters/wathgrithr.lua`、`wathgrithr_command_words.lua` |
+| 维克巴顿基地书架记忆与读书/放书 | `scripts/my_friend_wickerbottom.lua`、`scripts/my_friend_books.lua` |
+| 通用进食、烹饪与战斗限制 | `scripts/my_friend_food_rules.lua`、`scripts/my_friend_combat_rules.lua` |
+| 伙伴服务端自动躲避与攻击帧数据 | `scripts/my_friend_dodge.lua`、`scripts/my_friend_dodge_profiles.lua` |
 | 语言加载、文本、对白与语音 | `scripts/my_friend_language.lua`、`scripts/my_friend_strings.lua`、`scripts/my_friend_dialogue.lua`、`scripts/my_friend_speech.lua`、`scripts/my_friend_voice.lua`、`scripts/languages/` |
 | 独立 Lua 回归测试 | `tests/*_test.lua` |
 | 图标及声音资源 | `friend.xml`、`friend.tex`、`sound/fsN.fev`、`sound/fsN.fsb` |
@@ -40,7 +44,17 @@
 - 延迟任务和事件回调执行时重新检查实体及组件；新增监听器、周期任务和临时状态需有清理路径。包装原版方法时保留原方法、参数和返回值，并避免重复安装钩子。
 - 伙伴有玩家角色属性，修改原版组件或状态图时应限制影响范围，检查普通玩家是否受到影响。不能随意调用 `locomotor:Stop()` 或切换状态打断 `busy` 状态中的吃饭、攻击、复活等原版动作。
 - AI 由效用评分选择行为；新增行为同时考虑评分、动作生成、取消、失败、超时和重新规划。沿用 `Policy`、`RouteAction` 和现有调度约束，避免生存行为被工作任务长期压制。
+- 烹饪仅允许独立建造基地状态；进食禁用物品与入锅禁用物品分别判断，生高鸟蛋只禁止生吃。入锅前通过 `my_friend_food_rules` 再检查新鲜度和配方组合，避免缓存计划绕过限制。
+- 薇格弗德冲刺使用 `MY_FRIEND_LIGHTNING_LUNGE` 接入原版状态图和武器回调；普通攻击计数以实际攻击事件为准。低耐久冲刺等待冷却时不可回退到普通攻击。只限制会被电击点燃的战斗目标，依据 `sg.mem.burn_on_electrocute`、`burnable` 组件及永久免疫状态判断；不能因附近树苗、农作物或通用植物标签阻止冲刺，也不为此扫描周围植物。新对白不随意绑定已有语音编号。
+- 薇格弗德专属 `lightning_spear` 指令与读书一样无需跟随，必须保持聊天、轮盘、命令有效性与 AI 调度的权限判断一致。一次指令最多制作一柄再充能一柄；只用随身材料，原版构建期间排除已打开的外部容器。充能使用原版 `upgradeable` 消耗静电并保留武器状态，手持武器先安全卸装，空间不足不丢装备。
 - 搜索实体、背包扫描和网络同步注意频率；复用已有缓存、冷却与事件驱动刷新，不在每帧重复全世界扫描或无变化广播。
+- 手持战斗装备掉落使用 `my_friend_equipment.Configure` 的装备/掉落事件记录实际实体，拾取后重新装备；不能让备用工具覆盖 `_my_friend_combat_recovery_item`，也不能仅靠同 prefab 搜索取走他人的武器。拾取优先级需覆盖效用选择器的中断差值（超过当前行为 10 分），并保留玩家主动卸装的例外。
+- 原版 `PICKUP` 可能自动装备物品，成功回调必须先检查装备槽，不能再次对同一物品调用 `Equip`；原版 `Equip` 在旧装备等于新装备时可能留下无归属物品。伙伴库存包装对此做幂等保护并避免重复安装。装备恢复使用统一 10 秒期限（包含寻路），失败后等待 5 秒，中断后等待 1 秒；只访问事件记录的装备实体，不搜索地面武器。
+- 第 500 天之前的全面迎战使用 `my_friend_combat_rules.IsActiveDefenceWorld`（显示天数为 `cycles + 1`），只扩展对伙伴/附近玩家已有仇恨的生物；亮茄反伤、玩家保护和武器恢复仍需保留。第 500 天起恢复既有判断。
+- 自动躲避运行时只使用伙伴自己的服务端实体、状态图和移动组件，不能重新引入 `ThePlayer`、玩家输入、客户端 RPC 或外部运行库。危险帧窗口内使用 30 帧频率更新，窗口结束恢复攻击；未收录的攻击回退到通用判断。
+- 躲避保护 `abouttoattack` 命中前阶段，命中后允许通过原版移动事件退出攻击收尾，不能因为仍有 `attack` 标签继续阻止躲避。普通生物攻击前摇期间避免排入覆盖撤退期限的新攻击；效用选择器初次切换战斗也必须使用战斗检查频率。攻击帧检查可为 30 Hz，全行为评分最多每 100 毫秒更新，战斗装备评分缓存 250 毫秒，掉落/失效/领队变化仍即时检查。躲避的 8 格局部障碍查询和特定巨兽特效查询缓存 250 毫秒，地形与船边界逐步校验；相同移动目标不重复提交寻路，变化的目标至少间隔 150 毫秒提交。停止战斗清除临时帧、碰撞和装备检查缓存，不持久化这些实体引用。
+- 世界第 151 天起的通用物资配额由 `my_friend_resource_reserves.IsLateWorld` 统一判断（`cycles` 为零基天数）。停止通常的材料库存补充，仅通过低优先级 `late_minimum` 补充 10 草、10 树枝；整理、基地库存和料理材料保留必须使用一致的配额，明确任务与角色专属资源单独处理。
+- 复活玩家统一由 `my_friend_rescue` 调度，通用物品、旺达和沃拓克斯都使用 `_my_friend_rescue_target` 路线标记，不能重新添加跟随或基地范围门槛。书架记忆仅用于维克巴顿：设置基地扫描一次，读书时仅在没有记录的情况下补扫一次；闲逛和放书不能反复扫描基地。持久化只存坐标，恢复后到记录位置核实并清理失效记录；跨分片字段清单位于 `my_friend_migration.lua`。
 
 ## 存档与物品安全
 
@@ -90,6 +104,12 @@ foreach ($test in $tests) {
 ```
 
 - 按影响范围选择测试：聊天解析与转发使用 `chat_address_test.lua`、`chat_command_test.lua`；背包和关联实体转移使用 `carry_backpack_test.lua`、`inventory_transfer_test.lua`；面板显示使用 `panel_badges_test.lua`、`panel_scroll_test.lua`；阿比盖尔与沃拓克斯使用相应角色测试。
+- 新增角色与通用规则的回归入口：`food_policy_test.lua`、`combat_policy_test.lua`、`wathgrithr_test.lua`、`wortox_souls_test.lua`；实体交换身份恢复使用 `possession_rebind_test.lua`，双尾心空显示名使用 `wortox_heart_owner_test.lua`。
+- 奔雷矛专属指令使用 `wathgrithr_command_test.lua`，检查名字与关键词、轮盘和语言、非领队请求、单次制作/充能、随身材料与打开的外部容器隔离、手持武器优先、空间不足和取消时物品安全。
+- 救援状态与路线边界使用 `rescue_modes_test.lua`；远距离读书/放书、书架位置保存和基地替换使用 `bookstation_memory_test.lua`。
+- 战斗掉落装备恢复使用 `combat_equipment_recovery_test.lua`；世界第 150/151 天切换、基础物资停止补充和最低草/树枝保留使用 `late_world_reserves_test.lua`。
+- 第 499/500 天全面迎战边界使用 `combat_policy_test.lua`；攻击帧、侧向躲避、地形/船边界及未知攻击回退使用 `dodge_test.lua`。
+- 原版拾取自动装备、重复装备保护、恢复期限和中断重试使用 `combat_equipment_recovery_test.lua`；猎犬/树精攻击前摇、伙伴命中前保护与命中后撤退、寻路调用频率和效用调度切换使用 `combat_dodge_integration_test.lua`。检查缓存时同时验证掉落或新指令能够即时打断战斗。
 - 修复复杂行为或可复现回归时，沿用现有桩对象风格补充能检验实际行为的测试；文档、简单文本和低影响调整无需为了覆盖率新增测试。
 - 这些测试模拟了部分 DST 接口，不能证明真实联机、状态图或跨分片行为正确。涉及这些功能时，在游戏测试世界中验证主机和远程客户端，按需测试专用服务器、地上/洞穴迁移、保存重进、死亡复活、角色切换或附身。
 - UI 修改检查快捷键、轮盘分页与替换、伙伴面板装备/背包槽、滚动和不同分辨率；语言修改检查实际指令、台词、标签及回退。只检查本次修改涉及的场景。

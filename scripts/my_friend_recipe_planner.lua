@@ -1,6 +1,7 @@
 local Cooking = require("cooking")
 local Food = require("my_friend_food_ai")
 local Storage = require("my_friend_food_storage")
+local Rules = require("my_friend_food_rules")
 local M = {}
 
 -- The three prefab aliases used by vanilla cooking.GetIngredientValues.
@@ -16,7 +17,7 @@ end
 function M.Available(inst, item)
     local inv = item ~= nil and item:IsValid() and item.components.inventoryitem or nil
     if inv == nil or inv.islockedinslot or Storage.IsReserved(inst, item)
-        or Food.IsForbiddenFood(item)
+        or not Rules.CanUseIngredient(item)
         or inst.prefab ~= "warly" and (item.prefab == "lightninggoathorn" or item.prefab == "boneshard")
         or item:HasAnyTag("spoiled", "irreplaceable") then return false end
     local owner = inv.owner
@@ -43,12 +44,18 @@ function M.RecipeValue(inst, recipe)
     local eater = inst.components.eater
     if eater == nil or not AcceptsType(eater.caneat, recipe.foodtype)
         or not AcceptsType(eater.preferseating, recipe.foodtype) then return end
-    return h * 3 + f + s * 2
+    local value = h * 3 + f + s * 2
+    if inst.prefab == "wathgrithr" then
+        if recipe.name == "meatballs" then value = value + 10000
+        elseif recipe.name == "bonestew" then value = value * .01 end
+    end
+    return value
 end
 
 -- Evaluate every equally likely top-priority result, without consuming RNG.
 -- A mix which can also produce harmful food is not a safe meal plan.
-function M.Evaluate(inst, cooker, prefabs)
+function M.Evaluate(inst, cooker, prefabs, stale_meat)
+    if not Rules.AllowsMix(prefabs, stale_meat) then return end
     local names, tags = {}, {}
     for _, prefab in ipairs(prefabs) do
         local name = ALIASES[prefab] or prefab
@@ -74,7 +81,8 @@ function M.Evaluate(inst, cooker, prefabs)
     if valid then return value, duration end
 end
 
-function M.EvaluateSpecific(inst, cooker, prefabs, wanted)
+function M.EvaluateSpecific(inst, cooker, prefabs, wanted, stale_meat)
+    if not Rules.AllowsMix(prefabs, stale_meat) then return end
     local names, tags = {}, {}
     for _, prefab in ipairs(prefabs) do
         local name = ALIASES[prefab] or prefab
@@ -108,13 +116,16 @@ function M.Pool(inst, fridges, grounds)
     end
     local function Add(item, external)
         if seen[item] or not M.Available(inst, item) or item:HasTag("preparedfood")
-            or Food.IsForbiddenFood(item)
+            or not Rules.CanUseIngredient(item)
             or not Cooking.IsCookingIngredient(item.prefab) then return end
         seen[item] = true
         local count = M.Size(item)
         if RESERVES[item.prefab] ~= nil then
             if external then return end
-            local remaining = math.max(0, (owncounts[item.prefab] or 0) - RESERVES[item.prefab])
+            local reserves = require("my_friend_resource_reserves")
+            local keep = reserves.IsLateWorld() and (reserves.MinimumKeep()[item.prefab] or 0)
+                or RESERVES[item.prefab]
+            local remaining = math.max(0, (owncounts[item.prefab] or 0) - keep)
             count = math.min(count, remaining)
             owncounts[item.prefab] = (owncounts[item.prefab] or 0) - count
         end
@@ -131,6 +142,9 @@ function M.Pool(inst, fridges, grounds)
             groups[item.prefab] = group
         end
         group.count = group.count + count
+        if Rules.IsBigMeat(item.prefab) and Rules.IsStale(item) then
+            group.stale_count = (group.stale_count or 0) + count
+        end
         group.sources[#group.sources + 1] = {item = item, count = count}
     end
     for _, item in ipairs(own) do Add(item, false) end
@@ -146,6 +160,15 @@ function M.Pool(inst, fridges, grounds)
     return pool
 end
 
+local function StaleInMix(prefabs, pool)
+    local counts, stale = {}, 0
+    for _, name in ipairs(prefabs) do counts[name] = (counts[name] or 0) + 1 end
+    for _, group in ipairs(pool) do
+        stale = stale + math.min(counts[group.prefab] or 0, group.stale_count or 0)
+    end
+    return stale
+end
+
 local function FindAutomatic(inst, cooker, pool)
     local selected, used, best, bestgain = {}, {}, nil, 0
     local checked = 0
@@ -155,7 +178,7 @@ local function FindAutomatic(inst, cooker, pool)
             checked = checked + 1
             local prefabs = {}
             for _, group in ipairs(selected) do prefabs[#prefabs + 1] = group.prefab end
-            local value, duration = M.Evaluate(inst, cooker, prefabs)
+            local value, duration = M.Evaluate(inst, cooker, prefabs, StaleInMix(prefabs, pool))
             local gain = value ~= nil and value - rawvalue or 0
             if gain > bestgain + 1 then
                 bestgain = gain
@@ -195,7 +218,7 @@ local function SpecificSearch(inst, cooker, pool, wanted)
     local function Evaluate(prefabs)
         checked = checked + 1
         if checked % 2048 == 0 then coroutine.yield() end
-        return M.EvaluateSpecific(inst, cooker, prefabs, wanted)
+        return M.EvaluateSpecific(inst, cooker, prefabs, wanted, StaleInMix(prefabs, pool))
     end
     local function Conserve(prefabs)
         -- Improve fillers without hard-coding recipe requirements: prefer mixes
@@ -248,7 +271,8 @@ function M.Find(inst, cooker, pool, wanted)
     if Cooking.GetRecipe(cooker, wanted) == nil then return end
     local ingredients = {}
     for _, group in ipairs(pool) do
-        ingredients[#ingredients + 1] = {prefab = group.prefab, count = group.count}
+        ingredients[#ingredients + 1] = {prefab = group.prefab, count = group.count,
+            stale_count = group.stale_count}
     end
     -- Spend plentiful fillers first; retain scarce ingredients for later pots.
     table.sort(ingredients, function(a, b)
@@ -256,7 +280,7 @@ function M.Find(inst, cooker, pool, wanted)
     end)
     local signature = {cooker, wanted}
     for _, group in ipairs(ingredients) do
-        signature[#signature + 1] = group.prefab .. "=" .. group.count
+        signature[#signature + 1] = group.prefab .. "=" .. group.count .. "/" .. (group.stale_count or 0)
     end
     signature = table.concat(signature, ":")
     local now = GetTime()

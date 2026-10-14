@@ -7,7 +7,11 @@ local WORK_CHECK_PERIOD = 1.5
 local SNAPSHOT_PERIOD = .6
 local COMBAT_PERIOD = .1
 
-local function ActivePeriod(entry)
+local function ActivePeriod(entry, inst)
+    if entry ~= nil and (entry.id == "combat" or entry.id == "assist")
+        and (inst._my_friend_dodge ~= nil
+                and (inst._my_friend_dodge.monitoring or inst._my_friend_dodge.row ~= nil)
+            or inst.sg ~= nil and inst.sg:HasStateTag("abouttoattack")) then return 1 / 30 end
     return entry ~= nil and (entry.id == "combat" or entry.id == "assist")
         and COMBAT_PERIOD or DECISION_PERIOD
 end
@@ -161,6 +165,19 @@ function Utility:Visit()
         self.snapshot_at = now + SNAPSHOT_PERIOD
     end
     self.context = context
+    -- Between combat decision ticks, visit only the active combat node. Attack
+    -- frame checks can run at 30 Hz without reranking every survival/work task.
+    if self.active ~= nil and (self.active.id == "combat" or self.active.id == "assist")
+        and self.leader == context.leader and now < (self.combat_decision_at or 0) then
+        self.active.node:Visit()
+        if self.active.node.status == RUNNING then
+            self.status = RUNNING
+            self:Sleep(ActivePeriod(self.active, self.inst))
+            return
+        end
+        self:CancelActive()
+    end
+    self.combat_decision_at = now + COMBAT_PERIOD
     self:WatchAction(context.leader == nil)
     local ranked = {}
     for index, entry in ipairs(self.entries) do
@@ -217,7 +234,7 @@ function Utility:Visit()
                     self.inst._my_friend_decision = { task = entry.id, score = prepared.score,
                         mode = context.leader ~= nil and "follow" or "free" }
                     self.status = RUNNING
-                    self:Sleep(ActivePeriod(prepared))
+                    self:Sleep(ActivePeriod(prepared.entry, self.inst))
                     return
                 end
                 self:ReleaseNode(entry.node, entry.passive)
@@ -227,7 +244,7 @@ function Utility:Visit()
             self.active.node:Visit()
             if self.active.node.status == RUNNING then
                 self.status = RUNNING
-                self:Sleep(ActivePeriod(self.active))
+                self:Sleep(ActivePeriod(self.active, self.inst))
                 return
             end
             if Policy.IsBusy(self.inst) then
@@ -252,7 +269,7 @@ function Utility:Visit()
             self.inst._my_friend_decision = { task = entry.id, score = candidate.score,
                 mode = context.leader ~= nil and "follow" or "free" }
             self.status = RUNNING
-            self:Sleep(ActivePeriod(self.active))
+            self:Sleep(ActivePeriod(self.active, self.inst))
             return
         end
         if not candidate.unavailable then

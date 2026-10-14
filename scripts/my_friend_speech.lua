@@ -72,7 +72,7 @@ function M.BuildStrings()
     local lines = LanguageFiles.DialogueLines(Language.language, "wendy")
     Register(strings, "", lines)
     RegisterVoiceIndex(voice_index, "", lines)
-    for _, character in ipairs({"wendy", "wickerbottom", "warly"}) do
+    for _, character in ipairs({"wendy", "wickerbottom", "warly", "wathgrithr"}) do
         local source = LanguageFiles.DialogueLines(Language.language, character)
         Register(strings, character .. CHARACTER_SEPARATOR, source)
         RegisterVoiceIndex(voice_index, character .. CHARACTER_SEPARATOR,

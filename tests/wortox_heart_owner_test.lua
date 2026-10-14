@@ -26,7 +26,10 @@ local owner_name = ""
 local linked = {
     netownername = {
         value = function() return owner_name end,
-        set = function(_, value) owner_name = value end,
+        set = function(_, value)
+            assert(type(value) == "string", "net_string must never receive nil during a swap")
+            owner_name = value
+        end,
     },
 }
 function linked:GetOwnerUserID() return nil end
@@ -45,6 +48,11 @@ local Wortox = require("my_friend_wortox")
 Wortox.ConfigureHeart(heart)
 heart:TryToAttachWortoxID(friend)
 assert(linked:GetOwnerInst() == friend and heart.allow == true)
+local display = friend.GetDisplayName
+friend.GetDisplayName = function() return nil end
+Wortox.RefreshLinkedHearts(friend)
+assert(owner_name == "wortox", "keep the last known name while the source name is cleared")
+friend.GetDisplayName = display
 
 -- The controlled body shares the session id but is not the heart's maker.
 heart._my_friend_heart_owner = nil

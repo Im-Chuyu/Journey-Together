@@ -31,12 +31,24 @@ local FORBIDDEN_FOOD_PREFABS = {
     glommerfuel = true,
     mandrake = true,
     royaljelly = true,
+    royal_jelly = true,
+    tallbirdegg = true,
 }
 
 function M.IsForbiddenFood(food)
     if food == nil then return false end
     local prefab = type(food) == "string" and food or food.prefab
     return FORBIDDEN_FOOD_PREFABS[prefab] == true
+end
+
+function M.Configure(inst)
+    local eater = inst.components.eater
+    if eater == nil or eater._my_friend_food_guard then return end
+    eater._my_friend_food_guard = true
+    local can = eater.CanEat
+    eater.CanEat = function(self, food, ...)
+        return not M.IsForbiddenFood(food) and can(self, food, ...)
+    end
 end
 
 local function HasMeaningfulRecovery(health, hunger, sanity)
@@ -275,10 +287,17 @@ function M.FindBestFood(inst)
     local inventory = inst.components.inventory
     local stats = GetStats(inst)
     if inventory == nil or inst.components.eater == nil or stats == nil then return end
+    if inst.prefab == "wortox" then
+        local soul = require("my_friend_wortox").FindHungerSoul(inst)
+        if soul ~= nil then return soul, 10000 end
+    end
     local best, bestscore, bestperish
     for _, food in ipairs(inventory:ReferenceAllItems()) do
         local score, perish
         if not IsInBeargerSack(food) then score, perish = M.Evaluate(inst, food, stats) end
+        if score ~= nil and inst.prefab == "wathgrithr" and food.prefab == "meat_dried" then
+            score = score + 10000
+        end
         if score ~= nil and (bestscore == nil or score > bestscore + .001
             or math.abs(score - bestscore) <= .001
                 and (perish or math.huge) < (bestperish or math.huge)) then
@@ -310,10 +329,17 @@ function M.CommandScore(inst, food, positive_only)
 end
 
 function M.FindCommandFood(inst, positive_only)
+    if inst.prefab == "wortox" then
+        local soul = require("my_friend_wortox").FindHungerSoul(inst)
+        if soul ~= nil then return soul end
+    end
     local best, score
     for _, food in ipairs(inst.components.inventory:ReferenceAllItems()) do
         local value = not IsInBeargerSack(food)
             and M.CommandScore(inst, food, positive_only) or nil
+        if value ~= nil and inst.prefab == "wathgrithr" and food.prefab == "meat_dried" then
+            value = value + 10000
+        end
         if value ~= nil and (score == nil or value > score) then best, score = food, value end
     end
     return best
@@ -328,6 +354,15 @@ function M.GetEatAction(inst, commanded_food)
         or inst.components.health == nil or inst.components.health:IsDead()
         or inst._my_friend_backpack_target ~= nil or inst._my_friend_backpack_action then return end
     if commanded_food == nil then
+        local preferred = inst.prefab == "wortox"
+            and require("my_friend_wortox").FindHungerSoul(inst) or nil
+        if inst.prefab == "wathgrithr" then
+            local best = M.FindBestFood(inst)
+            if best ~= nil and best.prefab == "meat_dried" then preferred = best end
+        end
+        if preferred ~= nil then commanded_food = preferred end
+    end
+    if commanded_food == nil then
         local action = require("my_friend_container_ai").GetCarriedFoodAction(inst)
         if action ~= nil then return action end
     end
@@ -336,9 +371,14 @@ function M.GetEatAction(inst, commanded_food)
         and not M.IsEmergency(inst) and inst.components.hunger:GetPercent() >= .2 then return end
     local food = commanded_food or M.FindBestFood(inst)
     if food == nil then return end
-    if commanded_food == nil and not M.IsEmergency(inst)
+    if commanded_food == nil and food.prefab ~= "meat_dried" and not M.IsEmergency(inst)
         and require("my_friend_recipe_cooking").ShouldReserve(inst, food) then return end
     local action = BufferedAction(inst, nil, ACTIONS.EAT, food)
+    action.validfn = function()
+        return food:IsValid() and not M.IsForbiddenFood(food)
+            and inst.components.eater:CanEat(food)
+            and food.components.inventoryitem:GetGrandOwner() == inst
+    end
     action:AddSuccessAction(function()
         inst._my_friend_food_supply_cache = nil
         inst._my_friend_eat_after = GetTime() + 2

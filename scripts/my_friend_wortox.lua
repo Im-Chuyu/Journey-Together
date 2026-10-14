@@ -7,6 +7,132 @@ M.HEAL_STOP = .8
 M.HEAL_RANGE = 20
 M.HEAL_DISTANCE = 4
 M.HEART_SOUL_COST = 10
+M.SOUL_TARGET = 18
+
+local function SoulSize(item)
+    local stack = item.components.stackable
+    return stack ~= nil and stack:StackSize() or 1
+end
+
+function M.CountPocketSouls(inst)
+    local inventory = inst.components.inventory
+    local count, first = 0, nil
+    for _, item in pairs(inventory ~= nil and inventory.itemslots or {}) do
+        if item:IsValid() and item.prefab == "wortox_soul" then
+            count, first = count + SoulSize(item), first or item
+        end
+    end
+    return count, first
+end
+
+function M.FindHungerSoul(inst)
+    if inst.prefab ~= "wortox" or inst.components.hunger == nil
+        or inst.components.hunger:GetPercent() >= .65 then return end
+    local count, item = M.CountPocketSouls(inst)
+    if count > 10 and item ~= nil and inst.components.eater:CanEat(item) then return item end
+end
+
+local function PocketRoom(inventory, item)
+    local count = 0
+    for slot = 1, inventory.maxslots do
+        local stored = inventory:GetItemInSlot(slot)
+        if stored == nil then
+            count = count + (item.components.stackable ~= nil and item.components.stackable.maxsize or 1)
+        elseif stored.components.stackable ~= nil and stored.components.stackable:CanStackWith(item) then
+            count = count + stored.components.stackable:RoomLeft()
+        end
+    end
+    return count
+end
+
+local function TakeSouls(item, count)
+    if count < SoulSize(item) and item.components.stackable ~= nil then
+        return item.components.stackable:Get(count)
+    end
+    return item.components.inventoryitem:RemoveFromOwner(true)
+end
+
+function M.BalanceSouls(inst)
+    if not inst:IsValid() or inst.prefab ~= "wortox" or not inst:HasTag("my_friend")
+        or inst._my_friend_possess_parked or inst:HasTag("playerghost")
+        or inst.components.health ~= nil and inst.components.health:IsDead()
+        or inst._my_friend_soul_transfer or Policy.IsBusy(inst)
+        or TheWorld ~= nil and TheWorld._my_friend_possession_active then return false end
+    local inventory = inst.components.inventory
+    if inventory == nil then return false end
+    local count, soul = M.CountPocketSouls(inst)
+    if count == M.SOUL_TARGET then return false end
+    for _, jar in ipairs(inventory:ReferenceAllItems()) do
+        local c = jar.prefab == "wortox_souljar" and jar.components.container or nil
+        if c ~= nil and jar:IsValid() and not c.readonlycontainer
+            and not c:IsRestricted(inst) and not c:IsOpenedByOthers(inst) then
+            local item, amount
+            if count > M.SOUL_TARGET and soul ~= nil then
+                item = soul
+                amount = math.min(count - M.SOUL_TARGET, SoulSize(item),
+                    c:CanAcceptCount(item, count - M.SOUL_TARGET))
+            else
+                item = c:FindItem(function(candidate) return candidate.prefab == "wortox_soul" end)
+                amount = item ~= nil and math.min(M.SOUL_TARGET - count, SoulSize(item),
+                    PocketRoom(inventory, item)) or 0
+            end
+            if item ~= nil and amount > 0 then
+                inst._my_friend_soul_transfer = true
+                local moved = TakeSouls(item, amount)
+                local accepted = false
+                if moved ~= nil then
+                    moved.prevcontainer, moved.prevslot = nil, nil
+                    if count > M.SOUL_TARGET then
+                        accepted = c:GiveItem(moved, nil, inst:GetPosition(), false)
+                        if not accepted and moved:IsValid() then inventory:GiveItem(moved) end
+                    else
+                        accepted = inventory:GiveItem(moved)
+                        if not accepted and moved:IsValid() then c:GiveItem(moved) end
+                    end
+                end
+                inst._my_friend_soul_transfer = nil
+                inst._my_friend_food_supply_cache = nil
+                return accepted and true or false
+            end
+        end
+    end
+    return false
+end
+
+function M.Configure(inst)
+    if inst.prefab ~= "wortox" or inst._my_friend_souls_configured then return end
+    inst._my_friend_souls_configured = true
+    local inventory = inst.components.inventory
+    local give = inventory.GiveItem
+    inventory.GiveItem = function(self, item, ...)
+        if item == nil or item.prefab ~= "wortox_soul" then return give(self, item, ...) end
+        -- Preserve native pocket-only soul placement even with extra backpack mods.
+        item.prevcontainer, item.prevslot = nil, nil
+        local overflow, special = self.ignoreoverflow, self.ignorespoverflow
+        self.ignoreoverflow, self.ignorespoverflow = true, true
+        local ok, result = pcall(give, self, item, ...)
+        self.ignoreoverflow, self.ignorespoverflow = overflow, special
+        if not ok then error(result, 0) end
+        -- Native overload checks run on a queued task. Store incoming excess
+        -- before that task executes, even when it arrived as several stacks.
+        if not inst._my_friend_soul_transfer then
+            for _ = 1, self.maxslots do
+                if not M.BalanceSouls(inst) then break end
+            end
+        end
+        return result
+    end
+    local function Queue()
+        if inst._my_friend_soul_transfer or inst._my_friend_soul_balance_task ~= nil then return end
+        inst._my_friend_soul_balance_task = inst:DoTaskInTime(0, function()
+            inst._my_friend_soul_balance_task = nil
+            if inst:IsValid() then M.BalanceSouls(inst) end
+        end)
+    end
+    for _, event in ipairs({"itemget", "itemlose", "stacksizechange", "ms_soulcountchanged"}) do
+        inst:ListenForEvent(event, Queue)
+    end
+end
 
 -- Native wortox hearts are normally linked during the player's skill-tree
 -- handshake. A companion does not have that login handshake, so keep the
@@ -108,8 +234,9 @@ end
 local function FindHeartOwner(id)
     -- While possessing, the original companion body is controlled by this
     -- player. The parked AI body shares the session ID and must not win.
-    for _, player in ipairs(AllPlayers) do
+    for _, player in ipairs(AllPlayers or {}) do
         if player:IsValid() and player._my_friend_id == id
+            and not player._despawning and player.userid ~= ""
             and player:HasTag("my_friend_possessed")
             and player.prefab == "wortox" then
             return player
@@ -156,6 +283,7 @@ RefreshHeart = function(heart, owner)
     if heart._my_friend_heart_owner_id == nil then return linked.owner_inst end
     local old = heart._my_friend_heart_owner
     if owner == nil and old ~= nil and old:IsValid()
+        and not old._despawning and old.userid ~= ""
         and not old._my_friend_possess_parked
         and old.prefab == "wortox"
         and old._my_friend_id == heart._my_friend_heart_owner_id then
@@ -196,8 +324,11 @@ RefreshHeart = function(heart, owner)
         else heart:SetAllowConsumption(false) end
     end
     if owner ~= nil then
-        if linked.netownername:value() ~= owner:GetDisplayName() then
-            linked.netownername:set(owner:GetDisplayName())
+        -- Seamless swap clears the source player's name before removing it.
+        -- net_string:set requires a string even while that source is valid.
+        local name = owner:GetDisplayName()
+        if type(name) == "string" and linked.netownername:value() ~= name then
+            linked.netownername:set(name)
         end
         EnsureOwnerEvents(owner)
     end

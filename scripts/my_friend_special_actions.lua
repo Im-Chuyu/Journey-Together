@@ -223,7 +223,9 @@ local function BuildAction(inst, command)
 end
 
 function M.GetAction(inst, command)
-    if command.special == "wendy_recall" then
+    if command.special == "lightning_spear" then
+        return require("my_friend_wathgrithr").GetSpearCommandAction(inst, command)
+    elseif command.special == "wendy_recall" then
         require("my_friend_abigail").Recall(inst, 480)
         require("my_friend_commands").Clear(inst)
         return

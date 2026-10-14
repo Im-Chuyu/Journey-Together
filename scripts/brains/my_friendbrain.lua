@@ -584,15 +584,15 @@ function MyFriendBrain:OnStart()
             local threat = BehaviourAI.FindThreat(inst)
             if threat == nil
                 or Policy.DistanceSq(inst, threat) > BehaviourAI.ASSIST_RANGE^2
-                or not BehaviourAI.CanCounterAttack(inst, threat) then return false end
+                or not BehaviourAI.CanContinueCombat(inst, threat) then return false end
             inst.components.combat:SetTarget(threat)
             return true
         end, "CounterAttack", MyFriendCombat(inst)))
     Action("recover_combat_item", Alive(function(c)
-        return not c.hurt and not c.hurt_evade and c.threat ~= nil
-            and inst._my_friend_combat_hand_item ~= nil and 126 or 0
+        return not c.hurt and not c.hurt_evade
+            and require("my_friend_equipment").CombatRecoveryScore(inst) or 0
     end), require("my_friend_equipment").GetDroppedCombatItemAction,
-        "正在捡回战斗装备", 4)
+        "正在捡回战斗装备", require("my_friend_equipment").COMBAT_RECOVERY_TIMEOUT)
     Add("escape", Alive(function(c) return not c.hurt and not c.hurt_evade
             and c.threat ~= nil
             and 124 or 0 end),
@@ -761,7 +761,7 @@ function MyFriendBrain:OnStart()
         local command = Commands.Get(inst)
         if command ~= nil and (command.id == "touch_tower" or command.id == "squeeze_heart") then return 0 end
         if Policy.IsRoaming(inst) then return 0 end
-        return command ~= nil and (c.leader ~= nil or command.special == "read")
+        return command ~= nil and (c.leader ~= nil or require("my_friend_special_commands").IsPublic(command))
             and (command.special ~= nil and 132 or command.id == "carry_statue" and 117 or 104) or 0
     end), function(actor) return Commands.Commit(actor, BaseAI.GetCommandAction(actor)) end, nil, 180)
     local function ExpeditionScore(c)
@@ -795,10 +795,10 @@ function MyFriendBrain:OnStart()
         if c.leader == nil or c.leaderdead
             or GetTime() < (inst._my_friend_next_assist or 0) then return 0 end
         local target = BehaviourAI.FindAssistTarget(inst)
-        return target ~= nil and BehaviourAI.CanCounterAttack(inst, target) and 128 or 0
+        return target ~= nil and BehaviourAI.CanContinueCombat(inst, target) and 128 or 0
     end), WhileNode(function()
         local target = BehaviourAI.FindAssistTarget(inst)
-        if target == nil or not BehaviourAI.CanCounterAttack(inst, target) then
+        if target == nil or not BehaviourAI.CanContinueCombat(inst, target) then
             inst._my_friend_assist_target = nil
             inst._my_friend_assist_started = nil
             return false
@@ -822,6 +822,12 @@ function MyFriendBrain:OnStart()
     Action("opportunity", Alive(function(c)
         return c.leader ~= nil and 40 or 0
     end), CoreAI.GetOpportunityAction, "正在收集路过的物资")
+    Action("late_minimum", Alive(function(c)
+        return not c.threat and not c.dark and not c.thermal
+            and not c.hurt and not c.hurt_evade and not c.leaderdead
+            and require("my_friend_resource_reserves").IsLateWorld()
+            and require("my_friend_resource_reserves").LATE_MINIMUM_SCORE or 0
+    end), BehaviourAI.GetLateMinimumAction, "正在补足少量草和树枝", 15)
     Action("feed_pet", Alive(function(c)
         return require("my_friend_pet_care").Score(inst, c)
     end), require("my_friend_pet_care").GetAction, "正在给自己的宠物喂食", 10)
@@ -846,6 +852,7 @@ function MyFriendBrain:OnStart()
     local function Snapshot()
         Commands.Get(inst)
         Exploration.Observe(inst)
+        if inst.prefab == "wortox" then require("my_friend_wortox").BalanceSouls(inst) end
         local leader = Policy.GetLeader(inst)
         Policy.UpdateVigil(inst)
         local leaderdead = Policy.IsLeaderDead(inst)
@@ -881,6 +888,9 @@ function MyFriendBrain:OnStart()
         if not Policy.IsBusy(inst) then
             inst._my_friend_can_fight = threat ~= nil and Policy.InRange(inst, threat, 7)
                 and BehaviourAI.CanCounterAttack(inst, threat) or false
+            if threat ~= nil and BehaviourAI.IsPriorityEngaged(inst, threat) then
+                inst._my_friend_can_fight = BehaviourAI.CanCounterAttack(inst, threat)
+            end
         end
         if inst.components.combat.target ~= nil and threat == nil
             and inst._my_friend_assist_target == nil then inst.components.combat:SetTarget(nil) end

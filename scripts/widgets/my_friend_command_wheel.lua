@@ -90,7 +90,7 @@ local function CommandList()
         end
     end
     -- Keep the same startup-safe fallback as the server command loader.
-    for _, character in ipairs({"wendy", "wickerbottom", "warly", "wanda"}) do
+    for _, character in ipairs({"wendy", "wickerbottom", "warly", "wanda", "wathgrithr"}) do
         if not character_seen[character] then
             character_seen[character] = true
             characters[#characters + 1] = character

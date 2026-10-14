@@ -144,7 +144,7 @@ function M.GuardAction(inst, action, radius)
         if not inst:IsValid() or act.target ~= nil and not act.target:IsValid() then
             return false
         end
-        if M.GetLeader(inst) ~= leader then return false end
+        if act._my_friend_rescue_target == nil and M.GetLeader(inst) ~= leader then return false end
         local target = act.target
         local point = act.GetActionPoint ~= nil and act:GetActionPoint() or nil
         if act._my_friend_wormhole ~= nil then
@@ -153,6 +153,12 @@ function M.GuardAction(inst, action, radius)
             if point ~= nil and not wormhole.InTravelRange(inst, act, point) then return false end
         elseif act._my_friend_rescue_target ~= nil then
             if not require("my_friend_rescue").IsRescueActionValid(inst, act) then return false end
+        elseif act._my_friend_bookstation ~= nil or act._my_friend_book_visit ~= nil then
+            local books = require("my_friend_wickerbottom")
+            if not books.IsActionValid(inst, act)
+                or point ~= nil and not books.InTravelRange(inst, act, point) then return false end
+        elseif act._my_friend_combat_recovery ~= nil then
+            if not require("my_friend_equipment").IsCombatRecoveryActionValid(inst, act, point) then return false end
         elseif act._my_friend_tower_command ~= nil then
             if inst._my_friend_command ~= act._my_friend_tower_command then return false end
         elseif act._my_friend_carry_backpack ~= nil then

@@ -84,6 +84,12 @@ function M.InTravelRange(inst, point)
     if action ~= nil and action._my_friend_rescue_target ~= nil then
         return require("my_friend_rescue").InTravelRange(inst, action, point)
     end
+    if action ~= nil and (action._my_friend_bookstation ~= nil or action._my_friend_book_visit ~= nil) then
+        return require("my_friend_wickerbottom").InTravelRange(inst, action, point)
+    end
+    if action ~= nil and action._my_friend_combat_recovery ~= nil then
+        return require("my_friend_equipment").IsCombatRecoveryActionValid(inst, action, point)
+    end
     if action ~= nil and action._my_friend_carry_backpack ~= nil then
         return require("my_friend_carry_backpack").IsTravelAction(inst, action)
     end

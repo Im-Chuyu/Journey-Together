@@ -2,8 +2,17 @@ local M = {}
 local LOADOUT_PERIOD = 1.25
 local REPAIR_STATUS_PERIOD = 2
 local EquipSlots = require("my_friend_equip_slots")
+M.COMBAT_RECOVERY_RANGE = 8
+M.COMBAT_RECOVERY_SCORE = 140
+M.COMBAT_RECOVERY_TIMEOUT = 10
+M.COMBAT_RECOVERY_RETRY = 5
 
 function M.Removed(inst, slot, item)
+    -- Explicit player removal is not an accidental disarm.
+    if inst._my_friend_combat_recovery_item == item then inst._my_friend_combat_recovery_item = nil end
+    if inst._my_friend_combat_hand_item == item then inst._my_friend_combat_hand_item = nil end
+    if inst._my_friend_last_combat_unequip == item then inst._my_friend_last_combat_unequip = nil end
+    if inst._my_friend_last_combat_equip == item then inst._my_friend_last_combat_equip = nil end
     if item ~= nil then item._my_friend_player_equipped_until = nil end
     inst._my_friend_equip_after = inst._my_friend_equip_after or {}
     inst._my_friend_equip_after[slot] = GetTime() + 30
@@ -54,9 +63,15 @@ function M.Load(inst, data)
 end
 
 function M.Wrap(inventory)
+    if inventory._my_friend_equipment_wrapped then return end
+    inventory._my_friend_equipment_wrapped = true
     local equip = inventory.Equip
     inventory.Equip = function(self, item, ...)
         local component = item ~= nil and item.components.equippable or nil
+        -- Native Equip removes an item's owner before testing olditem ~= item.
+        -- Re-equipping the current item can therefore leave it in LIMBO.
+        if self.inst:HasTag("my_friend") and component ~= nil and item:IsValid()
+            and self:GetEquippedItem(component.equipslot) == item then return true end
         if self.inst:HasTag("my_friend") and component ~= nil and not self.isloading
             and not self.inst._my_friend_player_equipping
             and not self.inst._my_friend_wanda_dreadstone_pending then
@@ -345,27 +360,101 @@ local function IsUrgentRepairItem(item)
             and (broken or depleted)
 end
 
-function M.GetDroppedCombatItemAction(inst)
-    local wanted = inst ~= nil and inst._my_friend_combat_hand_item or nil
-    if wanted == nil or wanted:IsValid() and wanted.components.inventoryitem ~= nil
-        and wanted.components.inventoryitem:GetGrandOwner() == inst then return end
-    local p = inst:GetPosition()
-    local entities = TheSim:FindEntities(p.x, p.y, p.z, 5, {"_inventoryitem"}, {"INLIMBO"})
-    for _, item in ipairs(entities) do
-        local ii = item.components ~= nil and item.components.inventoryitem or nil
-        if item:IsValid() and ii ~= nil and ii.owner == nil and ii.canbepickedup
-            and IsCombatHandItem(item)
-            and (wanted == nil or item.prefab == wanted.prefab) then
-            local action = BufferedAction(inst, item, ACTIONS.PICKUP)
-            action:AddSuccessAction(function()
-                if inst:IsValid() then
-                    inst._my_friend_combat_hand_item = item
-                    inst._my_friend_combat_hand_until = _G.GetTime() + 4
-                end
-            end)
-            return action
+function M.Configure(inst)
+    if inst._my_friend_combat_recovery_configured then return end
+    inst._my_friend_combat_recovery_configured = true
+    inst._my_friend_last_combat_equip = inst.components.inventory:GetEquippedItem(EQUIPSLOTS.HANDS)
+    inst:ListenForEvent("equip", function(_, data)
+        if data ~= nil and data.eslot == EQUIPSLOTS.HANDS and IsCombatHandItem(data.item) then
+            inst._my_friend_last_combat_equip = data.item
         end
+    end)
+    inst:ListenForEvent("unequip", function(_, data)
+        if data ~= nil and data.eslot == EQUIPSLOTS.HANDS and IsCombatHandItem(data.item) then
+            inst._my_friend_last_combat_unequip = data.item
+        end
+    end)
+    inst:ListenForEvent("dropitem", function(_, data)
+        local item = data ~= nil and data.item or nil
+        if IsCombatHandItem(item) and (item == inst._my_friend_last_combat_equip
+            or item == inst._my_friend_last_combat_unequip or item == inst._my_friend_combat_hand_item) then
+            local previous = inst._my_friend_combat_recovery_item
+            local ii = previous ~= nil and previous:IsValid() and previous.components.inventoryitem or nil
+            if ii == nil or ii.owner ~= nil then inst._my_friend_combat_recovery_item = item end
+            inst._my_friend_combat_recovery_retry = nil
+            inst._my_friend_replan_requested = true
+        end
+    end)
+end
+
+function M.FindDroppedCombatItem(inst)
+    if inst == nil or not inst:IsValid() or inst.components.inventory == nil
+        or inst:HasTag("playerghost") or inst._my_friend_possess_parked or inst._my_friend_departing
+        or inst.components.health ~= nil and inst.components.health:IsDead() then return end
+    local item = inst._my_friend_combat_recovery_item or inst._my_friend_combat_hand_item
+    if item == nil then return end
+    local ii = item:IsValid() and item.components.inventoryitem or nil
+    if ii == nil or ii.owner ~= nil or not IsCombatHandItem(item) then
+        if inst._my_friend_combat_recovery_item == item then inst._my_friend_combat_recovery_item = nil end
+        return
     end
+    if GetTime() < (inst._my_friend_combat_recovery_retry or 0)
+        or not ii.canbepickedup or item:HasAnyTag("INLIMBO", "fire", "outofreach", "broken")
+        or item.components.finiteuses ~= nil and item.components.finiteuses:GetUses() <= 0
+        or item.components.fueled ~= nil and item.components.fueled:IsEmpty()
+        or inst:GetDistanceSqToInst(item) > M.COMBAT_RECOVERY_RANGE^2
+        or inst:GetCurrentPlatform() ~= item:GetCurrentPlatform()
+        or inst.components.inventory:CanAcceptCount(item, 1) < 1 then return end
+    return item
+end
+
+function M.CombatRecoveryScore(inst)
+    return M.FindDroppedCombatItem(inst) ~= nil and M.COMBAT_RECOVERY_SCORE or 0
+end
+
+function M.IsCombatRecoveryActionValid(inst, action, point)
+    local item = action._my_friend_combat_recovery
+    local ii = item ~= nil and item:IsValid() and item.components.inventoryitem or nil
+    local origin = action._my_friend_combat_recovery_origin
+    return inst:IsValid() and not inst:HasTag("playerghost") and not inst._my_friend_possess_parked
+        and not inst._my_friend_departing
+        and (inst.components.health == nil or not inst.components.health:IsDead())
+        and GetTime() < (action._my_friend_combat_recovery_deadline or 0)
+        and ii ~= nil and ii.owner == nil and ii.canbepickedup
+        and not item:HasAnyTag("INLIMBO", "fire", "outofreach")
+        and inst:GetCurrentPlatform() == item:GetCurrentPlatform()
+        and inst.components.inventory:CanAcceptCount(item, 1) >= 1
+        and (point == nil or origin ~= nil
+            and (point.x - origin.x)^2 + (point.z - origin.z)^2 <= (M.COMBAT_RECOVERY_RANGE + 4)^2)
+end
+
+function M.GetDroppedCombatItemAction(inst)
+    local item = M.FindDroppedCombatItem(inst)
+    if item == nil then return end
+    local action = BufferedAction(inst, item, ACTIONS.PICKUP)
+    action._my_friend_combat_recovery = item
+    action._my_friend_combat_recovery_origin = inst:GetPosition()
+    action._my_friend_combat_recovery_deadline = GetTime() + M.COMBAT_RECOVERY_TIMEOUT
+    action.validfn = function(act) return M.IsCombatRecoveryActionValid(inst, act) end
+    action:AddSuccessAction(function()
+        if not inst:IsValid() or not item:IsValid() then return end
+        if inst._my_friend_combat_recovery_item == item then inst._my_friend_combat_recovery_item = nil end
+        if item.components.inventoryitem:GetGrandOwner() == inst then
+            local inventory = inst.components.inventory
+            if inventory:GetEquippedItem(EQUIPSLOTS.HANDS) ~= item then inventory:Equip(item) end
+            if inventory:GetEquippedItem(EQUIPSLOTS.HANDS) == item then
+                inst._my_friend_combat_hand_item = item
+                inst._my_friend_combat_hand_until = GetTime() + 4
+            end
+        end
+    end)
+    action:AddFailAction(function()
+        if inst:IsValid() then
+            inst._my_friend_combat_recovery_retry = GetTime()
+                + (action._my_friend_cancelled and 1 or M.COMBAT_RECOVERY_RETRY)
+        end
+    end)
+    return action
 end
 
 local function FindRepairKit(inst, item, items)

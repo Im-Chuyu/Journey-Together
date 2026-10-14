@@ -6,7 +6,7 @@ local Wortox = require("my_friend_wortox")
 local M = {}
 
 M.RANGE = 20
-M.SCORE = 116
+M.SCORE = 144
 M.RETRY_DELAY = 15
 M.DROP_SPACING = 3
 M.GHOST_READY_DELAY = 3
@@ -56,9 +56,9 @@ end
 
 local function CanAct(inst)
     return IsAlive(inst) and inst.components.inventory ~= nil
+        and not inst._my_friend_possess_parked and not inst._my_friend_departing
         and not inst._my_friend_under_threat
         and not inst._my_friend_backpack_action
-        and not inst._my_friend_container_action
         and not inst._my_friend_storage_action
         and not Policy.IsBusy(inst)
 end
@@ -108,7 +108,7 @@ end
 
 function M.IsRescueActionValid(inst, action)
     local ghost = action._my_friend_rescue_target
-    return inst.prefab == "wortox" and M.CanRevivePlayer(ghost)
+    return IsAlive(inst) and not inst._my_friend_possess_parked and M.CanRevivePlayer(ghost)
         and (ghost == Policy.GetLeader(inst) or ghost:GetDistanceSqToPoint(
             action._my_friend_rescue_origin) <= M.RANGE^2)
 end
@@ -201,16 +201,17 @@ function M.GetAction(inst)
                 action = Wortox.GetMakeHeartAction(inst, ghost)
             end
             if action ~= nil then
+                if inst._my_friend_container_action then require("my_friend_container_ai").Cancel(inst) end
                 -- Recheck at execution, not just when choosing a target:
                 -- walking/casting can outlast another player's resurrection.
                 local validfn = action.validfn
                 action.validfn = function(act)
                     return M.CanRevivePlayer(ghost) and (validfn == nil or validfn(act))
                 end
-                if inst.prefab == "wortox" then
-                    action._my_friend_rescue_target = ghost
-                    action._my_friend_rescue_origin = inst:GetPosition()
-                end
+                -- Every revival method owns the same bounded rescue route,
+                -- independent of follow, wait, manual home and vigil modes.
+                action._my_friend_rescue_target = ghost
+                action._my_friend_rescue_origin = inst:GetPosition()
                 action:AddFailAction(function()
                     if not action._my_friend_cancelled then
                         retry[ghost.userid] = GetTime() + M.RETRY_DELAY

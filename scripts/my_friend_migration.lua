@@ -1,7 +1,7 @@
 local M = {}
 -- Positions only make sense on the shard they were recorded on.
 local LOCAL_FIELDS = {"my_friend_base", "my_friend_home", "my_friend_hold_memory", "my_friend_revive",
-    "my_friend_fire_memory", "my_friend_resource_memory"}
+    "my_friend_fire_memory", "my_friend_resource_memory", "my_friend_bookstations"}
 
 function M.SaveWorldMemory(inst, data)
     local homes = inst._my_friend_shard_homes or {}

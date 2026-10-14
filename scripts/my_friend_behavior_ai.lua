@@ -237,14 +237,18 @@ function M.CountResource(inst, prefab)
     return count or 0
 end
 
-function M.GetResourceAction(inst)
+function M.GetResourceAction(inst, late_minimum)
     if not CanAct(inst) then return end
+    local late = Reserves.IsLateWorld()
+    if late and not late_minimum then return end
+    local minimum_keep = late and Reserves.MinimumKeep() or nil
     local state = inst._my_friend_resource_needs or {}
     inst._my_friend_resource_needs = state
     for prefab in pairs(RESOURCE_PRODUCTS) do
         local count = M.CountResource(inst, prefab)
         local minimum = (prefab == "cutgrass" or prefab == "twigs") and 2 or 0
-        local target = count < minimum and minimum or M.RESOURCE_MAX
+        local target = late and (minimum_keep[prefab] or 0)
+            or (count < minimum and minimum or M.RESOURCE_MAX)
         state[prefab] = count < target
     end
     local has_need = false
@@ -266,20 +270,26 @@ function M.GetResourceAction(inst)
             and ACTIONS.PICK or ACTIONS.PICKUP)
 end
 
+function M.GetLateMinimumAction(inst)
+    if not Reserves.IsLateWorld() or inst._my_friend_command ~= nil or inst._my_friend_under_threat then return end
+    return M.GetResourceAction(inst, true)
+end
+
 function M.GetFoodOrResourceAction(inst)
     if not CanAct(inst) or inst.components.eater == nil then return end
     local needs_food = FoodAI.NeedsFoodSupply(inst)
     local following = Policy.GetLeader(inst) ~= nil
+    local late = Reserves.IsLateWorld()
     local state = inst._my_friend_resource_needs or {}
     inst._my_friend_resource_needs = state
     for prefab in pairs(RESOURCE_PRODUCTS) do
         local count = M.CountResource(inst, prefab)
         local target = following and (Reserves.FOLLOW_TARGETS[prefab] or 0) or M.RESOURCE_MAX
-        state[prefab] = count < target
+        state[prefab] = not late and count < target
     end
     local grass = M.CountResource(inst, "cutgrass")
     local twigs = M.CountResource(inst, "twigs")
-    local minimum_missing = grass < 2 or twigs < 2
+    local minimum_missing = not late and (grass < 2 or twigs < 2)
     local target = FindClosest(inst, function(item)
         if minimum_missing then
             if (item.prefab == "cutgrass" and grass < 2
@@ -371,6 +381,19 @@ function M.IsThreat(inst, entity)
         and GetTime() - (owncombat.lastwasattackedtime or 0) <= M.RECENT_ATTACKER_TIME
 end
 
+function M.IsPriorityEngaged(inst, target)
+    local rules = require("my_friend_combat_rules")
+    local active = rules.IsActiveDefenceWorld()
+    if not IsAlive(target) or target == inst or target:HasAnyTag("player", "my_friend", "structure", "wall")
+        or not (active or rules.IsPriorityEnemy(target)) then return false end
+    if M.IsThreat(inst, target) then return DistanceSq(inst, target) <= M.ASSIST_RANGE^2 end
+    local combat = target.components ~= nil and target.components.combat or nil
+    local victim = combat ~= nil and combat.target or nil
+    return Policy.IsLocalPlayer(victim) and not victim:HasTag("playerghost")
+        and (active or Policy.InRange(inst, target, M.ASSIST_RANGE))
+        and DistanceSq(inst, target) <= M.ASSIST_RANGE^2
+end
+
 function M.FindAssistTarget(inst)
     local leader = Policy.GetLeader(inst)
     if leader == nil or not Policy.InRange(inst, inst, M.ASSIST_RANGE) then return end
@@ -418,6 +441,8 @@ end
 function M.StartHurtRetreat(inst, source, fire_distance)
     if source == nil or not source:IsValid() or not IsAlive(inst)
         or inst:HasTag("playerghost") then return end
+    if fire_distance == nil and (require("my_friend_combat_rules").IsPriorityEnemy(source)
+        or M.IsPriorityEngaged(inst, source)) then return end
     if source ~= inst then
         inst._my_friend_hazard_position = nil
         inst._my_friend_hazard_until = nil
@@ -623,10 +648,13 @@ function M.FindThreat(inst, range)
         if not ignored_attacker then
             local attacks = M.GetLeaderAttackCount(inst, entity)
             if not entity:HasTag("player")
-                and (M.IsThreat(inst, entity) or attacks > 0) then
+                and (M.IsThreat(inst, entity) or attacks > 0 or M.IsPriorityEngaged(inst, entity)) then
                 local dist = DistanceSq(inst, entity)
                 -- Prefer the creature the leader has actually been attacking.
                 local score = attacks * 1000000 - dist
+                if not require("my_friend_combat_rules").CanAttack(entity) then
+                    score = -1000000000 - dist
+                end
                 if closestscore == nil or score > closestscore then
                     closest, closestscore = entity, score
                 end
@@ -843,12 +871,14 @@ function M.EstimateFight(friendhealth, enemyhealth, outgoing, incoming,
 end
 
 function M.CanCounterAttack(inst, target)
-    if not IsAlive(target) or not IsAlive(inst)
+    if not require("my_friend_combat_rules").CanAttack(target)
+        or not IsAlive(target) or not IsAlive(inst)
         or inst.components.inventory == nil or inst.components.combat == nil then
         return false
     end
     local inventory = inst.components.inventory
     local hand = inventory:GetEquippedItem(EQUIPSLOTS.HANDS)
+    if require("my_friend_equipment").FindDroppedCombatItem(inst) ~= nil then return false end
     local leader = Policy.GetLeader(inst)
     local self_defending = M.IsThreat(inst, target)
     local assisting = leader ~= nil
@@ -859,11 +889,12 @@ function M.CanCounterAttack(inst, target)
         and Policy.InRange(inst, target, M.ASSIST_RANGE)
         and DistanceSq(inst, target) <= M.ASSIST_RANGE * M.ASSIST_RANGE
     local weaponitem, damage = M.FindBestCombatWeapon(inst, target)
+    local priority = M.IsPriorityEngaged(inst, target)
     if weaponitem == nil or not weaponitem:IsValid() or type(damage) ~= "number" or damage <= 25
         or weaponitem ~= hand and IsActiveLight(hand) then
-        if not assisting and not self_defending then return false end
+        if not assisting and not self_defending and not priority then return false end
         local health = inst.components.health
-        return health == nil or health.GetPercent == nil or health:GetPercent() >= .15
+        return priority or health == nil or health.GetPercent == nil or health:GetPercent() >= .15
     end
     if weaponitem ~= hand and inventory.Equip ~= nil then
         if inventory:Equip(weaponitem) ~= true then return false end
@@ -872,9 +903,9 @@ function M.CanCounterAttack(inst, target)
         damage = WeaponDamage(inst, target, weaponitem) or 0
     end
     if weaponitem == nil or not weaponitem:IsValid() or damage <= 25 then
-        if not assisting and not self_defending then return false end
+        if not assisting and not self_defending and not priority then return false end
         local health = inst.components.health
-        return health == nil or health.GetPercent == nil or health:GetPercent() >= .15
+        return priority or health == nil or health.GetPercent == nil or health:GetPercent() >= .15
     end
     -- Keep the hand slot stable while this target remains relevant. The
     -- survival loadout must not replace a weapon with an umbrella between
@@ -909,8 +940,8 @@ function M.CanCounterAttack(inst, target)
     -- Assistance is deliberately more decisive than self-defence. Once the
     -- companion has a working weapon and armour, it helps the leader instead
     -- of waiting for the conservative damage/survival estimate to pass.
-    if assisting or self_defending then
-        return is_wanda or health == nil or health.GetPercent == nil
+    if assisting or self_defending or priority then
+        return priority or is_wanda or health == nil or health.GetPercent == nil
             or health:GetPercent() >= .15
     end
     if damage <= 25 or not protected then return false end
@@ -925,6 +956,30 @@ function M.CanCounterAttack(inst, target)
     return M.EstimateFight(health.currenthealth, enemyhealth.currenthealth,
         damage, incoming, inst.components.combat.min_attack_period,
         enemycombat.min_attack_period, absorption, armorcondition)
+end
+
+-- Frame-level dodge monitoring needs a cheap combat eligibility check. Keep
+-- weapon/armour scoring out of that loop; ownership and disarm still update now.
+function M.CanContinueCombat(inst, target)
+    if not IsAlive(inst) or not IsAlive(target)
+        or not require("my_friend_combat_rules").CanAttack(target)
+        or inst.components.inventory == nil or inst.components.combat == nil
+        or require("my_friend_equipment").FindDroppedCombatItem(inst) ~= nil then
+        if inst ~= nil then inst._my_friend_combat_check = nil end
+        return false
+    end
+    local inventory, now = inst.components.inventory, GetTime()
+    local hand = inventory:GetEquippedItem(EQUIPSLOTS.HANDS)
+    local leader = Policy.GetLeader(inst)
+    local low_health = inst.components.health.GetPercent ~= nil and inst.components.health:GetPercent() < .15
+    local cached = inst._my_friend_combat_check
+    if cached ~= nil and cached.target == target and cached.hand == hand
+        and cached.leader == leader and cached.low_health == low_health
+        and not IsWeaponBroken(hand) and now < cached.until_time then return cached.allowed end
+    local allowed = M.CanCounterAttack(inst, target)
+    inst._my_friend_combat_check = {target = target, hand = inventory:GetEquippedItem(EQUIPSLOTS.HANDS),
+        leader = leader, low_health = low_health, allowed = allowed, until_time = now + .25}
+    return allowed
 end
 
 function M.ShouldDodgeWindow(distance, attackrange, attacking,

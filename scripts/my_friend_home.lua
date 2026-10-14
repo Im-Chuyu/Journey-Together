@@ -92,6 +92,9 @@ function M.Set(inst, point, mode)
     inst._my_friend_hold_memory = nil
     inst._my_friend_home = {x = point.x, z = point.z, mode = mode or "base"}
     M.Apply(inst)
+    if mode == "base" and inst.prefab == "wickerbottom" then
+        require("my_friend_wickerbottom").RememberBase(inst, point)
+    end
     inst._my_friend_replan_requested = true
     return true
 end

@@ -241,6 +241,8 @@ local function CaptureCompanionState(sess, friend)
     if friend == nil or not friend:IsValid() then return end
     local memory = {}
     require("my_friend_base_ai").OnSave(friend, memory)
+    require("my_friend_wathgrithr").Save(friend, memory)
+    require("my_friend_wickerbottom").Save(friend, memory)
     sess.friend_memory = deepcopy(memory)
     sess.friend_home = sess.friend_memory.my_friend_home -- old-save compatibility
     sess.friend_shard_homes = deepcopy(friend._my_friend_shard_homes)
@@ -446,7 +448,7 @@ function M.Rebind(player)
         sess.companion_skin_data = SaveSkin(player)
         sess.portal_reroll, sess.player_migrated = nil, nil
     end
-    if sess.phase ~= "enter" and sess.phase ~= "exit" then
+    if sess.phase ~= "enter" and sess.phase ~= "exit" and sess.phase ~= "exit_ready" then
         MarkPossessedPlayer(player, sess)
     end
     return true
@@ -686,6 +688,8 @@ RestoreCompanion = function(sess, body, x, z, record, is_player_body)
     if world ~= nil then world._my_friend = friend end
     if sess.friend_memory ~= nil then
         require("my_friend_base_ai").OnLoad(friend, deepcopy(sess.friend_memory))
+        require("my_friend_wathgrithr").Load(friend, sess.friend_memory)
+        require("my_friend_wickerbottom").Load(friend, sess.friend_memory)
     elseif sess.friend_home ~= nil then
         friend._my_friend_home = {
             x = sess.friend_home.x,

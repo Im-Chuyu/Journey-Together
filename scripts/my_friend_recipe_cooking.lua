@@ -31,6 +31,7 @@ local function HasReadyMeal(inst)
 end
 
 local function CanPlan(inst)
+    if not require("my_friend_food_rules").CanCook(inst) then return false end
     local c = inst.components
     local special = inst._my_friend_command ~= nil
         and inst._my_friend_command.special == "cook"
@@ -236,12 +237,14 @@ local function FindIngredients(inst, pot, remaining)
     local pool = Planner.Pool(inst, (Owned(inst, pot) or Food.NeedsFoodSupply(inst)
         or not HasReadyMeal(inst) or requested)
         and fridges or {}, grounds)
-    local available, carried, stored, ground = {}, nil, nil, nil
+    local available, carried, stored, ground, stale = {}, nil, nil, nil, nil
     for _, group in ipairs(pool) do
         available[group.prefab] = group.count
         if (remaining[group.prefab] or 0) > 0 then
             for _, source in ipairs(group.sources) do
                 local item = source.item
+                if require("my_friend_food_rules").IsBigMeat(item.prefab)
+                    and require("my_friend_food_rules").IsStale(item) then stale = stale or item end
                 local owner = item.components.inventoryitem:GetGrandOwner()
                 if owner == inst then
                     carried = carried or item
@@ -256,7 +259,7 @@ local function FindIngredients(inst, pot, remaining)
     for prefab, count in pairs(remaining) do
         if (available[prefab] or 0) < count then return end
     end
-    return carried or stored or ground
+    return stale or carried or stored or ground
 end
 
 function M.ShouldReserve(inst, food)
@@ -285,7 +288,7 @@ local function Guard(inst, pot, action, valid)
     pot._my_friend_recipe_step = stamp
     action._my_friend_dialogue_kind = action.action == ACTIONS.HARVEST and "recipe_ready" or "recipe_cook"
     action.validfn = function()
-        return Accessible(inst, pot)
+        return require("my_friend_food_rules").CanCook(inst) and Accessible(inst, pot)
             and inst._my_friend_command == command
             and not inst._my_friend_under_threat and valid()
     end
@@ -311,7 +314,8 @@ end
 
 function M.AddIngredient(act)
     local inst, pot, item = act.doer, act.target, act.invobject
-    if not Owned(inst, pot) or not Accessible(inst, pot)
+    if not require("my_friend_food_rules").CanCook(inst)
+        or not Owned(inst, pot) or not Accessible(inst, pot)
         or not Inventory.CanReachContainer(inst, pot) or not Planner.Available(inst, item)
         or item.components.inventoryitem:GetGrandOwner() ~= inst then return false end
     local c, s = pot.components.container, pot.components.stewer
@@ -356,8 +360,10 @@ function M.GetAction(inst)
     if s:IsDone() then
         if not Owned(inst, pot) then return end
         local requested = plan.recipe
+        -- Ingredients are consumed once cooking begins; freshness guards are
+        -- checked before COOK, not again against vanished ingredient records.
         local valid_product = requested ~= nil and s.product == requested
-            and Planner.EvaluateSpecific(inst, pot.prefab, plan.prefabs, requested) ~= nil
+            and Planner.RecipeValue(inst, Cooking.GetRecipe(pot.prefab, s.product)) ~= nil
             or requested == nil and Planner.RecipeValue(inst, Cooking.GetRecipe(pot.prefab, s.product)) ~= nil
         if not valid_product then
             Forget(inst, pot)
@@ -430,9 +436,10 @@ function M.GetAction(inst)
         local valid
         if plan.recipe ~= nil then
             valid = Planner.EvaluateSpecific(inst, pot.prefab, plan.prefabs,
-                plan.recipe) ~= nil
+                plan.recipe, require("my_friend_food_rules").CountStaleMeat(c:GetAllItems())) ~= nil
         else
-            valid = Planner.Evaluate(inst, pot.prefab, plan.prefabs) ~= nil
+            valid = Planner.Evaluate(inst, pot.prefab, plan.prefabs,
+                require("my_friend_food_rules").CountStaleMeat(c:GetAllItems())) ~= nil
         end
         return Unchanged() and s:CanCook() and valid
     end)

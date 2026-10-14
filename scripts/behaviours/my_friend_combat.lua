@@ -1,6 +1,7 @@
 local BehaviourAI = require("my_friend_behavior_ai")
 local BaseAI = require("my_friend_base_ai")
 local Policy = require("my_friend_policy")
+local Dodge = require("my_friend_dodge")
 
 local MyFriendCombat = Class(BehaviourNode, function(self, inst)
     BehaviourNode._ctor(self, "MyFriendCombat")
@@ -28,8 +29,9 @@ local function IsValidThreat(inst, target)
     local pending_player_attack = inst._my_friend_assist_scan ~= nil
         and inst._my_friend_assist_scan.target == target
     local self_defending = BehaviourAI.IsThreat(inst, target)
+        or BehaviourAI.IsPriorityEngaged(inst, target)
     local engaged = assisting or self_defending
-    return target ~= nil and target:IsValid()
+    return require("my_friend_combat_rules").CanAttack(target)
         and (self_defending or player_attack_target
             or pending_player_attack)
         and (engaged or Policy.InRange(inst, target, 7))
@@ -61,7 +63,7 @@ function MyFriendCombat:Visit()
         self.commit_attack_until = nil
     end
     if not IsValidThreat(self.inst, self.target)
-        or not BehaviourAI.CanCounterAttack(self.inst, self.target) then
+        or not BehaviourAI.CanContinueCombat(self.inst, self.target) then
         self.target = nil
         self.status = FAILED
         Stop(self.inst)
@@ -97,6 +99,7 @@ function MyFriendCombat:Visit()
     end
     local assisting = self.target == self.inst._my_friend_assist_target
     local self_defending = BehaviourAI.IsThreat(self.inst, self.target)
+        or BehaviourAI.IsPriorityEngaged(self.inst, self.target)
     if not assisting and not self_defending
         and not Policy.InRange(self.inst, self.inst, 7) then
         local leader = Policy.GetLeader(self.inst)
@@ -110,11 +113,45 @@ function MyFriendCombat:Visit()
         return
     end
 
-    -- Moving during SGwilson's attack state can cancel the action before its
-    -- damage frame. Dodge only after the current swing has completed.
-    if self.inst.sg ~= nil and self.inst.sg:HasAnyStateTag("attack", "abouttoattack") then
+    -- abouttoattack is removed at the damage frame, before attack recovery ends.
+    -- Protect that hit, then let the native locomote event leave the recovery.
+    if self.inst.sg ~= nil and self.inst.sg:HasStateTag("abouttoattack") then
+        self:Sleep(1 / 30)
+        return
+    end
+
+    local dodge_point, dodging, known_attack, hold_attack = Dodge.GetDecision(self.inst, self.target)
+    if dodging then
+        BaseAI.SetTask(self.inst, "正在躲避攻击")
+        if dodge_point ~= nil then
+            local now, previous = GetTime(), self.dodge_point
+            if previous == nil or now >= (self.dodge_move_after or 0)
+                and (self.inst.components.locomotor.dest == nil
+                    or (previous.x - dodge_point.x)^2 + (previous.z - dodge_point.z)^2 >= .5^2
+                    or (previous.x - self.inst:GetPosition().x)^2
+                        + (previous.z - self.inst:GetPosition().z)^2 <= .3^2) then
+                self.inst.components.locomotor:GoToPoint(dodge_point, nil, true)
+                self.dodge_point, self.dodge_move_after = dodge_point, now + .15
+            end
+        else
+            Stop(self.inst)
+            self.dodge_point, self.dodge_move_after = nil, nil
+        end
+        self.dodge_started_at, self.commit_attack_until = nil, nil
+        self:Sleep(1 / 30)
+        return
+    end
+    self.dodge_point, self.dodge_move_after = nil, nil
+    if hold_attack then
+        BaseAI.SetTask(self.inst, "正在等待躲避时机")
         Stop(self.inst)
-        self:Sleep(.05)
+        self:Sleep(1 / 30)
+        return
+    end
+    -- A protected swing has finished, but its attack tag may remain. Wait for
+    -- the native cooldown unless a dodge above needs to leave the recovery.
+    if self.inst.sg ~= nil and self.inst.sg:HasStateTag("attack") then
+        self:Sleep(1 / 30)
         return
     end
 
@@ -124,7 +161,7 @@ function MyFriendCombat:Visit()
         and (combat:InCooldown() or now >= self.commit_attack_until) then
         self.commit_attack_until = nil
     end
-    local should_dodge = self.commit_attack_until == nil
+    local should_dodge = not known_attack and self.commit_attack_until == nil
         and BehaviourAI.ShouldDodge(self.inst, self.target)
     if should_dodge then
         self.dodge_started_at = self.dodge_started_at or now
@@ -159,6 +196,22 @@ function MyFriendCombat:Visit()
     end
 
     local target_position = self.target:GetPosition()
+    local special, waiting = require("my_friend_wathgrithr").GetCombatAction(self.inst, self.target)
+    if special ~= nil then
+        local target = self.target
+        local previous = special.validfn
+        special.validfn = function(act)
+            return self.target == target and IsValidThreat(self.inst, target)
+                and (previous == nil or previous(act))
+        end
+        self.inst.components.locomotor:PushAction(special, true)
+        self:Sleep(.1)
+        return
+    elseif waiting then
+        Stop(self.inst)
+        self:Sleep(.1)
+        return
+    end
     -- Pass the target explicitly. The no-argument form falls back to
     -- combat.target, which is not necessarily the one this node is working on.
     if distance_sq > combat:CalcAttackRangeSq(self.target) then
@@ -183,6 +236,9 @@ function MyFriendCombat:Visit()
 end
 
 function MyFriendCombat:OnStop()
+    Dodge.Reset(self.inst)
+    self.inst._my_friend_combat_check = nil
+    self.dodge_point, self.dodge_move_after = nil, nil
     if not self.inst:IsValid() then
         self.target, self.announced_target = nil, nil
         self.dodge_started_at, self.commit_attack_until = nil, nil

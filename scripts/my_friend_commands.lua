@@ -18,8 +18,8 @@ local COMMANDS = {}
 do
     -- Character-specific command files are loaded during mod initialisation,
     -- before every vanilla character is guaranteed to be present in
-    -- DST_CHARACTERLIST. Keep this small built-in catalogue as a fallback so
-    -- Wendy/Wickerbottom/Warly/Wanda commands are available on every server.
+    -- DST_CHARACTERLIST. Keep this small catalogue as a fallback so built-in
+    -- character commands are available on every server.
     local function CharacterCatalogue()
         local result, seen = {}, {}
         for _, character in ipairs(Characters.List()) do
@@ -28,7 +28,7 @@ do
                 result[#result + 1] = character
             end
         end
-        for _, character in ipairs({"wendy", "wickerbottom", "warly", "wanda"}) do
+        for _, character in ipairs({"wendy", "wickerbottom", "warly", "wanda", "wathgrithr"}) do
             if not seen[character] then
                 seen[character] = true
                 result[#result + 1] = character
@@ -108,7 +108,7 @@ local function HasChinese(text)
 end
 
 local function MaybeRefuseChinese(friend, command_text, id)
-    if id == nil or id == "allow_pickup" or not HasChinese(command_text)
+    if id == nil or id == "allow_pickup" or id == "wathgrithr_lightning_spear" or not HasChinese(command_text)
         or math.random() >= .03 then return false end
     Dialogue.Reply(friend, "command_refuse_human")
     return true
@@ -119,7 +119,7 @@ function M.Get(friend)
     if command ~= nil and (not Policy.IsLocalPlayer(command.player)
         or GetTime() >= (command.deadline or 0)
         or command.id ~= "touch_tower" and command.id ~= "squeeze_heart"
-            and command.special ~= "read" and Policy.GetLeader(friend) ~= command.player) then
+            and not SpecialCommands.IsPublic(command) and Policy.GetLeader(friend) ~= command.player) then
         M.Clear(friend)
         return
     end
@@ -267,6 +267,9 @@ function M.Dispatch(friend, player, message, from_wheel)
         or friend == nil or not friend:IsValid() or friend.components.health == nil then return false end
     message = message:match("^%s*(.-)%s*$")
     local addressed_message = AddressedMessage(friend, message)
+    if require("my_friend_wathgrithr").Answer(friend, player, addressed_message or message) then
+        return true
+    end
     -- A pending backpack question also accepts a short reply without a name.
     -- Exact answers prevent "not okay" / "不可以" granting permission.
     if require("my_friend_carry_backpack").Answer(friend, player, addressed_message or message) then
@@ -356,7 +359,7 @@ function M.Dispatch(friend, player, message, from_wheel)
     if special ~= nil then
         if not from_wheel and id == nil and MaybeRefuseChinese(friend, addressed_message, "special") then return true end
         if friend:HasTag("playerghost")
-            or special.special ~= "read" and Policy.GetLeader(friend) ~= player then return false end
+            or not SpecialCommands.IsPublic(special) and Policy.GetLeader(friend) ~= player then return false end
         M.Clear(friend)
         if special.special == "wendy_recall" then
             require("my_friend_abigail").Recall(friend, 480)

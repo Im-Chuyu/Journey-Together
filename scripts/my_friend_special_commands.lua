@@ -4,6 +4,10 @@ local LanguageFiles = require("my_friend_language")
 
 local M = {}
 
+function M.IsPublic(command)
+    return command ~= nil and (command.special == "read" or command.special == "lightning_spear")
+end
+
 local function Has(text, word)
     return type(text) == "string" and text:find(word, 1, true) ~= nil
 end
@@ -162,6 +166,10 @@ end
 function M.Parse(friend, text, has_general_command)
     if friend == nil or type(text) ~= "string" then return end
     text = text:lower()
+    if friend.prefab == "wathgrithr"
+        and HasCharacterCommand(text, "wathgrithr", "wathgrithr_lightning_spear") then
+        return {special = "lightning_spear", recipe = "spear_wathgrithr_lightning"}
+    end
     if friend.prefab == "wendy" and Any(text,
         {"收回", "回去", "藏", "recall abigail", "recall"}) then
         return {special = "wendy_recall"}

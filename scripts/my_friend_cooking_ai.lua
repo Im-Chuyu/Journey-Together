@@ -92,13 +92,14 @@ function M.Remember(inst, source)
 end
 
 function M.GetAction(inst)
-    if Policy.IsBusy(inst) or inst._my_friend_container_action
+    if not require("my_friend_food_rules").CanCook(inst)
+        or Policy.IsBusy(inst) or inst._my_friend_container_action
         or inst._my_friend_storage_action then return end
     local inventory = inst.components.inventory
     local food = inventory:FindItem(function(item)
         return item.components.edible ~= nil and inst.components.eater:CanEat(item)
             and not require("my_friend_pets").IsIngredient(inst, item)
-            and not FoodAI.IsForbiddenFood(item)
+            and not require("my_friend_food_rules").IsProtected(item)
             and NeedsCooking(inst, item)
     end)
     if food == nil then
@@ -117,6 +118,10 @@ function M.GetAction(inst)
         if best.prefab == "firepit" then M.Remember(inst, best) end
         if best.components.cooker:CanCook(food, inst) then
             local action = BufferedAction(inst, best, ACTIONS.COOK, food)
+            action.validfn = function()
+                return require("my_friend_food_rules").CanCook(inst)
+                    and food:IsValid() and not require("my_friend_food_rules").IsProtected(food)
+            end
             action:AddSuccessAction(function()
                 inst._my_friend_food_supply_cache = nil
                 inst._my_friend_cook_until = GetTime() + 15
