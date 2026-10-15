@@ -15,6 +15,7 @@ local Home = require("my_friend_home")
 local CraftingTech = require("my_friend_crafting_tech")
 local Reserves = require("my_friend_resource_reserves")
 local EquipmentReserves = require("my_friend_equipment_reserves")
+local Discovery = require("my_friend_discovery")
 
 local M = {}
 
@@ -372,9 +373,11 @@ local function FindStructures(inst, prefab)
     local base = M.GetBasePoint(inst)
     if base == nil then return {} end
     local result = {}
-    for _, entity in ipairs(TheSim:FindEntities(base.x, base.y, base.z,
-        M.BASE_STRUCTURE_RANGE, nil, { "INLIMBO", "burnt" })) do
-        if IsOwnedStructure(entity) and (prefab == nil or entity.prefab == prefab) then
+    local entities = Discovery.Query(inst, "base_structures", "structures", base.x, base.y, base.z,
+        M.BASE_STRUCTURE_RANGE, nil, { "INLIMBO", "burnt" })
+    for _, entity in ipairs(entities) do
+        if IsOwnedStructure(entity) and (prefab == nil or entity.prefab == prefab)
+            and DistanceSqToPoint(entity, base) <= M.BASE_STRUCTURE_RANGE^2 then
             table.insert(result, entity)
         end
     end
@@ -1482,7 +1485,7 @@ local function GetTerrainSearchAction(inst, needs, excluded_work_action)
             or needs.log ~= nil and entity.components.inventoryitem == nil
                 and M.IsComplete(inst)
                 and DistanceSqToPoint(entity, M.GetBasePoint(inst)) <= (M.BASE_STRUCTURE_RANGE + 4)^2
-    end)
+    end, tostring(can_work) .. ":" .. tostring(excluded_work_action))
     if resource ~= nil then
         local point = resource:GetPosition()
         state.resource_search = { key = M.GetNeedKey(needs), target = resource,
@@ -2413,14 +2416,16 @@ end
 
 RefreshGarden = function(inst)
     local state = inst._my_friend_base
-    if state == nil or GetTime() < (state.garden_check_at or 0) then return end
-    state.garden_check_at = GetTime() + 3
+    if state == nil then return end
     local base = GetLayoutOrigin(inst)
     if base == nil then return end
+    local plants, discovery = Discovery.Query(inst, "base_garden", "garden", base.x, 0, base.z,
+        M.BASE_STRUCTURE_RANGE, nil, {"INLIMBO", "burnt", "FX"})
+    if state.garden_discovery == discovery and state.garden_check_at ~= 0 then return end
+    state.garden_discovery, state.garden_check_at = discovery, nil
     local grass, sapling, barren = 0, 0, 0
-    for _, entity in ipairs(TheSim:FindEntities(base.x, 0, base.z,
-        M.BASE_STRUCTURE_RANGE, nil, {"INLIMBO", "burnt", "FX"})) do
-        if (entity.prefab == "grass" or entity.prefab == "sapling")
+    for _, entity in ipairs(plants) do
+        if entity:IsValid() and (entity.prefab == "grass" or entity.prefab == "sapling")
             and entity.components.pickable ~= nil
             and entity.components.pickable.transplanted
             and IsGardenPoint(base, entity:GetPosition()) then
@@ -3993,6 +3998,8 @@ function M.OnBuildStructure(inst, structure)
     if structure == nil or not structure:IsValid() then return end
     structure._my_friend_base_structure = true
     structure:AddTag("my_friend_base_structure")
+    Discovery.ConfigureEntity(structure)
+    Discovery.Touch(structure)
     if structure.prefab == "treasurechest" then
         structure:AddTag("my_friend_base_storage")
     end
@@ -4016,6 +4023,7 @@ function M.WrapBaseStructure(inst)
 end
 
 function M.OnSave(inst, data)
+    data.my_friend_resource_memory = ResourceMemory.Save(inst, GetTime())
     require("my_friend_exploration").Save(inst, data)
     Home.Save(inst, data)
     local state = inst._my_friend_base
@@ -4043,6 +4051,8 @@ function M.OnSave(inst, data)
 end
 
 function M.OnLoad(inst, data)
+    inst._my_friend_discoveries, inst._my_friend_world_resource_query = nil, nil
+    ResourceMemory.Load(inst, data ~= nil and data.my_friend_resource_memory, GetTime())
     require("my_friend_exploration").Load(inst, data)
     local saved = data ~= nil and data.my_friend_base or nil
     -- Home.Load runs last so a manual site always overrides the saved layout.

@@ -107,6 +107,7 @@ end
 
 local function MarkChanged(inst, merge)
     if not inst:IsValid() then return end
+    require("my_friend_discovery").InventoryChanged(inst)
     InvalidateReferenceCache(inst)
     inst._my_friend_inventory_merge_dirty = inst._my_friend_inventory_merge_dirty or merge == true
     if inst._my_friend_inventory_event_task ~= nil then return end

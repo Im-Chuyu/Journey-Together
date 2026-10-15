@@ -239,18 +239,24 @@ local function Clamp01(value)
     return value < 0 and 0 or value > 1 and 1 or value
 end
 
-local function HasFullRain(inst)
+local function RainProtection(item)
+    local c = item ~= nil and item:IsValid() and item.components or nil
+    return c ~= nil and c.waterproofer ~= nil
+        and Clamp01(c.waterproofer:GetEffectiveness()) or 0
+end
+
+local function OtherRainProtection(inst, excluded_slot)
     local inventory = inst.components.inventory
-    if inventory == nil then return false end
-    for _, slot in ipairs(EquipSlots.All()) do
-        local item = inventory:GetEquippedItem(slot)
-        local waterproofer = item ~= nil and item.components ~= nil
-            and item.components.waterproofer or nil
-        if waterproofer ~= nil and Clamp01(waterproofer:GetEffectiveness()) >= 1 then
-            return true
-        end
+    local moisture = inst.components.moisture
+    local total = moisture ~= nil and (moisture.inherentWaterproofness or 0) or 0
+    if moisture ~= nil and moisture.waterproofnessmodifiers ~= nil then
+        total = total + (moisture.waterproofnessmodifiers:Get() or 0)
     end
-    return false
+    if inventory == nil then return total end
+    for _, slot in ipairs(EquipSlots.All()) do
+        if slot ~= excluded_slot then total = total + RainProtection(inventory:GetEquippedItem(slot)) end
+    end
+    return total
 end
 
 local function Score(inst, item, needs)
@@ -260,7 +266,7 @@ local function Score(inst, item, needs)
     if equippable == nil then return 0 end
     -- Crown utility remains useful in daylight/idle, below urgent thermal and
     -- rain protection but above the usual preference for an empty head slot.
-    local score = M.IsPreferredHead(inst, item) and 2 or 0
+    local score = not needs.combat and M.IsPreferredHead(inst, item) and 2 or 0
     local thermal = needs.thermal
     if equippable.equipslot == EQUIPSLOTS.HANDS then
         thermal = needs.hand_thermal
@@ -272,18 +278,10 @@ local function Score(inst, item, needs)
         end
     end
     if needs.rain and components.waterproofer ~= nil then
-        local waterproof = Clamp01(components.waterproofer:GetEffectiveness())
-        local current = inst.components.inventory:GetEquippedItem(
-            item.components.equippable.equipslot)
-        if HasFullRain(inst) and current ~= item then
-            waterproof = 0
-        end
-        -- Once a currently worn item already gives full protection, another
-        -- rain item cannot improve the loadout and must not be selected.
-        if current ~= nil and current ~= item and current.components.waterproofer ~= nil
-            and Clamp01(current.components.waterproofer:GetEffectiveness()) >= 1 then
-            return score
-        end
+        -- Score only the protection missing WITHOUT this slot. This applies
+        -- equally to worn and stored items, and counts combined protection.
+        local missing = math.max(0, 1 - OtherRainProtection(inst, equippable.equipslot))
+        local waterproof = math.min(missing, RainProtection(item))
         score = score + NEED_WEIGHT.rain * waterproof
     end
     if needs.speed then
@@ -298,6 +296,18 @@ local function Score(inst, item, needs)
     -- but non-zero instead would have it stripped and immediately re-picked.
     if Survival().IsWornOut(item) then return 0 end
     return score
+end
+
+-- Combat first compares effective armour absorption. Reuse the ordinary
+-- capability scoring only to break protection ties; a rain/thermal or headgear
+-- preference must never disqualify armour or override stronger protection.
+function M.GetCombatUtilityScore(inst, item, thermal_need)
+    return Score(inst, item, {
+        combat = true,
+        thermal = thermal_need,
+        rain = WantsRain(inst),
+        speed = true,
+    })
 end
 
 -- Slots the companion is not free to rearrange this tick.
@@ -321,6 +331,42 @@ local function IsSlotLocked(inst, slot, current, preferred_head)
             or sg:HasStateTag("working")) then return true end
     end
     return false
+end
+
+local function LoadoutSlots(inst, items, needs, preferred_head)
+    local slots = EquipSlots.All()
+    if not needs.rain then return slots end
+    -- Try the strongest rain source first: otherwise partial head/body gear
+    -- can consume the entire need before a single 100% hand item is examined.
+    local protection, order, full_slot = {}, {}, nil
+    for index, slot in ipairs(slots) do
+        order[slot] = index
+        local current = inst.components.inventory:GetEquippedItem(slot)
+        protection[slot] = RainProtection(current)
+        if full_slot == nil and protection[slot] >= 1 and not Survival().IsWornOut(current) then
+            full_slot = slot
+        end
+        if not IsSlotLocked(inst, slot, current, preferred_head) then
+            for _, item in ipairs(items) do
+                local equip = item:IsValid() and item.components.equippable or nil
+                if equip ~= nil and equip.equipslot == slot and not equip:IsRestricted(inst)
+                    and not Survival().IsWornOut(item)
+                    and (not Light().IsLightEquipment(item) or item == preferred_head) then
+                    protection[slot] = math.max(protection[slot], RainProtection(item))
+                end
+            end
+        end
+    end
+    table.sort(slots, function(a, b)
+        -- When already fully protected by one piece, release redundant pieces
+        -- first. Otherwise simultaneous idle timers can discard the full piece
+        -- and keep two partial ones merely because its slot was visited first.
+        if a == full_slot then return false end
+        if b == full_slot then return true end
+        return protection[a] > protection[b]
+            or protection[a] == protection[b] and order[a] < order[b]
+    end)
+    return slots
 end
 
 -- Only gear the companion put on for a reason is taken off again. A plain tool
@@ -633,7 +679,7 @@ function M.UpdateLoadout(inst)
     -- with fixing the swap loop.
     inst._my_friend_temperature_body_equipped = false
 
-    for _, slot in ipairs(EquipSlots.All()) do
+    for _, slot in ipairs(LoadoutSlots(inst, items, needs, preferred_head)) do
         local current = inventory:GetEquippedItem(slot)
         if not IsSlotLocked(inst, slot, current, preferred_head) then
             local currentscore = Score(inst, current, needs)

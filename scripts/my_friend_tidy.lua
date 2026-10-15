@@ -4,6 +4,7 @@ local Reserves = require("my_friend_resource_reserves")
 local EquipmentReserves = require("my_friend_equipment_reserves")
 local M = {}
 local EquipSlots = require("my_friend_equip_slots")
+local Discovery = require("my_friend_discovery")
 
 local function Count(item)
     return item.components.stackable ~= nil and item.components.stackable:StackSize() or 1
@@ -151,13 +152,21 @@ function M.GetNearbyRelaxedAction(inst)
     local radius = pressure and Policy.ACTIVITY_RANGE or 14
     local function Eligible(actor, item) return IsTidyItem(actor, item, pressure) end
     local x, y, z = inst.Transform:GetWorldPosition()
-    local chests = TheSim:FindEntities(x, y, z, range, {"_container"},
-        {"INLIMBO", "burnt", "fridge", "saltbox", "playerghost"})
+    local chests, discovery = Discovery.Query(inst, "tidy_chests", "containers", x, y, z, range,
+        {"_container"}, {"INLIMBO", "burnt", "fridge", "saltbox", "playerghost"}, nil, true)
+    local inventory_revision = inst._my_friend_discovery_inventory or 0
+    local thermal = inst._my_friend_temperature_equipment_need
+    local late = type(Reserves.IsLateWorld) == "function" and Reserves.IsLateWorld() or false
+    if discovery.empty_inventory == inventory_revision and discovery.empty_pressure == pressure
+        and discovery.empty_thermal == thermal and discovery.empty_late == late
+        and discovery.empty_x == x and discovery.empty_z == z
+        and GetTime() < discovery.retry_at then return end
     local best, bestplan, bestscore
     local keep = Reserves.FollowingKeep()
     for _, chest in ipairs(chests) do
-        local c = chest.components.container
+        local c = chest:IsValid() and chest.components.container or nil
         if c ~= nil and c.type == "chest" and not chest:HasTag("backpack")
+            and (chest:GetPosition().x - x)^2 + (chest:GetPosition().z - z)^2 <= range^2
             and Policy.InRange(inst, chest, radius) and CanStore(inst, chest) then
             local stored = {}
             for _, item in pairs(c.slots) do stored[item.prefab] = true end
@@ -171,7 +180,23 @@ function M.GetNearbyRelaxedAction(inst)
             end
         end
     end
-    if best == nil then return end
+    if best == nil then
+        discovery.empty_inventory, discovery.empty_pressure, discovery.empty_thermal =
+            inventory_revision, pressure, thermal
+        discovery.empty_late = late
+        discovery.empty_x, discovery.empty_z = x, z
+        discovery.retry_at = Discovery.RetryAt(inst)
+        for _, item in ipairs(inst.components.inventory:ReferenceAllItems()) do
+            for _, field in ipairs({"_my_friend_player_organize_until", "_my_friend_player_equipped_until"}) do
+                local deadline = item[field]
+                if deadline ~= nil and deadline > GetTime() then
+                    discovery.retry_at = math.min(discovery.retry_at, deadline)
+                end
+            end
+        end
+        return
+    end
+    discovery.empty_inventory = nil
     return StoreAction(inst, best, bestplan, keep, Eligible,
         function(action) return Relaxed(inst, action, pressure) end, radius)
 end

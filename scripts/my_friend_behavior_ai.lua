@@ -639,7 +639,7 @@ function M.FindThreat(inst, range)
         return cached.target
     end
     local x, y, z = inst.Transform:GetWorldPosition()
-    local closest, closestscore
+    local closest, closestscore, escape_target, escape_score
     for _, entity in ipairs(TheSim:FindEntities(x, y, z, wanted_range,
         {"_combat"}, THREAT_CANT_TAGS)) do
         local ignored_attacker = GetTime() < (inst._my_friend_hurt_until or 0)
@@ -658,13 +658,31 @@ function M.FindThreat(inst, range)
                 if closestscore == nil or score > closestscore then
                     closest, closestscore = entity, score
                 end
+                -- Assistance candidates are not reasons to flee. Track the
+                -- companion's own threats independently, so a higher-ranked
+                -- player target cannot hide an actual attacker.
+                if M.IsThreat(inst, entity)
+                    and (escape_score == nil or score > escape_score) then
+                    escape_target, escape_score = entity, score
+                end
             end
         end
     end
     inst._my_friend_threat_scan = {
-        range = wanted_range, target = closest, untiltime = now + .6,
+        range = wanted_range, target = closest, escape_target = escape_target,
+        untiltime = now + .6,
     }
     return closest
+end
+
+function M.FindEscapeThreat(inst, range)
+    local candidate = M.FindThreat(inst, range)
+    local cached = inst._my_friend_threat_scan
+    local target = cached ~= nil and cached.escape_target or nil
+    -- Aggro can switch during the scan cache lifetime. Recheck the cached
+    -- attacker, and also notice if the combat candidate now targets us.
+    if M.IsThreat(inst, target) then return target end
+    if M.IsThreat(inst, candidate) then return candidate end
 end
 
 local function HasWorkingArmor(item)
@@ -727,8 +745,11 @@ local function GetArmorValue(inst, item, slot, attacker, weapon)
     if weapon ~= nil and not weapon:IsValid() then weapon = nil end
     if not HasWorkingArmor(item) then return end
     local equippable = item.components.equippable
+    local inventoryitem = item.components.inventoryitem
     if equippable == nil or equippable.equipslot ~= slot
-        or equippable.IsRestricted ~= nil and equippable:IsRestricted(inst) then
+        or equippable.IsRestricted ~= nil and equippable:IsRestricted(inst)
+        or inventoryitem == nil or inventoryitem.islockedinslot
+        or inventoryitem:GetGrandOwner() ~= inst or item:HasTag("broken") then
         return
     end
     local armor = item.components.armor
@@ -749,29 +770,33 @@ function M.GetThermalInsulation(item, need)
         and require("my_friend_survival_ai").GetInsulationValue(item, need) ~= nil
 end
 
-local function IsBetterArmor(absorption, condition, bestabsorption, bestcondition)
+local function IsBetterArmor(absorption, utility, condition,
+        bestabsorption, bestutility, bestcondition)
     return bestabsorption == nil or absorption > bestabsorption
-        or absorption == bestabsorption and condition > bestcondition
+        or absorption == bestabsorption and (utility > bestutility
+            or utility == bestutility and condition > bestcondition)
 end
 
 function M.FindBestCombatArmor(inst, slot, attacker, weapon, thermal_need, items)
     local inventory = inst.components.inventory
     if inventory == nil then return end
+    local equipment = require("my_friend_equipment")
     local best = inventory:GetEquippedItem(slot)
-    if thermal_need ~= nil and not M.GetThermalInsulation(best, thermal_need) then
-        best = nil
-    end
     local bestabsorption, bestcondition =
         GetArmorValue(inst, best, slot, attacker, weapon)
     if bestabsorption == nil then best = nil end
+    local bestutility = best ~= nil
+        and equipment.GetCombatUtilityScore(inst, best, thermal_need) or 0
     if inventory.ReferenceAllItems ~= nil then
         for _, item in ipairs(items or inventory:ReferenceAllItems()) do
-            if thermal_need == nil or M.GetThermalInsulation(item, thermal_need) then
-                local absorption, condition =
-                    GetArmorValue(inst, item, slot, attacker, weapon)
-                if absorption ~= nil and IsBetterArmor(absorption, condition,
-                    bestabsorption, bestcondition) then
-                    best, bestabsorption, bestcondition = item, absorption, condition
+            local absorption, condition =
+                GetArmorValue(inst, item, slot, attacker, weapon)
+            if absorption ~= nil then
+                local utility = equipment.GetCombatUtilityScore(inst, item, thermal_need)
+                if IsBetterArmor(absorption, utility, condition,
+                    bestabsorption, bestutility, bestcondition) then
+                    best, bestabsorption, bestutility, bestcondition =
+                        item, absorption, utility, condition
                 end
             end
         end
@@ -782,8 +807,8 @@ end
 function M.EquipBestCombatArmor(inst, attacker, weapon)
     local inventory = inst.components.inventory
     if inventory == nil or inventory.Equip == nil then return end
-    -- Combat armour owns these slots. Temperature may favour armour with
-    -- insulation, but must never pin ordinary clothing/rain hats over armour.
+    -- All usable armour competes by protection, then active utility and
+    -- durability. Other capabilities never turn a helmet into non-armour.
     local thermal_need = require("my_friend_survival_ai").GetThermalNeed(inst)
     local items = inventory.ReferenceAllItems ~= nil and inventory:ReferenceAllItems() or {}
     local preferred_head = require("my_friend_equipment").PreferredHead(inst, items)
@@ -792,15 +817,11 @@ function M.EquipBestCombatArmor(inst, attacker, weapon)
         if weapon ~= nil and not weapon:IsValid() then weapon = nil end
         if slot ~= EQUIPSLOTS.HANDS then
             local current = inventory:GetEquippedItem(slot)
-            -- Prefer dual-purpose armour, then fall back to all usable armour.
             local best = M.FindBestCombatArmor(inst, slot, attacker, weapon,
                 thermal_need, items)
-            if best == nil then
-                best = M.FindBestCombatArmor(inst, slot, attacker, weapon, nil, items)
-            end
-            -- The crown is the explicit head-slot preference requested for
-            -- companions; body armour selection remains independent of it.
-            if slot == EQUIPSLOTS.HEAD and preferred_head ~= nil then
+            -- Daily head preferences are a fallback only when no usable
+            -- armour protects this slot against the current attack.
+            if best == nil and slot == EQUIPSLOTS.HEAD then
                 best = preferred_head
             end
             if best ~= nil and best ~= current then
