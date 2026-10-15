@@ -107,7 +107,7 @@
 - [CONTRIBUTING.md](CONTRIBUTING.md) / [English](CONTRIBUTING.en.md)：翻译提交规范。
 - [语言目录说明](scripts/languages/README.md)：语言文件结构与模板。
 
-`main` 为发布分支，`develop` 用于下一版本集成；新功能从 `develop` 开始，维护代理默认使用 `codex/<主题>` 分支。发布后将 `main` 同步回 `develop`，提交与合并标题优先中文。翻译贡献保留现有指令 ID、台词键和占位符，不修改核心代码、声音资源或发布配置。
+`main` 为发布分支，`develop` 用于下一版本集成；新功能从 `develop` 开始，维护代理默认使用 `codex/<主题>` 分支。发布后将 `main` 同步回 `develop`，提交与合并说明使用英文。翻译贡献保留现有指令 ID、台词键和占位符，不修改核心代码、声音资源或发布配置。
 
 在模组根目录使用 Lua 5.1 执行 `luac -p <文件>` 检查语法，使用 `lua tests/<名称>_test.lua` 运行相关回归。完整命令见[开发文档第 18 节](DEVELOPER.md#18-扩展步骤排错与验证)。桩测试之外，涉及网络、存档或角色交换的改动还需在游戏中验证。
 

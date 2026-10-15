@@ -106,7 +106,7 @@ Simplified and Traditional Chinese support custom companion voices; English and 
 - [CONTRIBUTING.en.md](CONTRIBUTING.en.md) / [Chinese entry](CONTRIBUTING.md): translation submission rules.
 - [Language directory guide](scripts/languages/README.md): file structure and templates.
 
-`main` is the release branch; `develop` integrates the next version. Start new features from `develop`; maintenance agents use `codex/<topic>` branches by default. Sync `main` back into `develop` after a release, and prefer Chinese commit and merge titles. Translation contributions must preserve command IDs, dialogue keys and placeholders, without changing core code, sound assets or release settings.
+`main` is the release branch; `develop` integrates the next version. Start new features from `develop`; maintenance agents use `codex/<topic>` branches by default. Sync `main` back into `develop` after a release, and use English commit and merge messages. Translation contributions must preserve command IDs, dialogue keys and placeholders, without changing core code, sound assets or release settings.
 
 From the mod root, use Lua 5.1's `luac -p <file>` for syntax checks and `lua tests/<name>_test.lua` for relevant regressions. Full commands are in [section 18 of the developer guide](DEVELOPER.md#18-扩展步骤排错与验证). Changes affecting networking, saves or body swapping also need in-game verification beyond stub tests.
 
