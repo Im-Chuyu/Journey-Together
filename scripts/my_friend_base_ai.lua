@@ -373,11 +373,14 @@ local function FindStructures(inst, prefab)
     local base = M.GetBasePoint(inst)
     if base == nil then return {} end
     local result = {}
-    local entities = Discovery.Query(inst, "base_structures", "structures", base.x, base.y, base.z,
-        M.BASE_STRUCTURE_RANGE, nil, { "INLIMBO", "burnt" })
+    local manual = Home.Mode(inst) == "base"
+    local range = manual and Home.WANDER_RADIUS or M.BASE_STRUCTURE_RANGE
+    local entities = manual and Home.Facilities(inst)
+        or Discovery.Query(inst, "base_structures", "structures", base.x, base.y, base.z,
+            range, nil, { "INLIMBO", "burnt" })
     for _, entity in ipairs(entities) do
         if IsOwnedStructure(entity) and (prefab == nil or entity.prefab == prefab)
-            and DistanceSqToPoint(entity, base) <= M.BASE_STRUCTURE_RANGE^2 then
+            and DistanceSqToPoint(entity, base) <= range^2 then
             table.insert(result, entity)
         end
     end

@@ -117,23 +117,32 @@ function M.GetReadAction(inst, command)
         command.bookstations_scanned = true
         Wickerbottom.Scan(inst)
     end
-    local stations, carried, stored = Stations(inst), {}, {}
+    if not Wickerbottom.IsAtBase(inst) then Wickerbottom.ScanNearby(inst, command) end
+    local stations, carried, stored = {}, {}, {}
     for _, book in ipairs(inst.components.inventory:ReferenceAllItems()) do
         if (command.target == nil or book.prefab == command.target)
             and book.components.book ~= nil and Carried(inst, book)
             and Uses(book) > 0 then carried[#carried + 1] = {book = book} end
     end
-    for _, station in ipairs(stations) do
-        for _, book in pairs(station.components.container.slots or {}) do
-            if (command.target == nil or book.prefab == command.target)
-                and book.components.book ~= nil and Uses(book) > 0 then
-                stored[#stored + 1] = {book = book, station = station}
+    local function RefreshStored()
+        stations, stored = Stations(inst), {}
+        for _, station in ipairs(stations) do
+            for _, book in pairs(station.components.container.slots or {}) do
+                if book:IsValid() and (command.target == nil or book.prefab == command.target)
+                    and book.components.book ~= nil and Uses(book) > 0 then
+                    stored[#stored + 1] = {book = book, station = station}
+                end
             end
         end
+        table.sort(stored, function(a, b)
+            local au, bu = Uses(a.book), Uses(b.book)
+            return au > bu or au == bu
+                and inst:GetDistanceSqToInst(a.station) < inst:GetDistanceSqToInst(b.station)
+        end)
     end
+    RefreshStored()
     local function Healthiest(a, b) return Uses(a.book) > Uses(b.book) end
     table.sort(carried, Healthiest)
-    table.sort(stored, Healthiest)
     local chosen = carried[1] or stored[1]
     local ground = GroundBooks(inst, command.target)
     if chosen ~= nil and Uses(chosen.book) < 2
@@ -153,6 +162,19 @@ function M.GetReadAction(inst, command)
     if chosen == nil or Uses(chosen.book) < 2 and not command.use_last_book then
         local visit = Wickerbottom.GetVisitAction(inst, command)
         if visit ~= nil then return visit end
+        local function Rechoose()
+            RefreshStored()
+            chosen = carried[1] or stored[1]
+            if chosen ~= nil and Uses(chosen.book) < 2 and stored[1] ~= nil
+                and Uses(stored[1].book) >= 2 then chosen = stored[1] end
+        end
+        if not command.bookstations_scanned then
+            command.bookstations_scanned = true
+            Wickerbottom.Scan(inst)
+            Rechoose()
+        end
+        if (chosen == nil or Uses(chosen.book) < 2 and not command.use_last_book)
+            and Wickerbottom.ScanNearby(inst, command) then Rechoose() end
     end
     if chosen == nil then return end
     local count = #carried + #stored + #ground

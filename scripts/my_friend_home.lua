@@ -7,22 +7,9 @@ local M = {}
 M.WANDER_RADIUS = 32
 M.RETURN_DISTANCE = 30
 M.LATE_JOIN_DAY = 200
-M.ANCHOR_RANGE = 32
 M.ASK_COOLDOWN = 150
 M.ASK_RANGE = 12
 M.ASK_PLAYER_RANGE = 20
-
--- Nearest of these becomes the centre of a switched base, in this order when
--- two are the same distance away.
-local ANCHOR_PREFABS = {
-    icebox = 1,
-    saltbox = 2,
-    cookpot = 3,
-    portablecookpot = 3,
-    archive_cookpot = 3,
-    researchlab = 4,
-    researchlab2 = 5,
-}
 
 local ALLOWED_PREFABS = {
     cutgrass = true,
@@ -53,17 +40,17 @@ function M.IsStrict(inst)
     return mode == "hold" or mode == "base"
 end
 
--- Furthest a strict companion may plan to walk from home. A little wider
--- than the wander radius so a chest or icebox on the edge is still reachable.
-function M.TravelLimit()
-    return M.WANDER_RADIUS + 8
+-- Manual bases use the exact selected circle. Preserve the legacy margin
+-- for "wait here", whose behaviour is independent of setting a base.
+function M.TravelLimit(inst)
+    return M.WANDER_RADIUS + (M.Mode(inst) == "base" and 0 or 8)
 end
 
 function M.IsPointInRange(inst, point)
     if not M.IsStrict(inst) then return true end
     local home = M.Get(inst)
     if home == nil or point == nil then return true end
-    local limit = M.TravelLimit()
+    local limit = M.TravelLimit(inst)
     return (point.x - home.x)^2 + (point.z - home.z)^2 <= limit * limit
 end
 
@@ -87,13 +74,35 @@ function M.Apply(inst)
     inst._my_friend_base_site_retry = nil
 end
 
+function M.Facilities(inst)
+    local home = M.Get(inst)
+    if home == nil then return {} end
+    local entities = require("my_friend_discovery").Query(inst, "home_facilities", "structures",
+        home.x, 0, home.z, M.WANDER_RADIUS, {"structure"}, {"INLIMBO", "burnt", "fire"})
+    local result = {}
+    for _, entity in ipairs(entities) do
+        if entity:IsValid() and not entity:HasAnyTag("INLIMBO", "burnt", "fire") then
+            local point = entity:GetPosition()
+            if (point.x - home.x)^2 + (point.z - home.z)^2 <= M.WANDER_RADIUS^2 then
+                result[#result + 1] = entity
+            end
+        end
+    end
+    return result
+end
+
 function M.Set(inst, point, mode)
     if inst == nil or point == nil then return false end
     inst._my_friend_hold_memory = nil
     inst._my_friend_home = {x = point.x, z = point.z, mode = mode or "base"}
     M.Apply(inst)
-    if mode == "base" and inst.prefab == "wickerbottom" then
-        require("my_friend_wickerbottom").RememberBase(inst, point)
+    if M.Mode(inst) == "base" then
+        -- Record facilities without moving the centre or claiming ownership
+        -- of player-built containers. Reuse this first scan for bookshelves.
+        local facilities = M.Facilities(inst)
+        if inst.prefab == "wickerbottom" then
+            require("my_friend_wickerbottom").RememberBase(inst, point, facilities)
+        end
     end
     inst._my_friend_replan_requested = true
     return true
@@ -223,23 +232,6 @@ function M.UpdateAsk(inst)
     inst._my_friend_pickup_ask_after = now + M.ASK_COOLDOWN
     inst._my_friend_pickup_ask_until = now + M.ASK_ANSWER_TIME
     require("my_friend_dialogue").Say(inst, "ask_pickup", player)
-end
-
--- Nearest storage or crafting station a switched base can be centred on.
-function M.FindAnchor(inst, origin)
-    if origin == nil then return end
-    local best, bestscore
-    for _, entity in ipairs(TheSim:FindEntities(origin.x, 0, origin.z,
-        M.ANCHOR_RANGE, nil, {"INLIMBO", "burnt", "fire"})) do
-        local rank = ANCHOR_PREFABS[entity.prefab]
-        if rank == nil and entity:HasTag("fridge") then rank = 1 end
-        if rank ~= nil and entity.Transform ~= nil then
-            local x, _, z = entity.Transform:GetWorldPosition()
-            local score = (x - origin.x)^2 + (z - origin.z)^2 + rank * .01
-            if bestscore == nil or score < bestscore then best, bestscore = entity, score end
-        end
-    end
-    return best
 end
 
 function M.Save(inst, data)

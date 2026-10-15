@@ -526,9 +526,7 @@ function M.Dispatch(friend, player, message, from_wheel)
         return true
     end
     if id == "set_base" then
-        local origin = player:GetPosition()
-        local anchor = Home.FindAnchor(friend, origin)
-        Home.Set(friend, anchor ~= nil and anchor:GetPosition() or origin, "base")
+        Home.Set(friend, player:GetPosition(), "base")
         Reply(friend, "describe_base")
         Dialogue.Say(friend, "base_set", player)
         return true

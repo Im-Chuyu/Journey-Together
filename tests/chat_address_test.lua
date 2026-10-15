@@ -7,7 +7,7 @@ package.loaded.my_friend_policy = {
     GetLeader = function() return nil end,
 }
 package.loaded.my_friend_home = {IsAskPending = function() return false end}
-package.loaded.my_friend_dialogue = {Reply = function() end}
+package.loaded.my_friend_dialogue = {Reply = function() end, Say = function() end}
 package.loaded.my_friend_beefalo = {Riding = {}}
 package.loaded.my_friend_special_commands = {Parse = function() end}
 package.loaded.my_friend_characters = {List = function() return {"wendy"} end}
@@ -44,5 +44,23 @@ assert(not Commands.Dispatch(friend, player, "跟着我Wilson"))
 assert(not Commands.Dispatch(friend, player, "newendy 跟着我"))
 assert(not Commands.Dispatch(friend, player, "wendyish 跟着我"))
 assert(Commands.DispatchWheel(friend, player, "follow"))
+-- Setting a base uses the sender's exact position and retains following.
+-- A nearby facility must no longer replace that command's centre.
+local policy, home = package.loaded.my_friend_policy, package.loaded.my_friend_home
+local selected, calls = nil, 0
+policy.GetLeader = function() return player end
+function player:GetPosition() return {x = 23, y = 0, z = -17} end
+function friend:GetPosition() return {x = -50, y = 0, z = 10} end
+home.FindAnchor = function() error("base selection must not snap to a facility") end
+home.Set = function(_, point, mode) selected = {x = point.x, z = point.z, mode = mode}; calls = calls + 1 end
+package.loaded.my_friend_carry_backpack.Cancel = function() end
+package.loaded.my_friend_recipe_cooking = {Cancel = function() end}
+friend._my_friend_command = {id = "chop"}
+assert(Commands.DispatchWheel(friend, player, "set_base"))
+assert(calls == 1 and selected.x == 23 and selected.z == -17 and selected.mode == "base")
+assert(friend._my_friend_command == nil and policy.GetLeader(friend) == player)
+policy.GetLeader = function() return nil end
+assert(not Commands.DispatchWheel(friend, player, "set_base") and calls == 1,
+    "the base command still requires the sender to be the current leader")
 math.random = random
 print("PASS: historical suffix/middle addresses, prefix addresses, mentions and wheel parsing")

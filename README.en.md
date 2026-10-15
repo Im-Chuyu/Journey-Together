@@ -65,6 +65,7 @@ The source also contains a designated-user exception that fixes that user's affi
 
 | Area | Current behaviour |
 | --- | --- |
+| Setting a base | Uses the player's position when the command is issued as the centre, with a 32-unit radius. Records nearby cookpots, research stations, Salt Boxes, Ice Boxes, chests and other facilities without shifting the centre. Following remains active |
 | Dodging | Uses enemy attack animations and danger windows to retreat or sidestep. A dangerous dodge can interrupt a normal attack before its damage frame; busy eating, revival and casting remain protected |
 | Environmental escape | After taking area damage from fire, spore clouds or similar hazards, prioritises leaving before resuming combat. Failed escape attempts try another direction; combat avoids recently recorded danger areas. Detection is triggered by damage, without continuous global scans |
 | Assistance marking | Each leader attack refreshes the target's assistance mark, which lasts for 16 seconds after the last attack. Existing combat safety and distance rules still apply |
@@ -86,7 +87,7 @@ Dodging depends on enemy timing, traversable terrain and the companion's current
 
 - **Wortox** balances pocket souls with carried Soul Jars, aiming for 18 pocket souls and never transferring souls into backpacks. When hungry with more than 10 pocket souls, he eats souls first.
 - **Wortox player healing** responds to health changes within 10 units and checks the same area every 30 seconds as a fallback. Below 80% health, he approaches and drops one soul at a time, stopping at 80%. Target discovery does not repeatedly poll every player's health.
-- **Wickerbottom** remembers bookcase coordinates when a base is assigned, allowing reading and storage trips to distant recorded shelves. There is no periodic discovery scan. Invalid records are removed; a read request with no records performs one discovery scan.
+- **Wickerbottom** remembers bookcase coordinates when a base is assigned, allowing reading and storage trips to distant recorded shelves. Each read request can refresh the base once if no usable book is found. Outside the base, or if the book is still unavailable, she searches once within 20 units of her current position. Shelves outside the base are remembered only for that request and are not saved. There are no periodic discovery scans.
 - **Wigfrid** retains her meat-only diet and prefers Jerky. With an Elding Spear, she performs four normal attacks followed by a lightning lunge. Low durability switches her to lunges only; she avoids lunging at creatures that would ignite from electrocution.
 - **Wanda and Wortox** can use their character-specific revival abilities when suitable items or materials are available.
 

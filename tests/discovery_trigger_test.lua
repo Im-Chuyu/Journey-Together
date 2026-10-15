@@ -80,7 +80,7 @@ package.loaded.my_friend_resource_reserves = {FollowingKeep = function() return 
 package.loaded.my_friend_equipment_reserves = {GetKeep = function() return {} end}
 package.loaded.my_friend_dialogue = {Say = noop}
 package.loaded.my_friend_exploration = {Save = noop, Load = noop}
-package.loaded.my_friend_home = {Load = noop, Save = noop}
+package.loaded.my_friend_home = {Load = noop, Save = noop, Mode = noop}
 package.loaded.my_friend_crafting_tech = {}
 local Discovery = require("my_friend_discovery")
 local Memory = require("my_friend_resource_memory")
@@ -302,4 +302,42 @@ seeker._my_friend_discoveries = {old = true}
 BaseAI.OnLoad(seeker, saved)
 assert(seeker._my_friend_discoveries == nil and seeker._my_friend_world_resource_query == nil)
 assert(next(seeker._my_friend_resource_memory) ~= nil)
+-- Manual bases keep the player's exact centre and record facilities in the
+-- same cached, event-invalidated registry. Recording does not claim ownership.
+local home_stub = package.loaded.my_friend_home
+package.loaded.my_friend_home = nil
+local Home = require("my_friend_home")
+home_stub.Mode, home_stub.Facilities, home_stub.WANDER_RADIUS = Home.Mode, Home.Facilities, Home.WANDER_RADIUS
+resident = companion(8000)
+local facility_list = {}
+for index, prefab in ipairs({"cookpot", "researchlab", "researchlab2", "saltbox", "icebox", "treasurechest"}) do
+    facility_list[#facility_list + 1] = container(prefab, 8000 + index * 4)
+end
+local edge = container("treasurechest", 8032)
+local outside = container("icebox", 8032.1)
+before = scans
+Home.Set(resident, Vector3(8000, 0, 0), "base")
+assert(Home.Get(resident).x == 8000 and scans == before + 1)
+assert(#Home.Facilities(resident) == 7 and Home.TravelLimit(resident) == 32)
+assert(Home.IsPointInRange(resident, Vector3(8032, 0, 0))
+    and not Home.IsPointInRange(resident, Vector3(8032.1, 0, 0)))
+for _, facility in ipairs(facility_list) do assert(facility._my_friend_base_structure == nil) end
+before = scans
+for i = 1, 10 do Home.Facilities(resident); BaseAI.FindBaseStructure(resident, "researchlab") end
+assert(scans == before, "facility lookup must not restart periodic base scans")
+edge:Remove()
+assert(#Home.Facilities(resident) == 6 and scans == before + 1)
+local new_facility = container("cookpot", 8028)
+assert(#Home.Facilities(resident) == 7)
+new_facility:PushEvent("onignite"); new_facility.tags.fire = true
+assert(#Home.Facilities(resident) == 6, "burning facilities cannot remain usable")
+local house_save = {}; Home.Save(resident, house_save)
+assert(house_save.my_friend_home.x == 8000 and house_save.my_friend_home.mode == "base")
+assert(house_save.my_friend_home.entity == nil and house_save.my_friend_home.facilities == nil)
+local restored = companion(9000); Home.Load(restored, house_save)
+assert(Home.Get(restored).x == 8000 and #Home.Facilities(restored) == 6)
+Home.Set(resident, Vector3(9000, 0, 0), "base")
+assert(#Home.Facilities(resident) == 0, "replacing a base drops the old facility catalogue")
+Home.Set(resident, Vector3(9000, 0, 0), "hold")
+assert(Home.TravelLimit(resident) == 40, "wait-here retains its existing travel margin")
 print("PASS: event-triggered discovery, persistent negative results, scoped changes, ownership index, resource memory/retries, native regrowth/drying, tidy wakeups and save reset")
