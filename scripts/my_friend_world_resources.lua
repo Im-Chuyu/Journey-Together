@@ -3,8 +3,8 @@ local Memory = require("my_friend_resource_memory")
 local Behaviour = require("my_friend_behavior_ai")
 local FoodAI = require("my_friend_food_ai")
 local Navigation = require("my_friend_navigation")
+local Discovery = require("my_friend_discovery")
 local M = {}
-local CACHE_PERIOD = 8
 
 function M.RegionAtPoint(x, z)
     local map, topology = TheWorld.Map, TheWorld.topology
@@ -91,7 +91,7 @@ local function Available(inst, entity, needs, blocked)
     return matched and products or nil
 end
 
-function M.Find(inst, needs, blocked)
+function M.Find(inst, needs, blocked, context)
     local now = GetTime()
     local keys = {}
     for prefab in pairs(needs) do keys[#keys + 1] = prefab end
@@ -99,15 +99,38 @@ function M.Find(inst, needs, blocked)
     local key = table.concat(keys, ",")
     local queries = inst._my_friend_world_resource_query or {}
     inst._my_friend_world_resource_query = queries
-    local cache = queries[key]
-    if cache ~= nil and now < cache.untiltime then
-        if cache.target == nil then return end
-        if Available(inst, cache.target, needs, blocked) ~= nil
-            and not Behaviour.IsTargetUnsafe(inst, cache.target) then return cache.target end
-    end
     local x, _, z = inst.Transform:GetWorldPosition()
+    local inventory_revision = inst._my_friend_discovery_inventory or 0
+    local revision = Discovery.ResourceVersion(needs)
+    local season = TheWorld.state ~= nil and TheWorld.state.season or nil
+    local cache = queries[key]
+    if cache ~= nil and cache.revision == revision and cache.inventory == inventory_revision
+        and cache.context == context and cache.home == inst._my_friend_home
+        and cache.base == inst._my_friend_base and cache.leader == Policy.GetLeader(inst)
+        and cache.season == season
+        and (cache.x - x)^2 + (cache.z - z)^2 < 8^2 and now < cache.retry_at then
+        if cache.target ~= nil and Available(inst, cache.target, needs, blocked) ~= nil then
+            if not Behaviour.IsTargetUnsafe(inst, cache.target) then return cache.target end
+            cache.target, cache.safety_after = nil, 0
+        end
+        if cache.target == nil then
+            -- Threats may move away without changing a resource. Revisit only
+            -- the remembered candidates, never rediscover the entire world.
+            if now >= cache.safety_after then
+                for _, candidate in ipairs(cache.candidates) do
+                    if Available(inst, candidate.entity, needs, blocked) ~= nil
+                        and not Behaviour.IsTargetUnsafe(inst, candidate.entity) then
+                        cache.target = candidate.entity
+                        return cache.target
+                    end
+                end
+                cache.safety_after = now + 2
+            end
+            return
+        end
+    end
     local candidates = {}
-    for _, entity in pairs(Ents or {}) do
+    local function Consider(entity)
         local products = Available(inst, entity, needs, blocked)
         if products ~= nil and Policy.InRange(inst, entity) then
             local p = entity:GetPosition()
@@ -124,14 +147,37 @@ function M.Find(inst, needs, blocked)
             end
         end
     end
+    local memory_needs = {}
+    for prefab, amount in pairs(needs) do memory_needs[prefab] = type(amount) == "number" and amount or 1 end
+    local remembered = Memory.Find(inst, memory_needs, x, z, now)
+    if remembered ~= nil then
+        local entities = Discovery.Query(inst, "remembered_resources", "resources",
+            remembered.x, 0, remembered.z, Memory.CELL_SIZE * 1.5, nil,
+            {"INLIMBO", "NOCLICK", "fire", "burnt", "outofreach"})
+        for _, entity in ipairs(entities) do Consider(entity) end
+    end
+    if #candidates == 0 then
+        -- One fallback for a new search episode. Empty results persist until
+        -- the need, area, inventory, relevant resource or retry deadline changes.
+        for _, entity in pairs(Ents or {}) do
+            Discovery.ConfigureEntity(entity)
+            Consider(entity)
+        end
+    end
     table.sort(candidates, function(a, b) return a.score < b.score end)
     local best
     for _, candidate in ipairs(candidates) do
         if not Behaviour.IsTargetUnsafe(inst, candidate.entity) then best = candidate.entity break end
     end
-    queries[key] = { target = best, untiltime = now + CACHE_PERIOD }
-    for oldkey, query in pairs(queries) do
-        if now >= query.untiltime then queries[oldkey] = nil end
+    queries[key] = {target = best, candidates = candidates, safety_after = now + 2,
+        revision = Discovery.ResourceVersion(needs), season = season,
+        inventory = inventory_revision, context = context, home = inst._my_friend_home,
+        base = inst._my_friend_base, leader = Policy.GetLeader(inst), x = x, z = z,
+        retry_at = Discovery.RetryAt(inst)}
+    local count = 0
+    for _ in pairs(queries) do count = count + 1 end
+    if count > 16 then
+        inst._my_friend_world_resource_query = {[key] = queries[key]}
     end
     return best
 end

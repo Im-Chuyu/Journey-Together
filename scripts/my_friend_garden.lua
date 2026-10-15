@@ -1,4 +1,5 @@
 local M = {}
+local Discovery = require("my_friend_discovery")
 
 function M.IsFertilizer(item)
     return item ~= nil and item:IsValid() and item.components.fertilizer ~= nil
@@ -16,9 +17,10 @@ end
 
 function M.Plants(inst, base, range, in_garden)
     local result, barren = {}, 0
-    for _, plant in ipairs(TheSim:FindEntities(base.x, 0, base.z, range, nil,
-        {"INLIMBO", "burnt"})) do
-        local pickable = plant.components.pickable
+    local plants = Discovery.Query(inst, "garden_plants", "garden", base.x, 0, base.z, range, nil,
+        {"INLIMBO", "burnt"})
+    for _, plant in ipairs(plants) do
+        local pickable = plant:IsValid() and plant.components ~= nil and plant.components.pickable or nil
         if (plant.prefab == "grass" or plant.prefab == "sapling")
             and pickable ~= nil and pickable.transplanted
             and in_garden(base, plant:GetPosition()) then

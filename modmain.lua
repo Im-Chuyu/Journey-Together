@@ -493,6 +493,7 @@ end
 
 AddPrefabPostInitAny(function(inst)
     if inst ~= nil and inst:HasTag("backpack") then Backpacks.WrapBackpack(inst) end
+    require("my_friend_discovery").ConfigureEntity(inst)
 end)
 
 -- The remains marker is stored as a plain flag. Saving it through the

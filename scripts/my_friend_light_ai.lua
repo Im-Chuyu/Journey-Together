@@ -52,6 +52,12 @@ local function CanAct(inst)
         and (inst.sg == nil or not inst.sg:HasStateTag("busy"))
 end
 
+local function CombatOwnsEquipment(inst)
+    return inst._my_friend_under_threat
+        or inst.components.combat ~= nil and inst.components.combat.target ~= nil
+        or GetTime() < (inst._my_friend_combat_hand_until or 0)
+end
+
 local function IsFuelUsable(item)
     local fueled = item.components ~= nil and item.components.fueled or nil
     return fueled == nil or not fueled:IsEmpty()
@@ -428,9 +434,7 @@ function M.UpdateEquipment(inst)
     -- Combat owns the hand slot. Without this guard a rain umbrella or a
     -- light can replace the weapon between attack actions and then be
     -- replaced again on the next combat evaluation.
-    if inst._my_friend_under_threat
-        or inst.components.combat ~= nil and inst.components.combat.target ~= nil
-        or GetTime() < (inst._my_friend_combat_hand_until or 0) then return end
+    if CombatOwnsEquipment(inst) then return end
     if dark then
         inst._my_friend_external_light_since = nil
         if M.EquipBestStoredLight(inst) then
@@ -463,6 +467,10 @@ end
 
 function M.GetLightAction(inst)
     if not CanAct(inst) then return end
+    -- This action also runs between combat evaluations. It must obey the
+    -- same ownership rule as UpdateEquipment, including in darkness, or it
+    -- can replace the selected helmet/weapon with a light every brain tick.
+    if CombatOwnsEquipment(inst) then return end
     local dark = M.IsDark(inst)
     if Policy.IsBusy(inst) and not dark then return end
     local now = GetTime()

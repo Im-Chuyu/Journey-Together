@@ -1,5 +1,6 @@
 -- Dedicated gather commands with native actions and command-specific follow-up.
 local M = {}
+local Discovery = require("my_friend_discovery")
 local Policy = require("my_friend_policy")
 local Dialogue = require("my_friend_dialogue")
 
@@ -310,9 +311,11 @@ function M.GetNearbyDryingRackAction(inst)
     end
     if pending ~= nil then
         local fridge, distance
-        for _, entity in ipairs(TheSim:FindEntities(x, y, z, 18, {"_container"},
-            {"INLIMBO", "burnt", "fire"})) do
-            if entity:HasTag("fridge") and entity.components.container ~= nil
+        local fridges = Discovery.Query(inst, "drying_fridges", "containers", x, y, z, 18,
+            {"_container"}, {"INLIMBO", "burnt", "fire"}, nil, true)
+        for _, entity in ipairs(fridges) do
+            if entity:IsValid() and entity:HasTag("fridge") and DistSq(inst, entity) <= 18^2
+                and entity.components.container ~= nil
                 and entity.components.container.canbeopened
                 and not entity.components.container.readonlycontainer
                 and not entity.components.container:IsRestricted(inst)
@@ -339,11 +342,18 @@ function M.GetNearbyDryingRackAction(inst)
         inst._my_friend_drying_collect_pending = nil
     end
 
-    local racks = TheSim:FindEntities(x, y, z, 12, nil, {"INLIMBO", "burnt", "fire"})
+    local racks, discovery = Discovery.Query(inst, "nearby_drying_racks", "drying", x, y, z, 12,
+        nil, {"INLIMBO", "burnt", "fire"}, nil, true)
+    local inventory_revision = inst._my_friend_discovery_inventory or 0
+    if discovery.empty_inventory == inventory_revision and discovery.empty_x == x and discovery.empty_z == z
+        and GetTime() < discovery.retry_at then return end
     table.sort(racks, function(a, b) return DistSq(inst, a) < DistSq(inst, b) end)
     for _, rack in ipairs(racks) do
-        local action = GetDryingRackHarvestAction(inst, rack)
+        local action = rack:IsValid() and DistSq(inst, rack) <= 12^2
+            and not rack:HasAnyTag("INLIMBO", "burnt", "fire")
+            and GetDryingRackHarvestAction(inst, rack) or nil
         if action ~= nil then
+            discovery.empty_inventory = nil
             local item = action.invobject
             action:AddSuccessAction(function()
                 -- HARVEST may merge the result into an existing stack, so
@@ -355,6 +365,8 @@ function M.GetNearbyDryingRackAction(inst)
             return action
         end
     end
+    discovery.empty_inventory, discovery.retry_at = inventory_revision, Discovery.RetryAt(inst)
+    discovery.empty_x, discovery.empty_z = x, z
 end
 
 function M.GetAction(inst, command)

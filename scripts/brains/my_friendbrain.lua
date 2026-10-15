@@ -456,8 +456,8 @@ local MyFriendBrain = Class(Brain, function(self, inst)
     Brain._ctor(self, inst)
 end)
 
-local function FindThreat(inst)
-    return BehaviourAI.FindThreat(inst)
+local function FindEscapeThreat(inst)
+    return BehaviourAI.FindEscapeThreat(inst)
 end
 
 function MyFriendBrain:OnStart()
@@ -594,10 +594,10 @@ function MyFriendBrain:OnStart()
     end), require("my_friend_equipment").GetDroppedCombatItemAction,
         "正在捡回战斗装备", require("my_friend_equipment").COMBAT_RECOVERY_TIMEOUT)
     Add("escape", Alive(function(c) return not c.hurt and not c.hurt_evade
-            and c.threat ~= nil
+            and c.escape_threat ~= nil
             and 124 or 0 end),
-        WhileNode(function() return BehaviourAI.FindThreat(inst) ~= nil end, "Escape",
-            RunAway(inst, {getfn = FindThreat}, BehaviourAI.THREAT_RANGE,
+        WhileNode(function() return BehaviourAI.FindEscapeThreat(inst) ~= nil end, "Escape",
+            RunAway(inst, {getfn = FindEscapeThreat}, BehaviourAI.THREAT_RANGE,
                 BehaviourAI.THREAT_SAFE_DISTANCE, nil, nil, true, false,
                 BehaviourAI.GetLeaderSafetyPoint)))
     Action("seek_light", Alive(function(c) return c.dark and 120 or 0 end),
@@ -869,6 +869,19 @@ function MyFriendBrain:OnStart()
         local hurt_evade = GetTime() < (inst._my_friend_hurt_evade_until or 0)
         local threat = not ghost and not hurt_evade
             and BehaviourAI.FindThreat(inst) or nil
+        local escape_threat = not ghost and not hurt_evade
+            and BehaviourAI.FindEscapeThreat(inst) or nil
+        inst._my_friend_under_threat = threat ~= nil
+        if not Policy.IsBusy(inst) then
+            inst._my_friend_can_fight = threat ~= nil and Policy.InRange(inst, threat, 7)
+                and BehaviourAI.CanCounterAttack(inst, threat) or false
+            if threat ~= nil and BehaviourAI.IsPriorityEngaged(inst, threat) then
+                inst._my_friend_can_fight = BehaviourAI.CanCounterAttack(inst, threat)
+            end
+        end
+        -- A declined assistance candidate must not cancel fishing, container
+        -- work or waiting. Only accepted combat or a personal threat does so.
+        threat = inst._my_friend_can_fight and threat or escape_threat
         inst._my_friend_under_threat = threat ~= nil
         local dark = not ghost and LightAI.IsDark(inst)
         if Fishing.IsWaiting(inst) and (ghost or threat ~= nil or hurt_evade or dark) then
@@ -885,13 +898,6 @@ function MyFriendBrain:OnStart()
                 and not require("my_friend_inventory").CanReachContainer(inst, inst._my_friend_container_target)
             or inst._my_friend_meal ~= nil and GetTime() > inst._my_friend_meal.deadline
             or dark) then ContainerAI.Cancel(inst) end
-        if not Policy.IsBusy(inst) then
-            inst._my_friend_can_fight = threat ~= nil and Policy.InRange(inst, threat, 7)
-                and BehaviourAI.CanCounterAttack(inst, threat) or false
-            if threat ~= nil and BehaviourAI.IsPriorityEngaged(inst, threat) then
-                inst._my_friend_can_fight = BehaviourAI.CanCounterAttack(inst, threat)
-            end
-        end
         if inst.components.combat.target ~= nil and threat == nil
             and inst._my_friend_assist_target == nil then inst.components.combat:SetTarget(nil) end
         if not ghost then
@@ -923,7 +929,8 @@ function MyFriendBrain:OnStart()
         end
         return {
             leader = leader, rejoining = rejoining, leaderdead = leaderdead,
-            ghost = ghost, threat = threat, canfight = inst._my_friend_can_fight,
+            ghost = ghost, threat = threat, escape_threat = escape_threat,
+            canfight = inst._my_friend_can_fight,
             -- A companion with a manual home, or one that joined a world past
             -- day 200, has nothing to construct and goes straight to living.
             constructing = leader == nil and not BaseAI.IsComplete(inst)

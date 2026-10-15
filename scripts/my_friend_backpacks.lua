@@ -7,6 +7,30 @@ local COMMAND_RANGE = 10
 local COMMAND_RANGE_SQ = COMMAND_RANGE * COMMAND_RANGE
 local COMMAND_TIMEOUT = 20
 local RECOVERY_TIMEOUT = 30
+local registries = setmetatable({}, {__mode = "k"})
+
+local function Registry()
+    local world = TheWorld or Ents or M
+    local registry = registries[world]
+    if registry == nil then
+        registry = {items = setmetatable({}, {__mode = "k"})}
+        registries[world] = registry
+    end
+    return registry
+end
+
+local function OwnedItems()
+    local registry = Registry()
+    if not registry.seeded then
+        -- One legacy/load bootstrap per shard; subsequent loads and ownership
+        -- changes register directly. An empty index never starts a retry loop.
+        registry.seeded = true
+        for _, item in pairs(Ents or {}) do
+            if M.IsOwned(item) then registry.items[item] = true end
+        end
+    end
+    return registry.items
+end
 
 local function DistanceSq(a, b)
     local ax, _, az = a.Transform:GetWorldPosition()
@@ -37,6 +61,7 @@ end
 local function SetOwned(item, owned)
     if not IsBackpack(item) then return end
     item._my_friend_owned_backpack = owned == true
+    Registry().items[item] = owned and true or nil
     if owned then
         item:AddTag("my_friend_owned_backpack")
     else
@@ -71,13 +96,9 @@ function M.ClearOwned(item)
     SetOwned(item, false)
 end
 
-local function AllEntities()
-    return Ents or {}
-end
-
 function M.MarkOwned(friend, backpack)
     if not CanEquip(friend, backpack) then return false end
-    for _, item in pairs(AllEntities()) do
+    for item in pairs(OwnedItems()) do
         if item ~= backpack and M.IsOwned(item) then SetOwned(item, false) end
     end
     local previous = friend._my_friend_owned_backpack
@@ -102,13 +123,12 @@ function M.FindOwned(friend)
             end
         end
     end
-    local now = GetTime()
-    if (friend._my_friend_backpack_next_owned_scan or 0) > now then return end
-    friend._my_friend_backpack_next_owned_scan = now + 2
-    for _, item in pairs(AllEntities()) do
+    for item in pairs(OwnedItems()) do
         if M.IsOwned(item) then
             friend._my_friend_owned_backpack = item
             return item
+        else
+            Registry().items[item] = nil
         end
     end
 end

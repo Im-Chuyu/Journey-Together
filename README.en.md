@@ -66,9 +66,11 @@ The source also contains a designated-user exception that fixes that user's affi
 | Area | Current behaviour |
 | --- | --- |
 | Dodging | Uses enemy attack animations and danger windows to retreat or sidestep. A dangerous dodge can interrupt a normal attack before its damage frame; busy eating, revival and casting remain protected |
-| Combat equipment | Armour takes priority over ordinary insulating, cooling and rain clothing. Armour that also meets current temperature needs is preferred. A usable carried Enlightened Crown is the preferred head item; body armour is selected independently |
+| Combat equipment | Prioritises effective armour absorption against the current attack, then current temperature, rain and speed benefits, then durability. Multifunctional equipment remains eligible as armour. The Enlightened Crown is a combat fallback only when no usable head armour is available; its everyday preference is retained |
+| Rain equipment | Counts combined equipment and inherent waterproofness. Once protection reaches 100%, extra rain-only items add no benefit; redundant worn items are stored under normal idle equipment rules. Multifunctional items needed for warmth or cooling remain equipped |
+| Facility and resource discovery | Reuses known locations and stops repeated searches after an empty result until relevant facilities, resources, inventory or search areas change. Temporary discovery caches are rebuilt after loading |
 | Dropped weapons | Recovers the actual dropped item within 8 units, with deadlines and retry delays. Recovery stops if a player or another entity takes it |
-| Engagement | Before displayed day 500, engages creatures hostile to the companion or nearby players. From day 500, the original combat assessment rules resume. Brightshade bodies are only attacked while tired |
+| Engagement | Before displayed day 500, engages creatures hostile to the companion or nearby players. From day 500, the original combat assessment rules resume. If an enemy only targets a player and assistance is declined, the companion continues its current activity; escape only responds to personal threats. Brightshade bodies are only attacked while tired |
 | Rescue | Following, waiting, base wandering and independent activity all allow rescuing players within 20 units, given suitable revival items or character abilities |
 | Cooking | Only during independent base construction; disabled while following, at a manually assigned base and after construction finishes |
 | Protected food | Does not eat Royal Jelly, Mandrakes or raw Tallbird Eggs. Never selects Deerclops Eyeballs or Guardian's Horns as food; manual feeding of these two items still follows native character diet rules |
