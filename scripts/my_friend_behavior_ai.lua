@@ -13,7 +13,7 @@ M.COLLECT_RETRY_DELAY = 20
 M.THREAT_RANGE = 24
 M.THREAT_SAFE_DISTANCE = 28
 M.RECENT_ATTACKER_TIME = 10
-M.ASSIST_ATTACK_WINDOW = 10
+M.ASSIST_ATTACK_WINDOW = 16
 M.LEADER_RETURN_DISTANCE = 20
 M.ASSIST_RANGE = 32
 M.HAZARD_RETREAT_TIME = 8
@@ -438,25 +438,36 @@ function M.FindAssistTarget(inst)
     return nil
 end
 
-function M.StartHurtRetreat(inst, source, fire_distance)
+function M.StartHurtRetreat(inst, source, fire_distance, source_position)
     if source == nil or not source:IsValid() or not IsAlive(inst)
         or inst:HasTag("playerghost") then return end
     if fire_distance == nil and (require("my_friend_combat_rules").IsPriorityEnemy(source)
         or M.IsPriorityEngaged(inst, source)) then return end
-    if source ~= inst then
-        inst._my_friend_hazard_position = nil
-        inst._my_friend_hazard_until = nil
+    local now = GetTime()
+    source_position = source_position or source:GetPosition()
+    -- Ordinary hits cannot replace an environmental escape. While still in a
+    -- hazard, keep moving rather than letting the short hurt timer run out.
+    if now < (inst._my_friend_hurt_evade_until or 0) then
+        if fire_distance == nil then return end
+        local previous = inst._my_friend_hurt_source
+        local destination = inst._my_friend_hurt_destination
+        if inst._my_friend_hurt_fire_distance ~= nil
+            and (destination ~= nil and not M.IsHazardousPath(inst, destination, destination)
+                or fire_distance == inst._my_friend_hurt_fire_distance and previous ~= nil
+                    and (previous.x - source_position.x)^2 + (previous.z - source_position.z)^2 < .25^2) then
+            inst._my_friend_hurt_until = now + 3
+            inst._my_friend_hurt_evade_until = now + 3.5
+            return
+        end
     end
-    -- Repeated damage within one retreat must not move its origin or extend it.
-    if GetTime() < (inst._my_friend_hurt_evade_until or 0)
-        and (fire_distance == nil or inst._my_friend_hurt_fire_distance ~= nil) then return end
     inst._my_friend_hurt_position = inst:GetPosition()
     inst._my_friend_hurt_attacker = source
-    inst._my_friend_hurt_source = source:GetPosition()
+    inst._my_friend_hurt_source = source_position
     inst._my_friend_hurt_destination = nil
+    inst._my_friend_hurt_failed_destination = nil
     inst._my_friend_hurt_fire_distance = fire_distance
-    inst._my_friend_hurt_until = GetTime() + 3
-    inst._my_friend_hurt_evade_until = GetTime() + 3.5
+    inst._my_friend_hurt_until = now + 3
+    inst._my_friend_hurt_evade_until = now + 3.5
     inst._my_friend_assist_target = nil
     inst._my_friend_assist_candidate = nil
     inst._my_friend_assist_until = nil
@@ -466,6 +477,87 @@ function M.StartHurtRetreat(inst, source, fire_distance)
     require("my_friend_container_ai").Cancel(inst)
     -- Let the utility selector cancel its old node after the hit animation.
     inst._my_friend_replan_requested = true
+end
+
+local function ClearHazard(inst)
+    inst._my_friend_hazard_position, inst._my_friend_hazard_until = nil, nil
+    inst._my_friend_hazard_source, inst._my_friend_hazard_radius = nil, nil
+    inst._my_friend_hazard_cause = nil
+end
+
+local function GetContactHazard(inst)
+    local point = inst._my_friend_hazard_position
+    if point == nil then return end
+    local source = inst._my_friend_hazard_source
+    if source ~= nil then
+        local aura = source:IsValid() and source.components.aura or nil
+        if aura == nil or not aura.active then ClearHazard(inst) return end
+        for _, tag in ipairs(aura.auraexcludetags or {}) do
+            if inst:HasTag(tag) then ClearHazard(inst) return end
+        end
+        return source:GetPosition(), aura.radius
+    end
+    if GetTime() >= (inst._my_friend_hazard_until or 0) then ClearHazard(inst) return end
+    return point, inst._my_friend_hazard_radius
+end
+
+local function GetFireHazard(inst)
+    local source = inst._my_friend_fire_source
+    if source == nil then return end
+    local health = inst.components.health
+    if health ~= nil and health.GetFireDamageScale ~= nil and health:GetFireDamageScale() <= 0 then
+        inst._my_friend_fire_source = nil
+        return
+    end
+    local radius = require("my_friend_survival_ai").GetFireDangerRadius(source)
+    if radius <= 0 then inst._my_friend_fire_source = nil return end
+    return source:GetPosition(), radius
+end
+
+local function IntersectsHazard(from, point, centre, radius)
+    if centre == nil then return false end
+    local dx, dz = point.x - from.x, point.z - from.z
+    local length = dx * dx + dz * dz
+    local t = length > 0 and math.max(0, math.min(1,
+        ((centre.x - from.x) * dx + (centre.z - from.z) * dz) / length)) or 0
+    return (from.x + dx * t - centre.x)^2 + (from.z + dz * t - centre.z)^2 <= radius^2
+end
+
+function M.IsHazardousPath(inst, from, point)
+    local centre, radius = GetContactHazard(inst)
+    if IntersectsHazard(from, point, centre, radius) then return true end
+    centre, radius = GetFireHazard(inst)
+    return IntersectsHazard(from, point, centre, radius)
+end
+
+function M.IsHazardRetreatActive(inst)
+    if inst._my_friend_hazard_position == nil and inst._my_friend_fire_source == nil then return false end
+    local point = inst:GetPosition()
+    return M.IsHazardousPath(inst, point, point)
+end
+
+local function RememberHazard(inst, source, cause, centre, distance)
+    local current = inst:GetPosition()
+    local aura = source ~= nil and source.components.aura or nil
+    local point = inst._my_friend_hazard_position
+    local radius = inst._my_friend_hazard_radius or M.HAZARD_RETREAT_RADIUS
+    -- Unknown damage areas are remembered at the first contact, not recentered
+    -- on every tick while the companion is already running away.
+    if centre ~= nil then
+        point, radius = centre, distance
+    elseif aura ~= nil then
+        point, radius = source:GetPosition(), aura.radius
+    elseif point == nil or inst._my_friend_hazard_source ~= nil
+        or inst._my_friend_hazard_cause ~= cause
+        or (current.x - point.x)^2 + (current.z - point.z)^2 > radius^2 then
+        point, radius = current, M.HAZARD_RETREAT_RADIUS
+    end
+    inst._my_friend_hazard_position = Vector3(point.x, 0, point.z)
+    inst._my_friend_hazard_radius = radius
+    inst._my_friend_hazard_source = centre == nil and aura ~= nil and source or nil
+    inst._my_friend_hazard_cause = cause
+    inst._my_friend_hazard_until = GetTime() + M.HAZARD_RETREAT_TIME
+    M.StartHurtRetreat(inst, source or inst, radius + 1, point)
 end
 
 function M.OnFireDamage(inst)
@@ -479,6 +571,20 @@ function M.OnFireDamage(inst)
     if source ~= nil then
         inst._my_friend_fire_source = source
         M.StartHurtRetreat(inst, source, distance + 1)
+    elseif health.takingfiredamage then
+        RememberHazard(inst, nil, "fire")
+    end
+end
+
+function M.OnHeatDamage(inst)
+    if not IsAlive(inst) or inst:HasTag("playerghost") then return end
+    local now = GetTime()
+    if now < (inst._my_friend_heat_check_after or 0) then return end
+    inst._my_friend_heat_check_after = now + 1
+    local source = require("my_friend_survival_ai").FindDamagingHeatSource(inst)
+    if source ~= nil then
+        local radius = math.max(M.HAZARD_RETREAT_RADIUS, math.sqrt(DistanceSq(inst, source)) + 2)
+        RememberHazard(inst, source, "hot", source:GetPosition(), radius)
     end
 end
 
@@ -490,40 +596,39 @@ function M.OnEnvironmentalDamage(inst, data)
         or data.cause == "cold" or data.cause == "freezing"
         or data.cause == "oldage" or data.cause == "health_as_oldage"
         or data.cause == "sanity" or data.cause == "sanityloss"
-        or data.afflicter ~= nil and data.afflicter.IsValid ~= nil
-            and data.afflicter:IsValid() then return end
-    local now = GetTime()
-    local x, _, z = inst.Transform:GetWorldPosition()
-    inst._my_friend_hazard_position = {x = x, z = z}
-    inst._my_friend_hazard_until = now + M.HAZARD_RETREAT_TIME
-    M.StartHurtRetreat(inst, inst, M.HAZARD_RETREAT_RADIUS)
+        or data.cause == "acidrain" or data.cause == "statue_attune" then return end
+    local source = data.afflicter
+    if source ~= nil and source.IsValid ~= nil and source:IsValid() then
+        local components = source.components or {}
+        local parent = source.entity ~= nil and source.entity:GetParent() or nil
+        -- Aura attacks (e.g. spore clouds) are area damage even though they use
+        -- combat:GetAttacked. Ordinary creatures, food/items and attached
+        -- debuffs must not be mistaken for a patch of dangerous ground.
+        if source == inst or parent == inst or components.inventoryitem ~= nil then return end
+        if components.aura ~= nil then
+            if not components.aura.active then return end
+        elseif components.health ~= nil or components.projectile ~= nil
+            or components.complexprojectile ~= nil then return end
+    else
+        source = nil
+    end
+    RememberHazard(inst, source, data.cause)
 end
 
 function M.UpdateHazardRetreat(inst)
-    local untiltime = inst._my_friend_hazard_until or 0
-    local point = inst._my_friend_hazard_position
-    if point == nil or GetTime() >= untiltime then
-        inst._my_friend_hazard_position = nil
-        inst._my_friend_hazard_until = nil
-        return
-    end
+    local point, radius = GetContactHazard(inst)
+    if point == nil then return end
     local x, _, z = inst.Transform:GetWorldPosition()
-    if (x - point.x)^2 + (z - point.z)^2 <= M.HAZARD_RETREAT_RADIUS^2 then
-        M.StartHurtRetreat(inst, inst, M.HAZARD_RETREAT_RADIUS)
-    else
-        inst._my_friend_hazard_position = nil
-        inst._my_friend_hazard_until = nil
+    if (x - point.x)^2 + (z - point.z)^2 <= radius^2 then
+        M.StartHurtRetreat(inst, inst._my_friend_hazard_source or inst, radius + 1, point)
     end
 end
 
 function M.UpdateFireRetreat(inst)
     -- Only revisit the remembered fire after contact; no periodic world scan.
-    local source = inst._my_friend_fire_source
-    if source == nil then return end
-    local distance = require("my_friend_survival_ai").GetFireDangerRadius(source)
-    if distance <= 0 then inst._my_friend_fire_source = nil return end
-    if DistanceSq(inst, source) < distance * distance then
-        M.StartHurtRetreat(inst, source, distance + 1)
+    local point, distance = GetFireHazard(inst)
+    if point ~= nil and DistanceSq(inst, inst._my_friend_fire_source) <= distance * distance then
+        M.StartHurtRetreat(inst, inst._my_friend_fire_source, distance + 1, point)
     end
 end
 
@@ -563,12 +668,13 @@ function M.GetHurtRetreatAction(inst)
     local fire_distance = inst._my_friend_hurt_fire_distance
     local heading = source ~= nil
         and math.atan2(current.z - source.z, current.x - source.x) or math.random() * 2 * math.pi
-    for i = 1, 12 do
+    local failed = inst._my_friend_hurt_failed_destination
+    for i = inst._my_friend_hurt_destination ~= nil and 0 or 1, 12 do
         local offset = math.ceil((i - 1) / 2) * (i % 2 == 0 and 1 or -1)
         local angle = heading + offset * 2 * math.pi / 12
         local centre = fire_distance ~= nil and source or origin
         local distance = fire_distance or 3
-        local point = inst._my_friend_hurt_destination
+        local point = i == 0 and inst._my_friend_hurt_destination
             or Vector3(centre.x + math.cos(angle) * distance, 0, centre.z + math.sin(angle) * distance)
         local allowed = fire_distance ~= nil or leader == nil or Policy.IsRoaming(inst)
         if fire_distance == nil and leader ~= nil and not Policy.IsRoaming(inst) then
@@ -577,6 +683,8 @@ function M.GetHurtRetreatAction(inst)
         end
         if allowed and TheWorld.Map:IsPassableAtPoint(point.x, 0, point.z)
             and not Navigation.IsNearHole(point)
+            and (failed == nil or (point.x - failed.x)^2 + (point.z - failed.z)^2 > .5^2)
+            and (fire_distance == nil or not M.IsHazardousPath(inst, point, point))
             and (source == nil or (point.x - source.x)^2 + (point.z - source.z)^2
                 > (current.x - source.x)^2 + (current.z - source.z)^2)
             and Navigation.IsClear(current, point, Navigation.Caps(inst)) then
@@ -584,13 +692,25 @@ function M.GetHurtRetreatAction(inst)
             local action = BufferedAction(inst, nil, ACTIONS.WALKTO, nil, point)
             action._my_friend_fire_retreat = fire_distance ~= nil
             action.arrivedist = .25
+            local function Failed()
+                if not inst:IsValid() or inst._my_friend_hurt_destination ~= point
+                    or action._my_friend_cancelled then return end
+                inst._my_friend_hurt_destination = nil
+                inst._my_friend_hurt_failed_destination = point
+                if fire_distance ~= nil and M.IsHazardRetreatActive(inst) then
+                    inst._my_friend_hurt_until = GetTime() + 3
+                    inst._my_friend_hurt_evade_until = GetTime() + 3.5
+                end
+            end
             local function Finish()
+                if not inst:IsValid() or inst._my_friend_hurt_destination ~= point then return end
+                if fire_distance ~= nil and M.IsHazardRetreatActive(inst) then Failed() return end
                 inst._my_friend_hurt_until = 0
                 inst._my_friend_hurt_evade_until = math.min(
                     inst._my_friend_hurt_evade_until or 0, GetTime() + .5)
             end
             action:AddSuccessAction(Finish)
-            action:AddFailAction(Finish)
+            action:AddFailAction(Failed)
             return action
         end
     end

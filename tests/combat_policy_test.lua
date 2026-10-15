@@ -225,4 +225,15 @@ for _, cycles in ipairs({498, 499}) do
     assert(fishing_cancels == 0 and container_cancels == 0)
 end
 AI.CanCounterAttack = old_counter
+-- Use the actual brain snapshot and scoped scores: environment escape wins
+-- over assistance, normal combat and healing, including early priority foes.
+Vector3 = function(x, y, z) return {x = x, y = y, z = z} end
+function friend:GetPosition() return Vector3(0, 0, 0) end
+AI.OnEnvironmentalDamage(friend, {amount = -5, cause = "miasma"})
+local hazard_context = root.snapshot()
+assert(hazard_context.hazard_retreat and hazard_context.hurt and hazard_context.hurt_evade)
+assert(entries.hurt.score(hazard_context) == 170 and entries.hurt_wait.score(hazard_context) == 169)
+for _, id in ipairs({"combat", "assist", "escape", "light", "watch_heal"}) do
+    assert(entries[id].score(hazard_context) == 0, "area damage must take priority over " .. id)
+end
 print("PASS: combat policies, shared threat scan, personal-only escape, cached aggro revalidation, and declined assistance preserving ongoing work/waiting")

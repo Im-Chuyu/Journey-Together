@@ -884,10 +884,7 @@ local function ConfigureFriend(inst)
         if data.cause == "fire" then
             require("my_friend_behavior_ai").OnFireDamage(inst)
         elseif data.cause == "hot" then
-            local source = require("my_friend_survival_ai").FindDamagingHeatSource(inst)
-            if source ~= nil then
-                require("my_friend_behavior_ai").StartHurtRetreat(inst, source)
-            end
+            require("my_friend_behavior_ai").OnHeatDamage(inst)
         end
         require("my_friend_behavior_ai").OnEnvironmentalDamage(inst, data)
     end)

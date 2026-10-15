@@ -49,6 +49,7 @@ local inst = {prefab = "wortox", components = {inventory = inv, eater = {CanEat 
 function inst:IsValid() return true end
 function inst:HasTag(tag) return tag == "my_friend" end
 function inst:ListenForEvent() end
+function inst:DoPeriodicTask() return {Cancel = function() end} end
 function inst:GetPosition() return {x = 0, y = 0, z = 0} end
 Wortox.Configure(inst)
 pocket = soul(25, inv); inv.itemslots[1] = pocket

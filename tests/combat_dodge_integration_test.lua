@@ -45,6 +45,8 @@ package.loaded.my_friend_behavior_ai = {
     CanContinueCombat = function() return true end,
     ShouldDodge = function() return false end,
     ObservePlayerAttack = function() end,
+    IsHazardRetreatActive = function() return false end,
+    IsHazardousPath = function() return false end,
 }
 local function entity(prefab, x)
     local inst = {prefab = prefab, pos = Vector3(x, 0, 0), components = {}, tags = {}, anim = "idle", frame = 0}

@@ -1,11 +1,13 @@
 local M = {}
 local Policy = require("my_friend_policy")
 local Dialogue = require("my_friend_dialogue")
+local Health = require("my_friend_health")
 
-M.HEAL_START = .5
+M.HEAL_START = .8
 M.HEAL_STOP = .8
-M.HEAL_RANGE = 20
+M.HEAL_RANGE = 10
 M.HEAL_DISTANCE = 4
+M.HEAL_CHECK_INTERVAL = 30
 M.HEART_SOUL_COST = 10
 M.SOUL_TARGET = 18
 
@@ -132,6 +134,7 @@ function M.Configure(inst)
     for _, event in ipairs({"itemget", "itemlose", "stacksizechange", "ms_soulcountchanged"}) do
         inst:ListenForEvent(event, Queue)
     end
+    M.ConfigureHealing(inst)
 end
 
 -- Native wortox hearts are normally linked during the player's skill-tree
@@ -423,9 +426,93 @@ end
 
 local function NeedsHealing(player, threshold)
     return Policy.IsLocalPlayer(player) and player.entity:IsVisible()
-        and not player:HasAnyTag("playerghost", "health_as_oldage")
-        and player.components.health ~= nil and not player.components.health:IsDead()
+        and not player:HasTag("playerghost") and Health.CanReceiveHealing(player)
+        and not player.components.health:IsDead()
+        and player.components.health:IsHurt()
         and player.components.health:GetPercent() < threshold
+end
+
+local function IsHealingCompanion(inst)
+    return inst:IsValid() and inst.prefab == "wortox" and inst:HasTag("my_friend")
+        and not inst:HasTag("playerghost") and not inst._my_friend_possess_parked
+        and not inst._my_friend_departing
+        and inst.components.health ~= nil and not inst.components.health:IsDead()
+        and not TheWorld._my_friend_possession_active
+end
+
+local function InHealingRange(inst, player, threshold)
+    -- Check distance before reading any health. Remote players' events must
+    -- not turn into polling their health from the other side of the shard.
+    return player ~= nil and player:IsValid() and player.Transform ~= nil
+        and inst:GetDistanceSqToInst(player) <= M.HEAL_RANGE^2
+        and Policy.InRange(inst, player) and NeedsHealing(player, threshold)
+end
+
+function M.ConfigureHealing(inst)
+    if inst.prefab ~= "wortox" or not inst:HasTag("my_friend")
+        or not TheWorld.ismastersim or inst._my_friend_soul_healing ~= nil then return end
+    local state = {pending = {}, players = {}}
+    inst._my_friend_soul_healing = state
+    local function Forget(player)
+        state.pending[player], state.players[player] = nil, nil
+        if inst._my_friend_soul_patient == player then inst._my_friend_soul_patient = nil end
+        inst:RemoveEventCallback("healthdelta", state.changed, player)
+        inst:RemoveEventCallback("onremove", state.removed, player)
+    end
+    state.removed = function(player) Forget(player) end
+    state.changed = function(player, data)
+        if not IsHealingCompanion(inst) or data == nil then return end
+        if data.oldpercent ~= nil and data.newpercent ~= nil then
+            if data.oldpercent == data.newpercent then return end
+        elseif (data.amount or 0) == 0 then
+            return
+        end
+        if InHealingRange(inst, player, M.HEAL_START) then
+            state.pending[player] = true
+        else
+            state.pending[player] = nil
+            if inst._my_friend_soul_patient == player then inst._my_friend_soul_patient = nil end
+        end
+        -- Let Utility choose treatment against the current survival/combat
+        -- priorities; a player's damage must not force-cancel our other work.
+    end
+    local function Watch(player)
+        if player == nil or player == inst or not player:IsValid()
+            or player:HasTag("my_friend") or state.players[player] then return end
+        state.players[player] = true
+        inst:ListenForEvent("healthdelta", state.changed, player)
+        inst:ListenForEvent("onremove", state.removed, player)
+    end
+    state.joined = function(_, player) Watch(player) end
+    state.left = function(_, player)
+        if player ~= nil and state.players[player] then Forget(player) end
+    end
+    -- Subscribe once; neither action selection nor the 30s check traverses
+    -- AllPlayers. Late arrivals and character replacements bind via events.
+    for _, player in ipairs(AllPlayers or {}) do Watch(player) end
+    inst:ListenForEvent("ms_playerjoined", state.joined, TheWorld)
+    inst:ListenForEvent("ms_playerleft", state.left, TheWorld)
+    state.task = inst:DoPeriodicTask(M.HEAL_CHECK_INTERVAL, function()
+        if not IsHealingCompanion(inst) then
+            state.pending = {}
+            inst._my_friend_soul_patient = nil
+            return
+        end
+        local x, y, z = inst.Transform:GetWorldPosition()
+        state.pending = {}
+        for _, player in ipairs(TheSim:FindEntities(x, y, z, M.HEAL_RANGE,
+            {"player"}, {"INLIMBO", "my_friend", "playerghost"})) do
+            Watch(player)
+            if InHealingRange(inst, player, M.HEAL_START) then state.pending[player] = true end
+        end
+    end)
+    inst:ListenForEvent("onremove", function()
+        state.task:Cancel()
+        for player in pairs(state.players) do Forget(player) end
+        inst:RemoveEventCallback("ms_playerjoined", state.joined, TheWorld)
+        inst:RemoveEventCallback("ms_playerleft", state.left, TheWorld)
+        inst._my_friend_soul_patient, inst._my_friend_soul_healing = nil, nil
+    end)
 end
 
 local function CarriedSoul(inst, soul)
@@ -435,33 +522,42 @@ local function CarriedSoul(inst, soul)
 end
 
 local function FindPatient(inst)
+    local state = inst._my_friend_soul_healing
+    if state == nil then return end
     local patient = inst._my_friend_soul_patient
-    if NeedsHealing(patient, M.HEAL_STOP)
-        and inst:GetDistanceSqToInst(patient) <= M.HEAL_RANGE^2
-        and Policy.InRange(inst, patient) then return patient end
+    if InHealingRange(inst, patient, M.HEAL_STOP) then return patient end
     inst._my_friend_soul_patient = nil
     local leader = Policy.GetLeader(inst)
-    if NeedsHealing(leader, M.HEAL_START)
-        and inst:GetDistanceSqToInst(leader) <= M.HEAL_RANGE^2 then
+    if leader ~= nil and state.pending[leader] and InHealingRange(inst, leader, M.HEAL_START) then
         inst._my_friend_soul_patient = leader
         return leader
     end
     local lowest = M.HEAL_START
-    for _, player in ipairs(AllPlayers) do
-        if NeedsHealing(player, lowest) and Policy.InRange(inst, player)
-            and inst:GetDistanceSqToInst(player) <= M.HEAL_RANGE^2 then
-            patient, lowest = player, player.components.health:GetPercent()
+    for player in pairs(state.pending) do
+        if not InHealingRange(inst, player, M.HEAL_START) then
+            state.pending[player] = nil
+        elseif player.components.health:GetPercent() < lowest then
+            lowest = player.components.health:GetPercent()
             inst._my_friend_soul_patient = player
         end
     end
     return inst._my_friend_soul_patient
 end
 
+local function CanHealPlayers(inst)
+    return IsHealingCompanion(inst) and not inst._my_friend_under_threat
+        and inst._my_friend_command == nil and not inst._my_friend_storage_action
+        and not inst._my_friend_container_action and not inst._my_friend_backpack_action
+        and inst.components.inventory ~= nil
+        and GetTime() >= (inst._my_friend_soul_heal_after or 0)
+end
+
+function M.GetHealPlayerScore(inst)
+    return not Policy.IsBusy(inst) and CanHealPlayers(inst) and FindPatient(inst) ~= nil and 108 or 0
+end
+
 function M.GetHealPlayerAction(inst)
-    if inst.prefab ~= "wortox" or Policy.IsBusy(inst) or inst._my_friend_under_threat
-        or inst._my_friend_command ~= nil or inst._my_friend_storage_action
-        or inst._my_friend_container_action or inst._my_friend_backpack_action
-        or GetTime() < (inst._my_friend_soul_heal_after or 0) then return end
+    if Policy.IsBusy(inst) or not CanHealPlayers(inst) then return end
     local patient = FindPatient(inst)
     if patient == nil then return end
     local soul
@@ -487,10 +583,10 @@ function M.GetHealPlayerAction(inst)
         end)
     end
     action.validfn = function()
-        return inst._my_friend_command == nil and not inst._my_friend_under_threat
-            and NeedsHealing(patient, M.HEAL_STOP) and CarriedSoul(inst, soul)
-            and Policy.InRange(inst, patient)
-            and inst:GetDistanceSqToInst(patient) <= M.HEAL_RANGE^2
+        -- The selected DROP owns its short busy animation. Only action
+        -- selection checks busy; revalidation must allow its execution frame.
+        return CanHealPlayers(inst) and InHealingRange(inst, patient, M.HEAL_STOP)
+            and CarriedSoul(inst, soul)
             and (action.action ~= ACTIONS.DROP
                 or patient:GetDistanceSqToPoint(point) <= (M.HEAL_DISTANCE + 1)^2)
     end

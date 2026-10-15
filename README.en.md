@@ -66,6 +66,8 @@ The source also contains a designated-user exception that fixes that user's affi
 | Area | Current behaviour |
 | --- | --- |
 | Dodging | Uses enemy attack animations and danger windows to retreat or sidestep. A dangerous dodge can interrupt a normal attack before its damage frame; busy eating, revival and casting remain protected |
+| Environmental escape | After taking area damage from fire, spore clouds or similar hazards, prioritises leaving before resuming combat. Failed escape attempts try another direction; combat avoids recently recorded danger areas. Detection is triggered by damage, without continuous global scans |
+| Assistance marking | Each leader attack refreshes the target's assistance mark, which lasts for 16 seconds after the last attack. Existing combat safety and distance rules still apply |
 | Combat equipment | Prioritises effective armour absorption against the current attack, then current temperature, rain and speed benefits, then durability. Multifunctional equipment remains eligible as armour. The Enlightened Crown is a combat fallback only when no usable head armour is available; its everyday preference is retained |
 | Rain equipment | Counts combined equipment and inherent waterproofness. Once protection reaches 100%, extra rain-only items add no benefit; redundant worn items are stored under normal idle equipment rules. Multifunctional items needed for warmth or cooling remain equipped |
 | Facility and resource discovery | Reuses known locations and stops repeated searches after an empty result until relevant facilities, resources, inventory or search areas change. Temporary discovery caches are rebuilt after loading |
@@ -74,6 +76,7 @@ The source also contains a designated-user exception that fixes that user's affi
 | Rescue | Following, waiting, base wandering and independent activity all allow rescuing players within 20 units, given suitable revival items or character abilities |
 | Cooking | Only during independent base construction; disabled while following, at a manually assigned base and after construction finishes |
 | Protected food | Does not eat Royal Jelly, Mandrakes or raw Tallbird Eggs. Never selects Deerclops Eyeballs or Guardian's Horns as food; manual feeding of these two items still follows native character diet rules |
+| Ordinary healing | Wanda and characters with an age component, age-based health tag or native healing-disable markers are excluded from soul and food healing targets. Feeding for hunger remains available |
 | Ingredients | Royal Jelly and Mandrakes cannot enter a pot. Jerky at 50% freshness or above is reserved; combinations of three or more large meats are subject to freshness restrictions |
 | Late-world supplies | From displayed day 151, generic stockpiling stops; only 10 grass and 10 twigs are maintained at low priority. Explicit tasks and character-specific resources keep separate rules |
 
@@ -82,6 +85,7 @@ Dodging depends on enemy timing, traversable terrain and the companion's current
 ### Character-specific examples
 
 - **Wortox** balances pocket souls with carried Soul Jars, aiming for 18 pocket souls and never transferring souls into backpacks. When hungry with more than 10 pocket souls, he eats souls first.
+- **Wortox player healing** responds to health changes within 10 units and checks the same area every 30 seconds as a fallback. Below 80% health, he approaches and drops one soul at a time, stopping at 80%. Target discovery does not repeatedly poll every player's health.
 - **Wickerbottom** remembers bookcase coordinates when a base is assigned, allowing reading and storage trips to distant recorded shelves. There is no periodic discovery scan. Invalid records are removed; a read request with no records performs one discovery scan.
 - **Wigfrid** retains her meat-only diet and prefers Jerky. With an Elding Spear, she performs four normal attacks followed by a lightning lunge. Low durability switches her to lunges only; she avoids lunging at creatures that would ignite from electrocution.
 - **Wanda and Wortox** can use their character-specific revival abilities when suitable items or materials are available.
@@ -101,7 +105,7 @@ Simplified and Traditional Chinese support custom companion voices; English and 
 - [CONTRIBUTING.en.md](CONTRIBUTING.en.md) / [Chinese entry](CONTRIBUTING.md): translation submission rules.
 - [Language directory guide](scripts/languages/README.md): file structure and templates.
 
-`main` is the release branch; `develop` integrates the next version. Start new features from `develop`; maintenance agents use `codex/<topic>` branches by default. Translation contributions must preserve command IDs, dialogue keys and placeholders, without changing core code, sound assets or release settings.
+`main` is the release branch; `develop` integrates the next version. Start new features from `develop`; maintenance agents use `codex/<topic>` branches by default. Sync `main` back into `develop` after a release, and prefer Chinese commit and merge titles. Translation contributions must preserve command IDs, dialogue keys and placeholders, without changing core code, sound assets or release settings.
 
 From the mod root, use Lua 5.1's `luac -p <file>` for syntax checks and `lua tests/<name>_test.lua` for relevant regressions. Full commands are in [section 18 of the developer guide](DEVELOPER.md#18-扩展步骤排错与验证). Changes affecting networking, saves or body swapping also need in-game verification beyond stub tests.
 

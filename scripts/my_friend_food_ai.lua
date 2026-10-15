@@ -1,4 +1,5 @@
 local M = {}
+local Health = require("my_friend_health")
 
 local HEALTH_THRESHOLD = .90
 local HUNGER_THRESHOLD = .65
@@ -81,7 +82,7 @@ local function GetMaximum(component, fallback)
 end
 
 function M.CanHealWithFood(inst)
-    return inst ~= nil and inst.prefab ~= "wormwood" and not inst:HasTag("health_as_oldage")
+    return inst ~= nil and inst.prefab ~= "wormwood" and Health.CanReceiveHealing(inst)
 end
 
 local function GetStats(inst)

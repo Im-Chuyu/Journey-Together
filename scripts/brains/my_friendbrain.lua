@@ -465,6 +465,8 @@ function MyFriendBrain:OnStart()
     local entries = {}
     local function Add(id, score, node)
         local function ScopedScore(c)
+            if c.hazard_retreat and id ~= "hurt" and id ~= "hurt_wait"
+                and id ~= "farewell" and not c.ghost then return 0 end
             if Policy.IsRoaming(inst) and (id == "follow" or id == "catch_up"
                 or id == "catch_up_mount" or id == "wormhole" or id == "assist"
                 or id == "vigil" or id == "sit") then return 0 end
@@ -571,9 +573,11 @@ function MyFriendBrain:OnStart()
         return not inst._my_friend_under_threat
             and (inst.components.combat == nil or inst.components.combat.target == nil)
     end))
-    Action("hurt", Alive(function(c) return c.hurt and 135 or 0 end),
+    Action("hurt", Alive(function(c) return c.hurt and (c.hazard_retreat and 170 or 135) or 0 end),
         BehaviourAI.GetHurtRetreatAction, "正在离开受伤的位置", 3)
-    Add("hurt_wait", Alive(function(c) return c.hurt_evade and 134 or 0 end), StandStill(inst))
+    Add("hurt_wait", Alive(function(c)
+        return c.hurt_evade and (c.hazard_retreat and 169 or 134) or 0
+    end), StandStill(inst))
     Action("wormhole", Alive(function()
         return require("my_friend_wormhole").Score(inst)
     end), require("my_friend_wormhole").GetAction, "正在跟随玩家穿过传送入口", 20)
@@ -622,7 +626,8 @@ function MyFriendBrain:OnStart()
     end), require("my_friend_wanda").GetRefuelAction, "正在给警钟补充噩梦燃料", 8, true)
     Action("wortox_heal_player", Alive(function(c)
         return inst.prefab == "wortox" and not c.threat and not c.dark
-            and not c.thermal and c.hunger >= .4 and 108 or 0
+            and not c.thermal and c.hunger >= .4
+            and require("my_friend_wortox").GetHealPlayerScore(inst) or 0
     end), require("my_friend_wortox").GetHealPlayerAction, "正在释放灵魂治疗玩家", 20)
     Action("squeeze_heart", Alive(function()
         local command = Commands.Get(inst)
@@ -950,6 +955,7 @@ function MyFriendBrain:OnStart()
             greeting = CoreAI.IsGreetingPauseActive(inst),
             hurt = hurt,
             hurt_evade = hurt_evade,
+            hazard_retreat = BehaviourAI.IsHazardRetreatActive(inst),
         }
     end
     self.bt = BT(inst, Utility(inst, entries, Snapshot))

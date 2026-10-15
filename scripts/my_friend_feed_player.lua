@@ -12,7 +12,8 @@ local function Needs(player)
     if player == nil or not player:IsValid() or player:HasAnyTag("playerghost", "wereplayer")
         or player.components.health == nil or player.components.health:IsDead()
         or player.components.hunger == nil or player.components.eater == nil then return false, false end
-    return Food.CanHealWithFood(player) and player.components.health:GetPercent() < .5,
+    return Food.CanHealWithFood(player) and player.components.health:IsHurt()
+            and player.components.health:GetPercent() < .5,
         player.components.hunger:GetPercent() < .5
 end
 

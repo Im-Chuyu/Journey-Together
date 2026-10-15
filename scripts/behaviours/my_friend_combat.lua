@@ -67,6 +67,18 @@ function MyFriendCombat:Visit()
         return
     end
 
+    -- This also runs on the combat fast path, before a cached snapshot can
+    -- submit another attack after contact or re-entry into a remembered area.
+    if BehaviourAI.IsHazardRetreatActive(self.inst) then
+        if Policy.IsBusy(self.inst) then self:Sleep(.1) return end
+        InterruptAttackForDodge(self.inst)
+        self.inst._my_friend_replan_requested = true
+        self.status = RUNNING
+        Stop(self.inst)
+        self:Sleep(.1)
+        return
+    end
+
     if not IsValidThreat(self.inst, self.target) then
         self.target = BehaviourAI.FindThreat(self.inst) or self.inst._my_friend_assist_target
         self.dodge_started_at = nil
@@ -126,6 +138,10 @@ function MyFriendCombat:Visit()
     local dodge_point, dodging, known_attack, hold_attack = Dodge.GetDecision(self.inst, self.target)
     if dodging then
         BaseAI.SetTask(self.inst, "正在躲避攻击")
+        if dodge_point ~= nil
+            and BehaviourAI.IsHazardousPath(self.inst, self.inst:GetPosition(), dodge_point) then
+            dodge_point = nil
+        end
         if dodge_point ~= nil then
             local interrupting = InterruptAttackForDodge(self.inst)
             local now, previous = GetTime(), self.dodge_point
@@ -206,12 +222,17 @@ function MyFriendCombat:Visit()
     end
 
     local target_position = self.target:GetPosition()
-    local special, waiting = require("my_friend_wathgrithr").GetCombatAction(self.inst, self.target)
+    local unsafe_approach = BehaviourAI.IsHazardousPath(self.inst, self.inst:GetPosition(), target_position)
+    local special, waiting
+    if not unsafe_approach then
+        special, waiting = require("my_friend_wathgrithr").GetCombatAction(self.inst, self.target)
+    end
     if special ~= nil then
         local target = self.target
         local previous = special.validfn
         special.validfn = function(act)
             return self.target == target and IsValidThreat(self.inst, target)
+                and not BehaviourAI.IsHazardousPath(self.inst, self.inst:GetPosition(), target:GetPosition())
                 and (previous == nil or previous(act))
         end
         self.inst.components.locomotor:PushAction(special, true)
@@ -225,6 +246,12 @@ function MyFriendCombat:Visit()
     -- Pass the target explicitly. The no-argument form falls back to
     -- combat.target, which is not necessarily the one this node is working on.
     if distance_sq > combat:CalcAttackRangeSq(self.target) then
+        if unsafe_approach then
+            BaseAI.SetTask(self.inst, "正在避开受伤的位置")
+            Stop(self.inst)
+            self:Sleep(.1)
+            return
+        end
         BaseAI.SetTask(self.inst, "正在接近敌人")
         self.inst.components.locomotor:GoToPoint(target_position, nil, true)
     else
@@ -239,6 +266,9 @@ function MyFriendCombat:Visit()
             -- already refer to a different enemy when the SG runs the action.
             return self.target == target and combat.target == target
                 and IsValidThreat(self.inst, target)
+                and not BehaviourAI.IsHazardRetreatActive(self.inst)
+                and (DistanceSq(self.inst, target) <= combat:CalcAttackRangeSq(target)
+                    or not BehaviourAI.IsHazardousPath(self.inst, self.inst:GetPosition(), target:GetPosition()))
         end
         self.inst.components.locomotor:PushAction(action, true)
     end
