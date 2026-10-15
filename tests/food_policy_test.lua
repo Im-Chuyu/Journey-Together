@@ -45,7 +45,7 @@ assert(Rules.CanCook(inst))
 leader = {}; assert(not Rules.CanCook(inst)); leader = nil
 manual = true; assert(not Rules.CanCook(inst)); manual = false
 complete = true; assert(not Rules.CanCook(inst)); complete = false
-for _, name in ipairs({"royal_jelly", "royaljelly", "mandrake", "tallbirdegg"}) do
+for _, name in ipairs({"royal_jelly", "royaljelly", "mandrake", "tallbirdegg", "deerclops_eyeball", "minotaurhorn"}) do
     local food = item(name, 1, "MEAT", 40, 75, 50)
     assert(Food.Evaluate(inst, food) == nil and Food.CommandScore(inst, food) == nil, name)
 end
@@ -67,6 +67,29 @@ Food.Configure(inst)
 assert(not inst.components.eater:CanEat(item("royal_jelly", 1)))
 assert(not inst.components.eater:CanEat(item("mandrake", 1)))
 assert(inst.components.eater:CanEat(jerky))
+local original_prefab = inst.prefab
+for _, prefab in ipairs({"wilson", "wathgrithr", "wortox", "wanda", "wickerbottom"}) do
+    inst.prefab = prefab
+    for _, name in ipairs({"deerclops_eyeball", "minotaurhorn"}) do
+        local drop = item(name, 1, "MEAT", 100, 150, 100)
+        inst.components.inventory.ReferenceAllItems = function() return {drop} end
+        inst._my_friend_food_supply_cache = nil
+        assert(Food.IsForbiddenFood(name) and Food.IsForbiddenFood(drop))
+        assert(not Food.IsUsableFood(inst, drop) and Food.FindBestFood(inst) == nil, prefab .. ": " .. name)
+        assert(Food.GetFoodSupply(inst) == 0 and Food.GetEatAction(inst, drop) == nil)
+        local health, hunger, sanity = inst.components.health.currenthealth,
+            inst.components.hunger.current, inst.components.sanity.current
+        inst.components.health.currenthealth, inst.components.hunger.current, inst.components.sanity.current = 1, 1, 1
+        assert(Food.Evaluate(inst, drop) == nil and Food.CommandScore(inst, drop) == nil,
+            "hunger, health and sanity emergencies must not consume boss drops")
+        inst.components.health.currenthealth, inst.components.hunger.current, inst.components.sanity.current = health, hunger, sanity
+        assert(inst.components.eater:CanEat(drop), "manual feeding still obeys the original diet")
+        assert(Rules.CanUseIngredient(drop), "an autonomous eating restriction must not change ingredient rules")
+    end
+end
+inst.prefab = original_prefab
+inst.components.inventory.ReferenceAllItems = function() return {jerky} end
+assert(Food.FindBestFood(inst) == jerky, "ordinary food remains available")
 function inst:HasTag(tag) return tag == "my_friend" end
 local calls = 0
 local original = function() calls = calls + 1; return true end
@@ -80,4 +103,4 @@ potitems[1] = item("meat", .49); assert(Rules.CookAction(act, original))
 potitems[1] = jerky; assert(not Rules.CookAction(act, original))
 local player = {HasTag = function() return false end}
 assert(Rules.CookAction({doer = player}, original), "ordinary players keep native cooking")
-print("PASS: construction-only cooking, protected foods, raw eggs, freshness and Wigfrid food priorities")
+print("PASS: construction-only cooking, protected foods, boss drops excluded from autonomous eating across roles/emergencies, raw eggs, freshness and Wigfrid food priorities")

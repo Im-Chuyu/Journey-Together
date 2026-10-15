@@ -50,6 +50,16 @@ local function Stop(inst)
     if inst:IsValid() and inst.components.locomotor ~= nil then inst.components.locomotor:Stop() end
 end
 
+local function InterruptAttackForDodge(inst)
+    local sg = inst.sg
+    if sg == nil or not sg:HasAnyStateTag("attack", "abouttoattack") then return false end
+    local action = inst:GetBufferedAction()
+    if action ~= nil and action.action == ACTIONS.ATTACK then inst:ClearBufferedAction() end
+    -- Movement's native locomote handler leaves an interruptible attack. Never
+    -- force idle or remove busy tags from eating, casting or revival states.
+    return true
+end
+
 function MyFriendCombat:Visit()
     local combat = self.inst.components.combat
     if not self.inst:IsValid() or combat == nil or self.inst.components.locomotor == nil then
@@ -113,19 +123,13 @@ function MyFriendCombat:Visit()
         return
     end
 
-    -- abouttoattack is removed at the damage frame, before attack recovery ends.
-    -- Protect that hit, then let the native locomote event leave the recovery.
-    if self.inst.sg ~= nil and self.inst.sg:HasStateTag("abouttoattack") then
-        self:Sleep(1 / 30)
-        return
-    end
-
     local dodge_point, dodging, known_attack, hold_attack = Dodge.GetDecision(self.inst, self.target)
     if dodging then
         BaseAI.SetTask(self.inst, "正在躲避攻击")
         if dodge_point ~= nil then
+            local interrupting = InterruptAttackForDodge(self.inst)
             local now, previous = GetTime(), self.dodge_point
-            if previous == nil or now >= (self.dodge_move_after or 0)
+            if interrupting or previous == nil or now >= (self.dodge_move_after or 0)
                 and (self.inst.components.locomotor.dest == nil
                     or (previous.x - dodge_point.x)^2 + (previous.z - dodge_point.z)^2 >= .5^2
                     or (previous.x - self.inst:GetPosition().x)^2
@@ -148,26 +152,24 @@ function MyFriendCombat:Visit()
         self:Sleep(1 / 30)
         return
     end
-    -- A protected swing has finished, but its attack tag may remain. Wait for
-    -- the native cooldown unless a dodge above needs to leave the recovery.
-    if self.inst.sg ~= nil and self.inst.sg:HasStateTag("attack") then
-        self:Sleep(1 / 30)
-        return
-    end
-
     local distance_sq = DistanceSq(self.inst, self.target)
     local now = GetTime()
     if self.commit_attack_until ~= nil
         and (combat:InCooldown() or now >= self.commit_attack_until) then
         self.commit_attack_until = nil
     end
-    local should_dodge = not known_attack and self.commit_attack_until == nil
+    local enemy_attacking = self.target.sg ~= nil
+        and self.target.sg:HasAnyStateTag("attack", "abouttoattack")
+    local own_attacking = self.inst.sg ~= nil
+        and self.inst.sg:HasAnyStateTag("attack", "abouttoattack")
+    local should_dodge = not known_attack and (self.commit_attack_until == nil or enemy_attacking)
+        and (not own_attacking or enemy_attacking)
         and BehaviourAI.ShouldDodge(self.inst, self.target)
     if should_dodge then
         self.dodge_started_at = self.dodge_started_at or now
         local enemycombat = self.target.components ~= nil
             and self.target.components.combat or nil
-        if BehaviourAI.ShouldCommitCounterAttack(combat:InCooldown(),
+        if not enemy_attacking and BehaviourAI.ShouldCommitCounterAttack(combat:InCooldown(),
             now - self.dodge_started_at,
             enemycombat ~= nil and enemycombat.min_attack_period or nil) then
             self.dodge_started_at = nil
@@ -176,6 +178,7 @@ function MyFriendCombat:Visit()
             BaseAI.SetTask(self.inst, "正在躲避攻击")
             local safe_distance = BehaviourAI.GetCombatDodgeDistance(self.inst, self.target)
             if distance_sq < safe_distance * safe_distance then
+                InterruptAttackForDodge(self.inst)
                 local leader = Policy.GetLeader(self.inst)
                 if leader ~= nil and Policy.DistanceSq(self.inst, leader) >= 36 then
                     self.inst.components.locomotor:GoToPoint(leader:GetPosition(), nil, true)
@@ -193,6 +196,13 @@ function MyFriendCombat:Visit()
         end
     elseif self.commit_attack_until == nil then
         self.dodge_started_at = nil
+    end
+
+    -- Ordinary attacks remain stable only when no dangerous dodge above needs
+    -- to interrupt them. This applies to both frame profiles and unknown foes.
+    if own_attacking then
+        self:Sleep(1 / 30)
+        return
     end
 
     local target_position = self.target:GetPosition()

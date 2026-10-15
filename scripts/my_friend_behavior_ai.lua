@@ -754,7 +754,7 @@ local function IsBetterArmor(absorption, condition, bestabsorption, bestconditio
         or absorption == bestabsorption and condition > bestcondition
 end
 
-function M.FindBestCombatArmor(inst, slot, attacker, weapon, thermal_need)
+function M.FindBestCombatArmor(inst, slot, attacker, weapon, thermal_need, items)
     local inventory = inst.components.inventory
     if inventory == nil then return end
     local best = inventory:GetEquippedItem(slot)
@@ -763,8 +763,9 @@ function M.FindBestCombatArmor(inst, slot, attacker, weapon, thermal_need)
     end
     local bestabsorption, bestcondition =
         GetArmorValue(inst, best, slot, attacker, weapon)
+    if bestabsorption == nil then best = nil end
     if inventory.ReferenceAllItems ~= nil then
-        for _, item in ipairs(inventory:ReferenceAllItems()) do
+        for _, item in ipairs(items or inventory:ReferenceAllItems()) do
             if thermal_need == nil or M.GetThermalInsulation(item, thermal_need) then
                 local absorption, condition =
                     GetArmorValue(inst, item, slot, attacker, weapon)
@@ -781,37 +782,26 @@ end
 function M.EquipBestCombatArmor(inst, attacker, weapon)
     local inventory = inst.components.inventory
     if inventory == nil or inventory.Equip == nil then return end
-    -- Ordinary warmth/cooling equipment is allowed to give way to combat
-    -- gear. Preserve it only when the body is actually taking temperature
-    -- damage, rather than merely being above the equipment threshold.
+    -- Combat armour owns these slots. Temperature may favour armour with
+    -- insulation, but must never pin ordinary clothing/rain hats over armour.
     local thermal_need = require("my_friend_survival_ai").GetThermalNeed(inst)
+    local items = inventory.ReferenceAllItems ~= nil and inventory:ReferenceAllItems() or {}
+    local preferred_head = require("my_friend_equipment").PreferredHead(inst, items)
     for _, slot in ipairs(require("my_friend_equip_slots").All()) do
         if not IsAlive(inst) or attacker ~= nil and not IsAlive(attacker) then return end
         if weapon ~= nil and not weapon:IsValid() then weapon = nil end
         if slot ~= EQUIPSLOTS.HANDS then
             local current = inventory:GetEquippedItem(slot)
-            -- When temperature protection is active, prefer armour that also
-            -- insulates. If no such armour exists, retain a currently worn
-            -- insulating item instead of stripping it for ordinary armour.
+            -- Prefer dual-purpose armour, then fall back to all usable armour.
             local best = M.FindBestCombatArmor(inst, slot, attacker, weapon,
-                thermal_need)
-            if best == nil and (current == nil
-                or not M.GetThermalInsulation(current, thermal_need)) then
-                best = M.FindBestCombatArmor(inst, slot, attacker, weapon)
+                thermal_need, items)
+            if best == nil then
+                best = M.FindBestCombatArmor(inst, slot, attacker, weapon, nil, items)
             end
-            local currentproof = current ~= nil and current.components ~= nil
-                and current.components.waterproofer ~= nil
-                and current.components.waterproofer:GetEffectiveness() >= 1
-            local bestproof = best ~= nil and best.components ~= nil
-                and best.components.waterproofer ~= nil
-                and best.components.waterproofer:GetEffectiveness() >= 1
-            -- Full rain protection is already complete. Do not trade it for
-            -- ordinary armour during every combat re-evaluation.
-            if currentproof and not bestproof then best = current end
-            if thermal_need ~= nil and current ~= nil
-                and M.GetThermalInsulation(current, thermal_need)
-                and (best == nil or not M.GetThermalInsulation(best, thermal_need)) then
-                best = current
+            -- The crown is the explicit head-slot preference requested for
+            -- companions; body armour selection remains independent of it.
+            if slot == EQUIPSLOTS.HEAD and preferred_head ~= nil then
+                best = preferred_head
             end
             if best ~= nil and best ~= current then
                 if current ~= nil

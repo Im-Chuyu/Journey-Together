@@ -61,8 +61,11 @@ local function Match(inst, target, state)
         end
     end
     if state.row ~= nil and Profiles.Value(state.row.avoid_break, false, target) then return state.row, known end
-    if known and not matching_animation and target.sg ~= nil and target.sg.HasAnyStateTag ~= nil
-        and target.sg:HasAnyStateTag("attack", "abouttoattack") then known = false end
+    if target.sg ~= nil and target.sg.HasAnyStateTag ~= nil
+        and target.sg:HasAnyStateTag("attack", "abouttoattack") then
+        state.monitoring = true
+        if known and not matching_animation then known = false end
+    end
     return nil, known
 end
 

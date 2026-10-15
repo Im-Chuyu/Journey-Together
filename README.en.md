@@ -1,55 +1,106 @@
-# Journey Together
+# Journey Together · 一路同行
 
-Journey Together is a Don't Starve Together companion mod. Companions can follow players, assist in combat, survive independently, manage supplies, cook, and respond to chat commands.
+[简体中文](README.md) · [Developer guide (Chinese)](DEVELOPER.md) · [Contributing](CONTRIBUTING.en.md)
 
-## Branches
+**Journey Together** is an AI companion mod for **Don't Starve Together**. Companions use real character entities, preserving native abilities, diet restrictions and equipment systems. Players interact through chat commands, a command wheel and an inventory panel.
 
-- `main`: stable release branch.
-- `develop`: integration and testing branch for the next version.
-- `feature/*`: focused branches created from `develop`.
+A companion can follow and fight alongside players, or build a base, manage supplies and survive independently. Affinity is tracked per player, with multiplayer leadership and command permissions decided by the server.
 
-## Command wheel
+## Features
 
-Press `Alt` plus the configured shortcut (default `Alt+R`) to open the companion command wheel. Right-click a wheel button to replace it from the complete command catalogue. The catalogue is paginated and duplicate commands are allowed. The shortcut can be changed to any `Alt+A`–`Alt+Z` combination in the `Command Wheel Shortcut` option in `modinfo.lua`.
+| System | Capabilities |
+| --- | --- |
+| Interaction | Affinity, following and waiting, renaming, character and skin selection, body swapping |
+| Work and bases | Gathering, chopping, mining, farming, sorting, carrying and independent base construction |
+| Survival | Eating, cooking in supported states, lighting, temperature and rain equipment, supply replenishment |
+| Combat and rescue | Combat assistance, attack-timed dodging, armour selection, dropped-weapon recovery and proactive player revival |
+| Character abilities | Wortox soul management, Wickerbottom reading and bookcase memory, Wigfrid's Elding Spear behaviour and more |
+| Multiplayer | Server-side AI, chat and wheel commands, inventory panel, shard travel and save restoration |
+| Localization | Simplified Chinese, Traditional Chinese, English and Russian, with custom Chinese voice lines |
 
-Shared commands live in `scripts/languages/<code>/command_words.lua`. Character-specific commands live in `scripts/languages/<code>/characters/<character>_command_words.lua`, for example `characters/wickerbottom_command_words.lua`. Keep each command's stable `id` and provide localized `keywords` and a wheel `label`. The wheel combines shared and character-specific command files automatically, so adding a supported character command file adds it to the catalogue without changing the wheel widget.
+## Installation
 
-Wigfrid command: include the companion’s current name and “Elding Spear” in chat, or use “Forge/charge Elding Spear” on the wheel. Following is not required. It crafts at most one spear from carried materials, then uses one Restrained Static to charge a carried or equipped spear, preferring the equipped one. An existing spear can be charged without crafting materials. It never gathers ingredients or takes them from chests. Charging an equipped spear requires one free slot and preserves skin, durability and cooldown.
+The mod must be installed on **the server and every client**. It is not a client-only mod.
 
-## Companion food and combat
+1. For a source installation, place the mod directory under the game's `mods/` folder, with `modmain.lua` and `modinfo.lua` directly inside that directory.
+2. Enable Journey Together in the world's server mod list. Dedicated servers must enable it in the relevant shard configuration; clients should use the same version.
+3. Configure the language, voice and shortcuts, then enter the world. The initial companion is Wendy, usually spawned near the Florid Postern or another world entrance. Existing companions are restored from saves.
 
-Companions cook only while independently building a base. Following a player, using a manually assigned home, or finishing base construction disables cooking. Royal jelly and mandrakes cannot be eaten or used as ingredients; raw Tallbird Eggs cannot be eaten. Jerky is reserved until its freshness falls below 50%. A pot cannot contain three or more fresh large meats, including cooked large meat; meat below 50% freshness is exempt from that restriction.
+The character catalogue includes native and loaded mod characters. Compatibility with individual mod characters and mods that change inventories, actions or state graphs needs separate verification.
 
-Wortox keeps 18 souls in inventory slots by depositing extras into carried Soul Jars and withdrawing souls when below 18. Full jars and unavailable inventory slots stop transfers. Souls are never transferred into backpacks. When hungry with more than 10 pocket souls, he eats souls first.
+## Getting started
 
-Wigfrid keeps her native meat-only diet and prefers jerky. When cooking is allowed, she prefers Meatballs. With an Elding Spear or Charged Elding Spear, she performs four normal attacks followed by one native lightning lunge. Below 10% durability she uses lunges only, resuming normal attacks above 20%. She avoids lunging at creatures with `sg.mem.burn_on_electrocute` that can burn, such as Treeguards, the Lord of the Fruit Flies, and Brightshades. Nearby saplings and crops do not block lunges. She waits for weapon cooldowns. Every five game days she asks her current leader for a spear or materials; a refusal within 30 seconds receives an acknowledgement.
+### Controls
 
-Companions engage hounds and shadow creatures attacking themselves or nearby players. Brightshade bodies can only be attacked while tired; vines remain valid targets.
+| Action | Default input |
+| --- | --- |
+| Open the command wheel | `Alt+R` |
+| Customize a wheel slot | Right-click its button and choose from the paginated catalogue |
+| Open the companion panel | `Alt+right-click` the companion |
+| Issue a chat command | Include the companion's current name and a command keyword in the same message |
 
-Before displayed world day 500, companions engage any creature hostile to themselves or nearby players without the ordinary creature-type, low-health or conservative fight-estimate restrictions. Neutral creatures and players are not automatically attacked. Brightshade reflection protection and dropped-weapon recovery remain active. The original combat rules resume on day 500.
+The wheel shortcut can be set to any `Alt+A`–`Alt+Z` combination. The wheel and panel also support optional F1–F12 shortcuts and buttons at the top of the screen.
 
-Companions dodge on the server using enemy attack animations and danger frames. Retreat and side-step distances account for movement speed, terrain and boat boundaries. Attacking resumes after the danger window; unknown creatures or attacks use the generic dodge fallback.
+For a companion currently named “Wendy”, English command examples include:
 
-Ordinary enemies such as Hounds and Treeguards also trigger dodge checks during attack windups. A companion completes the damage frame of its current attack, then can leave attack recovery to retreat. Frame monitoring reuses local query caches and avoids rescanning supplies or submitting the same path repeatedly.
+- `Wendy, follow me`: request following.
+- `Wendy, stay here`: hold position.
+- `Wendy, this is home`: assign a base.
+- `Wendy, chop`: request work, subject to permissions and tool requirements.
 
-After an accidental weapon or hand-tool drop, companions prioritize recovering the actual dropped item within 8 units and re-equip it after pickup. Backup tools do not overwrite the dropped-item record. Explicit player removal, another entity taking the item, broken equipment, or a full inventory will not cause repeated combat interruptions.
+For Wigfrid, include her current name and `Elding Spear` to request spear crafting and charging. Keywords depend on the selected companion language. Chat and wheel commands share permission checks; character-specific commands require the corresponding character.
 
-Weapons already auto-equipped by native pickup are not equipped a second time, preventing them from losing their inventory ownership. Each recovery attempt has a 10-second deadline including travel, followed by a 5-second retry delay after failure or a 1-second delay after interruption. Recovery uses the recorded dropped entity and performs no extra ground-weapon search.
+### Affinity and multiplayer permissions
 
-After displayed world day 150 (starting on day 151), generic material stockpiling and reserve replenishment stop. Only 10 grass and 10 twigs are maintained at low priority. Rocks, gold and logs lose their generic reserve quotas; explicit work orders, ingredients for current crafting jobs and character-specific resources retain their own task rules.
+Each player has an independent affinity score, normally starting at 20. Feeding, gifts and time spent together can increase affinity; attacking the companion reduces it.
 
-Companions check for revivable players within 20 units while following, waiting, wandering at a base, or acting independently. Telltale Hearts, hauntable revival items, Wanda's revival watch, and Wortox's heart crafting can trigger rescue. Rescue outranks ordinary waiting and work commands, can temporarily leave the home activity boundary, and cancels if the player has already revived.
+- Following requires at least 25 affinity; work commands require strictly more than 50.
+- Within the same priority tier, the latest valid follow request can replace the current leader. With A/B at 30/50, B can take over from A.
+- Valid requests at 90 affinity or above have higher priority. Old requests do not indefinitely lock an independent companion after leadership ends.
+- Taking items, renaming, changing characters and swapping bodies have their own distance, state and permission requirements.
 
-Only Wickerbottom uses bookcase memory. Assigning a new base scans once within 32 units of its center and saves shelf coordinates. Reading and storing use these records without periodically scanning the base. A read command with no shelf records performs one discovery scan, then ends if no shelf or requested book is found. Saved coordinates are checked by visiting them after loading; invalid records are removed. Memory persists separately per shard, and a new base replaces the old records.
+The source also contains a designated-user exception that fixes that user's affinity at its maximum. See the [developer guide's permission rules](DEVELOPER.md#4-好感度领队与权限) for its location and details.
 
-## Dialogue and voice
+## Behaviour rules
 
-Chinese is the default language. Simplified Chinese, Traditional Chinese, English, and Russian are currently included. Default dialogue lives in `scripts/languages/<code>/dialogue_lines.lua`; character-specific dialogue lives in `scripts/languages/<code>/characters/<character>.lua`. Missing character dialogue falls back to Wendy's default set.
+| Area | Current behaviour |
+| --- | --- |
+| Dodging | Uses enemy attack animations and danger windows to retreat or sidestep. A dangerous dodge can interrupt a normal attack before its damage frame; busy eating, revival and casting remain protected |
+| Combat equipment | Armour takes priority over ordinary insulating, cooling and rain clothing. Armour that also meets current temperature needs is preferred. A usable carried Enlightened Crown is the preferred head item; body armour is selected independently |
+| Dropped weapons | Recovers the actual dropped item within 8 units, with deadlines and retry delays. Recovery stops if a player or another entity takes it |
+| Engagement | Before displayed day 500, engages creatures hostile to the companion or nearby players. From day 500, the original combat assessment rules resume. Brightshade bodies are only attacked while tired |
+| Rescue | Following, waiting, base wandering and independent activity all allow rescuing players within 20 units, given suitable revival items or character abilities |
+| Cooking | Only during independent base construction; disabled while following, at a manually assigned base and after construction finishes |
+| Protected food | Does not eat Royal Jelly, Mandrakes or raw Tallbird Eggs. Never selects Deerclops Eyeballs or Guardian's Horns as food; manual feeding of these two items still follows native character diet rules |
+| Ingredients | Royal Jelly and Mandrakes cannot enter a pot. Jerky at 50% freshness or above is reserved; combinations of three or more large meats are subject to freshness restrictions |
+| Late-world supplies | From displayed day 151, generic stockpiling stops; only 10 grass and 10 twigs are maintained at low priority. Explicit tasks and character-specific resources keep separate rules |
 
-The simplified-Chinese `voice_order` table assigns global voice event numbers in order. Each sound bank contains 70 events and is stored as `sound/fsN.fev` plus `sound/fsN.fsb`; event paths use the form `fsN/fsN/fnK`, with `K` continuing across banks. The `Companion Voice` option controls custom voice playback. Custom voice events are currently used only for Simplified Chinese and Traditional Chinese; other languages keep the companion character's native voice.
+Dodging depends on enemy timing, traversable terrain and the companion's current state; it does not guarantee avoiding every hit. Detailed thresholds, exceptions and module responsibilities are documented in the [developer guide](DEVELOPER.md).
 
-Language contributors only need to submit language files. They should not edit core code, sound banks, pack manifests, or `modinfo.lua`. The maintainer reviews language files and adds the language option to `modinfo.lua`. The `scripts/languages/_template` folder is the starting point; formatting and naming rules are described in [`CONTRIBUTING.en.md`](CONTRIBUTING.en.md). Missing language files fall back to Chinese.
+### Character-specific examples
 
-## Local checks
+- **Wortox** balances pocket souls with carried Soul Jars, aiming for 18 pocket souls and never transferring souls into backpacks. When hungry with more than 10 pocket souls, he eats souls first.
+- **Wickerbottom** remembers bookcase coordinates when a base is assigned, allowing reading and storage trips to distant recorded shelves. There is no periodic discovery scan. Invalid records are removed; a read request with no records performs one discovery scan.
+- **Wigfrid** retains her meat-only diet and prefers Jerky. With an Elding Spear, she performs four normal attacks followed by a lightning lunge. Low durability switches her to lunges only; she avoids lunging at creatures that would ignite from electrocution.
+- **Wanda and Wortox** can use their character-specific revival abilities when suitable items or materials are available.
 
-Run the Lua 5.1 syntax check, then test the affected commands, dialogue, language selection, and multiplayer client display in a local DST world.
+Wigfrid's Elding Spear command crafts at most one spear from carried materials, then tries to charge a carried or equipped uncharged spear with one Restrained Static, preferring the equipped weapon. An existing spear can be charged without crafting first. The command does not gather ingredients or take chest supplies. Charging an equipped spear requires one free slot. Every five game days, she also asks her current leader for a spear or materials and acknowledges a refusal within 30 seconds.
+
+## Language and voice
+
+Choose Simplified Chinese, Traditional Chinese, English or Russian in the mod settings. The initial choice follows the game locale, defaulting to English for unmatched locales. Missing language resources have a Chinese fallback.
+
+Simplified and Traditional Chinese support custom companion voices; English and Russian use the character's native voice. Custom voice playback can be toggled in the Companion Voice setting.
+
+## Development and contributions
+
+- [DEVELOPER.md](DEVELOPER.md): architecture, behaviour rules, module index, extension steps, troubleshooting and test map, in Chinese.
+- [AGENTS.md](AGENTS.md): concise maintenance constraints and entry points, in Chinese.
+- [CONTRIBUTING.en.md](CONTRIBUTING.en.md) / [Chinese entry](CONTRIBUTING.md): translation submission rules.
+- [Language directory guide](scripts/languages/README.md): file structure and templates.
+
+`main` is the release branch; `develop` integrates the next version. Start new features from `develop`; maintenance agents use `codex/<topic>` branches by default. Translation contributions must preserve command IDs, dialogue keys and placeholders, without changing core code, sound assets or release settings.
+
+From the mod root, use Lua 5.1's `luac -p <file>` for syntax checks and `lua tests/<name>_test.lua` for relevant regressions. Full commands are in [section 18 of the developer guide](DEVELOPER.md#18-扩展步骤排错与验证). Changes affecting networking, saves or body swapping also need in-game verification beyond stub tests.
+
+When reporting a problem, include the mod version, server type, relevant character, reproduction steps and the complete Lua traceback from the client or server log.

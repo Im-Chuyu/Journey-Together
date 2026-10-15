@@ -172,6 +172,27 @@ local function Light()
     return light_module
 end
 
+function M.IsPreferredHead(inst, item)
+    local c = item ~= nil and item:IsValid() and item.components or nil
+    local equip = c ~= nil and c.equippable or nil
+    return item ~= nil and item.prefab == "alterguardianhat" and equip ~= nil
+        and equip.equipslot == EQUIPSLOTS.HEAD and not equip:IsRestricted(inst)
+        and c.inventoryitem ~= nil and not c.inventoryitem.islockedinslot
+        and c.inventoryitem:GetGrandOwner() == inst and not item:HasTag("broken")
+        and (c.fueled == nil or not c.fueled:IsEmpty())
+        and (c.finiteuses == nil or c.finiteuses:GetUses() > 0)
+end
+
+function M.PreferredHead(inst, items)
+    local inventory = inst.components.inventory
+    if inventory == nil then return end
+    local current = inventory:GetEquippedItem(EQUIPSLOTS.HEAD)
+    if M.IsPreferredHead(inst, current) then return current end
+    for _, item in ipairs(items or inventory:ReferenceAllItems()) do
+        if M.IsPreferredHead(inst, item) then return item end
+    end
+end
+
 -- Rain gear that is doing its job holds moisture at zero, so "am I wet" is the
 -- wrong question while it is still raining. Ask the sky as well, and let the
 -- answer linger, so a brief gap in the weather does not start a swap.
@@ -237,7 +258,9 @@ local function Score(inst, item, needs)
     local components = item.components
     local equippable = components ~= nil and components.equippable or nil
     if equippable == nil then return 0 end
-    local score = 0
+    -- Crown utility remains useful in daylight/idle, below urgent thermal and
+    -- rain protection but above the usual preference for an empty head slot.
+    local score = M.IsPreferredHead(inst, item) and 2 or 0
     local thermal = needs.thermal
     if equippable.equipslot == EQUIPSLOTS.HANDS then
         thermal = needs.hand_thermal
@@ -278,12 +301,14 @@ local function Score(inst, item, needs)
 end
 
 -- Slots the companion is not free to rearrange this tick.
-local function IsSlotLocked(inst, slot, current)
+local function IsSlotLocked(inst, slot, current, preferred_head)
     if not M.Allowed(inst, slot) then return true end
     if current ~= nil then
         if current.components.equippable:ShouldPreventUnequipping() then return true end
         -- The light AI owns whatever is lighting the way.
-        if Light().IsLightEquipment(current) then return true end
+        if Light().IsLightEquipment(current)
+            and not (slot == EQUIPSLOTS.HEAD
+                and (preferred_head ~= nil or M.IsPreferredHead(inst, current))) then return true end
         if current:HasTag("backpack") then return true end
     end
     if slot == EQUIPSLOTS.HANDS then
@@ -597,6 +622,7 @@ function M.UpdateLoadout(inst)
     -- Built once: this runs on every brain tick, and ReferenceAllItems walks
     -- both grids plus the backpack and allocates a fresh table each call.
     local items = inventory:ReferenceAllItems()
+    local preferred_head = M.PreferredHead(inst, items)
     local hold, idle = Timers(inst, "_my_friend_loadout_hold"),
         Timers(inst, "_my_friend_loadout_idle")
     -- Deliberately left false, which is what the pass this replaced always set
@@ -609,14 +635,14 @@ function M.UpdateLoadout(inst)
 
     for _, slot in ipairs(EquipSlots.All()) do
         local current = inventory:GetEquippedItem(slot)
-        if not IsSlotLocked(inst, slot, current) then
+        if not IsSlotLocked(inst, slot, current, preferred_head) then
             local currentscore = Score(inst, current, needs)
             local best, bestscore = current, currentscore
             for _, item in ipairs(items) do
                 local equippable = item.components.equippable
                 if item ~= current and equippable ~= nil and equippable.equipslot == slot
                     and not equippable:IsRestricted(inst)
-                    and not Light().IsLightEquipment(item) then
+                    and (not Light().IsLightEquipment(item) or item == preferred_head) then
                     local score = Score(inst, item, needs)
                     if score > bestscore then best, bestscore = item, score end
                 end

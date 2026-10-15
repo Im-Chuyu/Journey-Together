@@ -34,11 +34,16 @@ local FORBIDDEN_FOOD_PREFABS = {
     royal_jelly = true,
     tallbirdegg = true,
 }
+local AUTONOMOUS_FORBIDDEN_FOOD_PREFABS = {
+    deerclops_eyeball = true,
+    minotaurhorn = true,
+}
 
 function M.IsForbiddenFood(food)
     if food == nil then return false end
     local prefab = type(food) == "string" and food or food.prefab
     return FORBIDDEN_FOOD_PREFABS[prefab] == true
+        or AUTONOMOUS_FORBIDDEN_FOOD_PREFABS[prefab] == true
 end
 
 function M.Configure(inst)
@@ -47,7 +52,10 @@ function M.Configure(inst)
     eater._my_friend_food_guard = true
     local can = eater.CanEat
     eater.CanEat = function(self, food, ...)
-        return not M.IsForbiddenFood(food) and can(self, food, ...)
+        -- AI selection also reserves boss drops. Manual feeding continues to
+        -- use the native diet rules; only universally forbidden foods block it.
+        local prefab = type(food) == "string" and food or food ~= nil and food.prefab or nil
+        return FORBIDDEN_FOOD_PREFABS[prefab] ~= true and can(self, food, ...)
     end
 end
 

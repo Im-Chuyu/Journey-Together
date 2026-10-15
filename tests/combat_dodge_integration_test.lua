@@ -1,6 +1,6 @@
 -- Run from the mod root: lua tests/combat_dodge_integration_test.lua
 package.path = "scripts/?.lua;" .. package.path
-local now, scans, moves, attacks = 0, 0, 0, 0
+local now, scans, moves, attacks, cancelled = 0, 0, 0, 0, 0
 GetTime = function() return now end
 Vector3 = function(x, y, z) return {x = x, y = y, z = z} end
 READY, RUNNING, SUCCESS, FAILED = 0, 1, 2, 3
@@ -56,8 +56,12 @@ local function entity(prefab, x)
     function inst:GetCurrentPlatform() return nil end
     function inst:GetPhysicsRadius() return .5 end
     function inst:FacePoint() end
-    function inst:GetBufferedAction() end
-    function inst:ClearBufferedAction() end
+    function inst:GetBufferedAction() return self.bufferedaction end
+    function inst:ClearBufferedAction()
+        if self.bufferedaction ~= nil then cancelled = cancelled + 1 end
+        self.bufferedaction = nil
+    end
+    function inst:GetAngleToPoint() return 180 end
     inst.Transform = {GetWorldPosition = function() return inst.pos.x, 0, inst.pos.z end}
     inst.AnimState = {GetCurrentAnimationFrame = function() return inst.frame end,
         IsCurrentAnimation = function(_, anim) return inst.anim == anim end}
@@ -72,7 +76,14 @@ local function entity(prefab, x)
         SetTarget = function(self, enemy) self.target = enemy end,
         InCooldown = function() return false end, CalcAttackRangeSq = function() return 9 end}
     inst.components.locomotor = {GetRunSpeed = function() return 6 end, Stop = function() end,
-        GoToPoint = function(self, point) moves = moves + 1; self.dest = point end,
+        GoToPoint = function(self, point)
+            moves = moves + 1; self.dest = point
+            inst.tags.attack, inst.tags.abouttoattack = false, false
+        end,
+        RunInDirection = function()
+            moves = moves + 1
+            inst.tags.attack, inst.tags.abouttoattack = false, false
+        end,
         PushAction = function() attacks = attacks + 1 end, Clear = function() end}
     return inst
 end
@@ -83,14 +94,49 @@ for _, prefab in ipairs({"hound", "firehound", "icehound", "leif", "leif_sparse"
     target = entity(prefab, 0)
     target.anim, target.frame = prefab:find("leif") and "atk" or "atk_pre", prefab:find("leif") and 14 or 5
     inst.tags.attack, inst.tags.abouttoattack = true, true
-    local before = moves
+    inst.bufferedaction = {action = ACTIONS.ATTACK, target = target}
+    local before, before_cancel = moves, cancelled
     node:Visit()
-    assert(moves == before, "preserve the companion's pending damage frame")
-    inst.tags.abouttoattack = false
+    assert(moves > before and cancelled == before_cancel + 1,
+        prefab .. " danger must interrupt the pending ordinary attack before its hit")
+    before = moves
     node:Visit()
-    assert(moves > before, prefab .. " must dodge after damage even while the attack recovery tag remains")
+    assert(moves == before, "continuous dodging must not repeatedly submit the same path")
     node:OnStop()
 end
+-- Unmatched/fast shadow attacks use the generic fallback, even during an
+-- earlier committed counterattack and before the companion's damage frame.
+local AI = package.loaded.my_friend_behavior_ai
+AI.ShouldDodge = function() return true end
+AI.ShouldCommitCounterAttack = function() error("an active enemy attack cannot be overridden by counterattack timeout") end
+AI.GetCombatDodgeDistance = function() return 5 end
+for _, prefab in ipairs({"terrorbeak", "crawlinghorror", "mod_fast_attacker"}) do
+    target = entity(prefab, 0)
+    target.tags.attack, target.anim = true, "atk_pre"
+    inst.tags.attack, inst.tags.abouttoattack = true, true
+    inst.bufferedaction = {action = ACTIONS.ATTACK, target = target}
+    node.commit_attack_until, node.dodge_started_at = now + 1.5, now - 3
+    local before, before_cancel = moves, cancelled
+    node:Visit()
+    assert(moves > before and cancelled == before_cancel + 1, prefab)
+    assert(inst._my_friend_dodge.monitoring, "generic enemy attack windows also use frame monitoring")
+    node:OnStop()
+end
+AI.ShouldDodge = function() return false end
+-- No danger: keep the attack stable. Busy meals/revivals are never interrupted.
+target = entity("hound", 0)
+inst.tags.attack, inst.tags.abouttoattack = true, true
+inst.bufferedaction = {action = ACTIONS.ATTACK, target = target}
+local safe_moves, safe_cancel = moves, cancelled
+node:Visit()
+assert(moves == safe_moves and cancelled == safe_cancel and inst.bufferedaction ~= nil)
+target.anim, target.frame = "atk_pre", 16
+inst.tags.busy = true
+node:Visit()
+assert(moves == safe_moves and cancelled == safe_cancel, "busy abilities stay protected")
+inst.tags.busy, inst.tags.attack, inst.tags.abouttoattack = false, false, false
+inst.bufferedaction = nil
+node:OnStop()
 -- Before the retreat deadline, hold off a new swing that would occupy it.
 target = entity("leif", 0); target.anim, target.frame = "atk", 9
 inst.tags.attack = false
@@ -140,4 +186,4 @@ inst._my_friend_dodge = {monitoring = true}
 switched:Visit()
 assert(switched.active == urgent and switched.nextupdatetime == now + 1 / 30,
     "first switched combat visit must not sleep for the ordinary 400ms period")
-print("PASS: native ordinary-enemy windups, protected damage/recovery movement, bounded path/collision refresh and utility combat polling/preemption")
+print("PASS: danger interrupts ordinary attack windups, fast-shadow fallback overrides committed attacks, busy abilities remain protected, bounded movement/query frequency and utility polling")

@@ -378,6 +378,7 @@ function M.IsExternallyLit(inst)
 end
 
 local function StoreEquippedLight(inst, item)
+    if require("my_friend_equipment").IsPreferredHead(inst, item) then return false end
     local inventory = inst.components.inventory
     local equippable = item.components.equippable
     if equippable.equipslot == EQUIPSLOTS.HEAD
