@@ -9,6 +9,11 @@ local function IsGhost(inst)
     return inst:IsValid() and inst:HasTag("playerghost")
 end
 
+local function Replan(inst)
+    inst._my_friend_replan_requested = true
+    if inst.brain ~= nil then inst.brain:ForceUpdate() end
+end
+
 local function Portal(target)
     return target ~= nil and target:IsValid() and PORTALS[target.prefab] == true
         and not target:IsInLimbo()
@@ -50,7 +55,7 @@ local function FindTarget(inst, request)
 end
 
 function M.Cancel(inst)
-    if inst._my_friend_ghost_revive ~= nil then inst._my_friend_replan_requested = true end
+    if inst._my_friend_ghost_revive ~= nil then Replan(inst) end
     inst._my_friend_ghost_revive = nil
     inst._my_friend_portal_revive_requested, inst._my_friend_portal_target = nil, nil
 end
@@ -70,6 +75,7 @@ function M.Request(inst, player, portal)
     require("my_friend_commands").Clear(inst)
     M.Cancel(inst)
     inst._my_friend_ghost_revive = request
+    Replan(inst)
     Dialogue.Reply(inst, portal and "ghost_revive_portal" or "ghost_revive_nearby")
     return true
 end
@@ -94,7 +100,7 @@ function M.RequestAutomatic(inst)
     require("my_friend_commands").Clear(inst)
     M.Cancel(inst)
     inst._my_friend_ghost_revive = request
-    inst._my_friend_replan_requested = true
+    Replan(inst)
     return true
 end
 
@@ -155,7 +161,7 @@ function M.OnRespawned(inst)
         request.origin = Vector3(point.x, 0, point.z)
         inst._my_friend_auto_recovery_point = request.origin
     end
-    inst._my_friend_replan_requested = true
+    Replan(inst)
     if not request.automatic then Dialogue.Reply(inst, "ghost_revive_return") end
 end
 

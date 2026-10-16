@@ -1,6 +1,7 @@
 -- Language: en
 -- English command keywords.
 return {
+    { id = "plant_trees", label = "Plant Trees", keywords = {"plant trees", "plant them", "plant the seeds"} },
     { id = "squeeze_heart", label = "Squeeze Heart", keywords = {"squeeze", "press", "squeeze heart"} },
     { id = "revive", en = {"revive", "resurrect", "come back to life"} },
     { id = "farewell_gift", en = {"take it with you", "take them with you", "it's yours", "keep it"} },

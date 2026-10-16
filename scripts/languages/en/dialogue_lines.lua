@@ -1221,6 +1221,10 @@ M.lines = {
 }
 
 M.replies = {
+    describe_plant_trees = {"I'll use the tree seeds I'm carrying to plant around this spot."},
+    plant_trees_done = {"This round of planting is finished."},
+    plant_trees_no_seeds = {"I'm not carrying any plantable pine cones, birchnuts or twiggy tree cones."},
+    plant_trees_no_space = {"There are no more suitable planting spots in this area."},
     -- fn478
     command_refuse_human = {"按理说，你这个级别的人类还没有权力命令我，但是为了满足你，我会听你的下一条命令。"},
     -- fn479

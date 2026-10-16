@@ -1,6 +1,8 @@
 -- Run from the mod root: lua tests/bookstation_memory_test.lua
 package.path = "scripts/?.lua;" .. package.path
 local now = 10
+local next_guid = 0
+Ents = {}
 GetTime = function() return now end
 Vector3 = function(x, y, z) return {x = x, y = y, z = z} end
 ACTIONS = {MY_FRIEND_OPEN = {}, MY_FRIEND_STORE = {}, READ = {}, PICKUP = {}, WALKTO = {}}
@@ -16,7 +18,10 @@ package.loaded.my_friend_dialogue = {Reply = function() end}
 package.loaded.my_friend_base_ai = {GetBasePoint = function() return nil end}
 package.loaded.my_friend_commands = {Clear = function(inst) inst._my_friend_command = nil end}
 local function entity(prefab, x)
+    next_guid = next_guid + 1
     local e = {prefab = prefab, pos = {x = x, y = 0, z = 0}, components = {}, removed = false}
+    e.GUID = next_guid
+    Ents[e.GUID] = e
     function e:IsValid() return not self.removed end
     function e:HasTag(tag) return tag == "structure" and self.prefab == "bookstation" end
     function e:HasAnyTag(...) for _, tag in ipairs({...}) do if self:HasTag(tag) then return true end end return false end

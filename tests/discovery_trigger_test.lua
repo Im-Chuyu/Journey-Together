@@ -15,10 +15,20 @@ Ents = {}
 TheWorld = {ismastersim = true, state = {}, Map = {
     IsPassableAtPoint = function() return true end, GetTileAtPoint = function() return 0 end,
 }}
+EntityScript = {}
+function EntityScript:PushEvent_Internal(event, data)
+    for _, fn in ipairs(self.events[event] or {}) do fn(self, data) end
+end
+function EntityScript:PushEvent(event, data) return self:PushEvent_Internal(event, data) end
+local Pickable = {Regen = function(self)
+    self.calls = (self.calls or 0) + 1; self.ready = true; return nil, "regrown"
+end}
+local Crop, Dryer = {}, {Resume = function() end}
 local function entity(prefab, x, tags)
     next_guid = next_guid + 1
     local e = {prefab = prefab, GUID = next_guid, components = {}, tags = tags or {},
         x = x or 0, z = 0, events = {}, tasks = {}}
+    setmetatable(e, {__index = EntityScript})
     function e:IsValid() return not self.removed end
     function e:HasTag(tag) return self.tags[tag] == true end
     function e:HasAnyTag(...)
@@ -36,9 +46,6 @@ local function entity(prefab, x, tags)
     function e:ListenForEvent(event, fn)
         self.events[event] = self.events[event] or {}
         self.events[event][#self.events[event] + 1] = fn
-    end
-    function e:PushEvent(event, data)
-        for _, fn in ipairs(self.events[event] or {}) do fn(self, data) end
     end
     function e:DoTaskInTime(_, fn) self.tasks[#self.tasks + 1] = fn end
     function e:DoPeriodicTask() error("discovery must not start periodic tasks") end
@@ -83,6 +90,7 @@ package.loaded.my_friend_exploration = {Save = noop, Load = noop}
 package.loaded.my_friend_home = {Load = noop, Save = noop, Mode = noop}
 package.loaded.my_friend_crafting_tech = {}
 local Discovery = require("my_friend_discovery")
+Discovery.Install(EntityScript, {pickable = Pickable, crop = Crop, dryer = Dryer})
 local Memory = require("my_friend_resource_memory")
 local AI = require("my_friend_behavior_ai")
 AI.IsTargetUnsafe = function() return false end
@@ -215,18 +223,16 @@ lab:Remove(); assert(BaseAI.FindBaseStructure(resident, "researchlab") == nil)
 -- Plant regrowth has no native event. The wrapped native method invalidates
 -- discoveries, runs once, preserves nil return values and is installed once.
 local plant = entity("grass", 2004)
-local calls = 0
-plant.components.pickable = {inst = plant, product = "cutgrass", transplanted = true,
+plant.components.pickable = setmetatable({inst = plant, product = "cutgrass", transplanted = true,
     CanBePicked = function(self) return self.ready end,
-    CanBeFertilized = function(self) return not self.ready end,
-    Regen = function(self) calls = calls + 1; self.ready = true; return nil, "regrown" end}
+    CanBeFertilized = function(self) return not self.ready end}, {__index = Pickable})
 Discovery.ConfigureEntity(plant); plant:Flush()
 local plants, barren = Garden.Plants(resident, resident:GetPosition(), 34, function() return true end)
 assert(#plants == 1 and barren == 1)
 before = scans; Garden.Plants(resident, resident:GetPosition(), 34, function() return true end); assert(scans == before)
 Discovery.ConfigureEntity(plant)
 local first, second = plant.components.pickable:Regen()
-assert(first == nil and second == "regrown" and calls == 1)
+assert(first == nil and second == "regrown" and plant.components.pickable.calls == 1)
 plants, barren = Garden.Plants(resident, resident:GetPosition(), 34, function() return true end)
 assert(#plants == 1 and barren == 0 and scans == before + 1)
 
@@ -238,11 +244,15 @@ for i = 1, 20 do now = now + 20; Gather.GetNearbyDryingRackAction(collector) end
 assert(scans == before)
 local rack = entity("meatrack", 3002, {structure = true})
 local completed = 0
-rack.components.dryer = {ondonedrying = function(self) completed = completed + 1; self:AddTag("dried"); return "done" end}
+rack.components.dryer = setmetatable({inst = rack,
+    ondonedrying = function(self) completed = completed + 1; self:AddTag("dried"); return "done" end},
+    {__index = Dryer})
 Discovery.ConfigureEntity(rack); rack:Flush()
 Gather.GetNearbyDryingRackAction(collector)
 before = scans
 assert(rack.components.dryer.ondonedrying(rack) == "done" and completed == 1)
+-- Native DoDry resumes its timer after updating the product/ingredient.
+rack.components.dryer:Resume()
 local harvest = Gather.GetNearbyDryingRackAction(collector)
 assert(harvest ~= nil and harvest.target == rack and scans == before + 1)
 local new_collector = companion(3200)

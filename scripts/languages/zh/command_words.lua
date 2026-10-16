@@ -1,6 +1,7 @@
 -- Language: zh
 -- Chinese command keywords.
 return {
+    { id = "plant_trees", label = "种树", keywords = {"种树", "种下去", "种吧"} },
     { id = "squeeze_heart", label = "挤压双尾心", keywords = {"挤", "压", "按", "捏"} },
     { id = "revive", zh = {"复活", "重生", "归来", "活"} },
     { id = "farewell_gift", zh = {"带走吧","拿走吧","不要了","送你"} },

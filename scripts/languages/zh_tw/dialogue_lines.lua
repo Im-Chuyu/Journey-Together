@@ -1833,6 +1833,10 @@ M.lines = {
 }
 
 M.replies = {
+    describe_plant_trees = {"我用身上的樹種，在這裡附近種樹。"},
+    plant_trees_done = {"這一輪種好了。"},
+    plant_trees_no_seeds = {"我身上沒有可種的松果、樺栗果或多枝樹種子。"},
+    plant_trees_no_space = {"這片區域沒有其他合適的種樹位置了。"},
     -- fn478
     command_refuse_human = {"按理說，你這個級別的人類還沒有權力命令我，但是為了滿足你，我會聽你的下一條命令。"},
     -- fn479

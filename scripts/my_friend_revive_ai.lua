@@ -136,6 +136,19 @@ local function ReleasePendingWork(inst)
     inst._my_friend_replan_requested = true
 end
 
+local function ResetBrain(inst)
+    if not IsValid(inst) or not inst:HasTag("my_friend") or inst._my_friend_possess_parked
+        or inst._my_friend_departing then return end
+    local affinity = inst.components.my_friend_affinity
+    if affinity ~= nil and Policy.GetLeader(inst) == nil then affinity:UpdateLeader() end
+    inst._my_friend_navigation_action, inst._my_friend_route_planning = nil, nil
+    inst._my_friend_movement_owner, inst._my_friend_long_follow = nil, nil
+    inst._my_friend_decision = nil
+    inst._my_friend_replan_requested = true
+    if inst.brainfn ~= nil then inst:SetBrain(inst.brainfn) end
+    if inst.brain ~= nil then inst.brain:ForceUpdate() end
+end
+
 local function OnDeath(inst)
     if inst._my_friend_death_handled then return end
     inst._my_friend_death_handled = true
@@ -217,6 +230,7 @@ local function OnRespawned(inst)
     -- companion still had queued, so clear the latches again on the way back up
     -- rather than trusting that nothing was left behind at death.
     require("my_friend_ghost_help").Stop(inst)
+    ResetBrain(inst)
     ReleasePendingWork(inst)
     require("my_friend_ghost_commands").OnRespawned(inst)
     -- Player revives do not pass through GhostCommands.OnRespawned's
@@ -254,6 +268,8 @@ function M.Configure(inst)
     inst:ListenForEvent("death", OnDeath)
     inst:ListenForEvent("ms_becameghost", function()
         MarkOwnRemains(inst)
+        ResetBrain(inst)
+        ReleasePendingWork(inst)
         require("my_friend_ghost_help").Start(inst)
     end)
     inst:ListenForEvent("ms_respawnedfromghost", OnRespawned)

@@ -23,6 +23,7 @@ M.FIRE_POINT_SEARCH_RANGE = 14
 M.FEATHERFAN_TEMPERATURE = 65
 M.BASE_COLD_FIRE_RANGE = 24
 M.AURORA_RANGE = 24
+M.TEMPERATURE_SOURCE_RANGE = 64
 
 local THERMAL_CANT_TAGS = {
     "INLIMBO", "burnt", "playerghost",
@@ -241,6 +242,35 @@ function M.FindDamagingHeatSource(inst, fire_only)
         end
     end
     return best, best ~= nil and M.GetFireDangerRadius(best) or nil
+end
+
+function M.GetTemperatureDangerRadius(inst, source, cold)
+    local override = source ~= nil and source:IsValid() and source.components.temperatureoverrider or nil
+    local temperature = inst.components.temperature
+    if override == nil or temperature == nil then return 0 end
+    local radius, value = override:GetActiveRadius(), override:GetTemperature()
+    if radius > 0 and (cold and value < 0 or not cold and value > temperature.overheattemp) then
+        return radius
+    end
+    return 0
+end
+
+function M.FindDamagingTemperatureSource(inst, cold)
+    local x, y, z = inst.Transform:GetWorldPosition()
+    local closest, bestdistance
+    for _, source in ipairs(TheSim:FindEntities(x, y, z, M.TEMPERATURE_SOURCE_RANGE, nil, THERMAL_CANT_TAGS)) do
+        local override = source:IsValid() and source.components.temperatureoverrider or nil
+        if override ~= nil then
+            local point = source:GetPosition()
+            local distance = (point.x - x)^2 + (point.z - z)^2
+            if distance <= override:GetActiveRadius()^2 and override:GetActiveRadius() > 0
+                and (bestdistance == nil or distance < bestdistance) then
+                closest, bestdistance = source, distance
+            end
+        end
+    end
+    local radius = closest ~= nil and M.GetTemperatureDangerRadius(inst, closest, cold) or 0
+    if radius > 0 then return closest, radius end
 end
 
 local function GetSourceData(inst, source, need)

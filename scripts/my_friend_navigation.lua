@@ -112,10 +112,10 @@ function M.InTravelRange(inst, point)
     if command ~= nil and command.id == "chop" and action ~= nil
         and action._my_friend_chop_delivery then return true end
     if action ~= nil and action._my_friend_command_origin ~= nil
-        and command ~= nil and command.id == "chop"
+        and command ~= nil and (command.id == "chop" or command.id == "plant_trees")
         and action._my_friend_command_origin == command.origin then
         -- Allow approach detours without moving the actual work area.
-        return DistanceSq(command.origin, point) <= 32^2
+        return DistanceSq(command.origin, point) <= (command.id == "plant_trees" and 18 or 32)^2
             or DistanceSq(inst:GetPosition(), point) <= 20^2
     end
     local policy = require("my_friend_policy")

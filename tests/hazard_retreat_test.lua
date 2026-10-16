@@ -41,14 +41,22 @@ package.loaded.my_friend_progress = {Check = function() end}
 package.loaded.my_friend_dodge = {Reset = function() end, GetDecision = function() return nil, false, true end}
 package.loaded.my_friend_wathgrithr = {GetCombatAction = function() end}
 local fire, heat
+local Thermal = require("my_friend_survival_ai")
 package.loaded.my_friend_survival_ai = {
     FindDamagingHeatSource = function(_, fire_only)
         scans = scans + 1
         return fire_only and fire or heat, fire ~= nil and 4 or nil
     end,
     GetFireDangerRadius = function(source) return source:IsValid() and source.burning and 4 or 0 end,
+    FindDamagingTemperatureSource = Thermal.FindDamagingTemperatureSource,
+    GetTemperatureDangerRadius = Thermal.GetTemperatureDangerRadius,
 }
-TheSim = {FindEntities = function() error("hazard retreat must not scan the world") end}
+local overrides = {}
+TheSim = {FindEntities = function(_, _, _, _, radius)
+    assert(radius == Thermal.TEMPERATURE_SOURCE_RANGE, "only damage-triggered local temperature discovery is allowed")
+    scans = scans + 1
+    return overrides
+end}
 TheWorld = {state = {cycles = 1}, Map = {IsPassableAtPoint = function() return true end}}
 AllPlayers = {}
 local function entity(x, z)
@@ -199,6 +207,50 @@ assert(scans == before, "repeated heat events must share a throttled discovery")
 heat, inst = nil, entity()
 AI.OnHeatDamage(inst)
 assert(not AI.IsHazardRetreatActive(inst), "ambient overheating remains a temperature-management problem")
+
+local ward = entity(0, 0)
+local enabled, value = true, -20
+ward.prefab = "deerclopseyeball_sentryward"
+ward.components.temperatureoverrider = {
+    GetActiveRadius = function() return enabled and 35 or 0 end,
+    GetTemperature = function() return value end,
+}
+overrides = {ward}
+inst, now = entity(30, 0), 100
+inst.components.temperature = {current = -1, overheattemp = 70}
+AI.OnEnvironmentalDamage(inst, {amount = -1, cause = "cold"})
+assert(AI.IsHazardRetreatActive(inst) and inst._my_friend_hazard_radius == 35,
+    "sourceless cold damage must discover the actual active override, even beyond the old heat query range")
+action = assert(AI.GetHurtRetreatAction(inst))
+assert(action.pos.x == 36 and inst._my_friend_replan_requested)
+before = scans
+AI.OnEnvironmentalDamage(inst, {amount = -1, cause = "cold"})
+assert(scans == before, "cold notifications must be throttled")
+inst.pos = Vector3(36, 0, 0); action.success()
+now = 130
+assert(not AI.IsHazardRetreatActive(inst) and AI.IsHazardousPath(inst, inst.pos, ward.pos))
+before = scans
+for iteration = 1, 100 do AI.UpdateHazardRetreat(inst); AI.IsHazardRetreatActive(inst) end
+assert(scans == before, "remembered temperature areas need no periodic discovery")
+enabled = false
+assert(not AI.IsHazardousPath(inst, inst.pos, ward.pos))
+enabled, value = true, 20
+inst.pos, now = Vector3(30, 0, 0), 140
+AI.OnEnvironmentalDamage(inst, {amount = -1, cause = "cold"})
+assert(not AI.IsHazardRetreatActive(inst), "a harmless temperature override must not become a cold hazard")
+local shelter = entity(29, 0)
+shelter.components.temperatureoverrider = {GetActiveRadius = function() return 5 end,
+    GetTemperature = function() return 20 end}
+value, overrides, now = -20, {ward, shelter}, 142
+AI.OnEnvironmentalDamage(inst, {amount = -1, cause = "cold"})
+assert(not AI.IsHazardRetreatActive(inst), "the closest override wins, just as in the native temperature system")
+overrides, now = {ward}, 144
+value = 100
+AI.OnHeatDamage(inst)
+assert(AI.IsHazardRetreatActive(inst) and inst._my_friend_hazard_radius == 35)
+ward.removed = true
+assert(not AI.IsHazardRetreatActive(inst))
+overrides = {}
 
 -- Exercise the actual combat node and utility selector with an active attack
 -- and a still-valid cached combat snapshot. Contact must take over immediately.

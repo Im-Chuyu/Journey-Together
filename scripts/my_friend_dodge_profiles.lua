@@ -34,12 +34,14 @@ function M.Create(inst)
         scans[entity] = scans[entity] or {}
         local cached, now = scans[entity][range], GetTime()
         if cached == nil or now >= cached.until_time or distsq(p, cached.position) > 1 then
-            cached = {items = TheSim:FindEntities(p.x, 0, p.z, range, nil, {"INLIMBO", "DECOR"}),
+            local items = TheSim:FindEntities(p.x, 0, p.z, range, nil, {"INLIMBO", "DECOR"})
+            cached = {items = setmetatable(items, {__mode = "v"}), count = #items,
                 position = {x = p.x, z = p.z}, until_time = now + .25}
             scans[entity][range] = cached
         end
-        for _, candidate in ipairs(cached.items) do
-            if candidate ~= entity and candidate:IsValid() and fn(candidate) then return candidate end
+        for index = 1, cached.count do
+            local candidate = cached.items[index]
+            if candidate ~= nil and candidate ~= entity and candidate:IsValid() and fn(candidate) then return candidate end
         end
     end
     local EntityHelpers = {}
@@ -56,6 +58,7 @@ function M.Create(inst)
         return false
     end
     local profiles = {targetanimtable = {}, PC = {CanLocomote = function() return true end}}
+    function profiles:ResetScanCache() scans = setmetatable({}, {__mode = "k"}) end
     function profiles:GetSpeed() return M.Speed(inst) end
     function profiles:GetTargetCanHitRange(entity, other) return AttackRange(entity) + Radius(other) end
     local function calculate(entity, startframe, stopframe, _, data)

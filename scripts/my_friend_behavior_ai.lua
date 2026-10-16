@@ -490,12 +490,21 @@ local function GetContactHazard(inst)
     if point == nil then return end
     local source = inst._my_friend_hazard_source
     if source ~= nil then
-        local aura = source:IsValid() and source.components.aura or nil
-        if aura == nil or not aura.active then ClearHazard(inst) return end
-        for _, tag in ipairs(aura.auraexcludetags or {}) do
-            if inst:HasTag(tag) then ClearHazard(inst) return end
+        if source:IsValid() then
+            local aura = source.components.aura
+            if aura ~= nil and aura.active then
+                for _, tag in ipairs(aura.auraexcludetags or {}) do
+                    if inst:HasTag(tag) then ClearHazard(inst) return end
+                end
+                return source:GetPosition(), aura.radius
+            elseif aura == nil then
+                local radius = require("my_friend_survival_ai").GetTemperatureDangerRadius(inst, source,
+                    inst._my_friend_hazard_cause == "cold" or inst._my_friend_hazard_cause == "freezing")
+                if radius > 0 then return source:GetPosition(), radius end
+            end
         end
-        return source:GetPosition(), aura.radius
+        ClearHazard(inst)
+        return
     end
     if GetTime() >= (inst._my_friend_hazard_until or 0) then ClearHazard(inst) return end
     return point, inst._my_friend_hazard_radius
@@ -539,6 +548,7 @@ end
 local function RememberHazard(inst, source, cause, centre, distance)
     local current = inst:GetPosition()
     local aura = source ~= nil and source.components.aura or nil
+    local override = source ~= nil and source.components.temperatureoverrider or nil
     local point = inst._my_friend_hazard_position
     local radius = inst._my_friend_hazard_radius or M.HAZARD_RETREAT_RADIUS
     -- Unknown damage areas are remembered at the first contact, not recentered
@@ -547,6 +557,8 @@ local function RememberHazard(inst, source, cause, centre, distance)
         point, radius = centre, distance
     elseif aura ~= nil then
         point, radius = source:GetPosition(), aura.radius
+    elseif override ~= nil then
+        point, radius = source:GetPosition(), override:GetActiveRadius()
     elseif point == nil or inst._my_friend_hazard_source ~= nil
         or inst._my_friend_hazard_cause ~= cause
         or (current.x - point.x)^2 + (current.z - point.z)^2 > radius^2 then
@@ -554,7 +566,7 @@ local function RememberHazard(inst, source, cause, centre, distance)
     end
     inst._my_friend_hazard_position = Vector3(point.x, 0, point.z)
     inst._my_friend_hazard_radius = radius
-    inst._my_friend_hazard_source = centre == nil and aura ~= nil and source or nil
+    inst._my_friend_hazard_source = centre == nil and (aura ~= nil or override ~= nil) and source or nil
     inst._my_friend_hazard_cause = cause
     inst._my_friend_hazard_until = GetTime() + M.HAZARD_RETREAT_TIME
     M.StartHurtRetreat(inst, source or inst, radius + 1, point)
@@ -581,6 +593,11 @@ function M.OnHeatDamage(inst)
     local now = GetTime()
     if now < (inst._my_friend_heat_check_after or 0) then return end
     inst._my_friend_heat_check_after = now + 1
+    local override = require("my_friend_survival_ai").FindDamagingTemperatureSource(inst, false)
+    if override ~= nil then
+        RememberHazard(inst, override, "hot")
+        return
+    end
     local source = require("my_friend_survival_ai").FindDamagingHeatSource(inst)
     if source ~= nil then
         local radius = math.max(M.HAZARD_RETREAT_RADIUS, math.sqrt(DistanceSq(inst, source)) + 2)
@@ -588,12 +605,24 @@ function M.OnHeatDamage(inst)
     end
 end
 
+function M.OnColdDamage(inst)
+    if not IsAlive(inst) or inst:HasTag("playerghost") then return end
+    local now = GetTime()
+    if now < (inst._my_friend_cold_check_after or 0) then return end
+    inst._my_friend_cold_check_after = now + 1
+    local source = require("my_friend_survival_ai").FindDamagingTemperatureSource(inst, true)
+    if source ~= nil then RememberHazard(inst, source, "cold") end
+end
+
 function M.OnEnvironmentalDamage(inst, data)
     if not IsAlive(inst) or inst:HasTag("playerghost") or data == nil
         or (data.amount or 0) >= 0 then return end
+    if data.cause == "cold" or data.cause == "freezing" then
+        M.OnColdDamage(inst)
+        return
+    end
     if data.cause == "fire" or data.cause == "hot"
         or data.cause == "hunger" or data.cause == "starvation"
-        or data.cause == "cold" or data.cause == "freezing"
         or data.cause == "oldage" or data.cause == "health_as_oldage"
         or data.cause == "sanity" or data.cause == "sanityloss"
         or data.cause == "acidrain" or data.cause == "statue_attune" then return end

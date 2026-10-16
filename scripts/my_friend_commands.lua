@@ -166,7 +166,7 @@ function M.Register(command, handler)
     handlers[command:lower():match("^%s*(.-)%s*$")] = handler
 end
 
-local WORK = {chop = true, mine = true, harvest = true, hoe = true, water = true, tidy = true,
+local WORK = {chop = true, plant_trees = true, mine = true, harvest = true, hoe = true, water = true, tidy = true,
     seeds = true, equipment = true, dig_grass = true, dig_sapling = true, dig_stump = true,
     butterfly = true, fish = true, rockfruit = true, bullkelp = true, dry_meat = true,
     carry_statue = true, monkeytail = true, banana = true}
@@ -552,11 +552,11 @@ function M.Dispatch(friend, player, message, from_wheel)
     end
     if id == "backpack_drop" then friend._my_friend_drop_backpack = true return true end
     friend._my_friend_command = {id = id, player = player, started = GetTime(),
-        origin = player:GetPosition(),
+        origin = id == "plant_trees" and friend:GetPosition() or player:GetPosition(),
         deadline = GetTime() + (id == "seeds" and 120 or (id == "tidy" or id == "chop"
             or id == "explore" or id == "fish") and math.huge
             or (id == "rockfruit" or id == "bullkelp" or id == "dry_meat"
-                or id == "monkeytail" or id == "banana") and 300
+                or id == "monkeytail" or id == "banana" or id == "plant_trees") and 300
             or (id == "hoe" or id == "water" or id == "dig_grass"
                 or id == "dig_sapling" or id == "dig_stump") and 600 or 180),
         charge_pending = WORK[id] == true}
@@ -596,6 +596,7 @@ function M.Commit(friend, action)
         or work == ACTIONS.PICK or work == ACTIONS.PICKUP or work == ACTIONS.HARVEST
         or work == ACTIONS.HAMMER or work == ACTIONS.DIG
         or command.id == "butterfly" and work == ACTIONS.ATTACK or work == ACTIONS.FISH
+        or command.id == "plant_trees" and work == ACTIONS.DEPLOY
         or work == ACTIONS.TILL or work == ACTIONS.POUR_WATER_GROUNDTILE)
         and not action._my_friend_command_preparation then
         local affinity = friend.components.my_friend_affinity

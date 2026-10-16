@@ -16,11 +16,11 @@ local panel_ui_button = GetModConfigData("companion_panel_ui_button") == true
 local wheel_ui_button = GetModConfigData("command_wheel_ui_button") == true
 local Text = Language.Text
 
-local function IsActualCompanion(inst)
+local function IsActualCompanion(inst, allow_ghost)
     return inst ~= nil and inst:IsValid()
         and inst.isplayer == true
         and inst:HasTag("my_friend")
-        and not inst:HasTag("playerghost")
+        and (allow_ghost or not inst:HasTag("playerghost"))
         and Characters.IsCharacter(inst.prefab)
 end
 -- Every companion line is registered in STRINGS on both the server and the
@@ -30,6 +30,11 @@ Speech.BuildStrings()
 -- Rebuilt once every mod has loaded, so per character dialogue files are also
 -- picked up for characters added by mods that load after this one.
 AddSimPostInit(function() Speech.BuildStrings() end)
+AddSimPostInit(function()
+    if _G.TheWorld ~= nil and _G.TheWorld.ismastersim then
+        require("my_friend_discovery").Install(_G.EntityScript)
+    end
+end)
 local Home = require("my_friend_home")
 
 -- The companion is a real vanilla character at runtime, but the world save
@@ -493,7 +498,7 @@ end
 
 AddPrefabPostInitAny(function(inst)
     if inst ~= nil and inst:HasTag("backpack") then Backpacks.WrapBackpack(inst) end
-    require("my_friend_discovery").ConfigureEntity(inst)
+    require("my_friend_discovery").OnSpawn(inst)
 end)
 
 -- The remains marker is stored as a plain flag. Saving it through the
@@ -880,7 +885,7 @@ local function ConfigureFriend(inst)
     inst:ListenForEvent("healthdelta", function(_, data)
         if data == nil or (data.amount or 0) >= 0 then return end
         require("my_friend_equipment").Hurt(inst)
-        -- Hunger, freezing and food penalties need treatment, not random running.
+        -- Ambient survival damage remains separate from local area hazards.
         if data.cause == "fire" then
             require("my_friend_behavior_ai").OnFireDamage(inst)
         elseif data.cause == "hot" then
@@ -1067,9 +1072,9 @@ local function SpawnFriend(player, announce)
     end
 end
 
-local function CanManage(player, friend, ignore_distance, public_command)
+local function CanManage(player, friend, ignore_distance, public_command, allow_ghost)
     if player == nil or not player:IsValid() or friend == nil or not friend:IsValid()
-        or not IsActualCompanion(friend)
+        or not IsActualCompanion(friend, allow_ghost)
         or friend.components == nil or friend.components.inventory == nil
         or not require("my_friend_policy").IsLocalPlayer(player) then return false end
     local fx, _, fz = friend.Transform:GetWorldPosition()
@@ -1356,7 +1361,7 @@ AddModRPCHandler("MyFriends", "WheelCommand", function(player, friend, command_i
     end
     -- Dispatch owns command-specific permissions. In particular, a follow
     -- request must reach affinity even when someone else is the leader.
-    if type(command_id) ~= "string" or not CanManage(player, friend, true, true) then return end
+    if type(command_id) ~= "string" or not CanManage(player, friend, true, true, true) then return end
     require("my_friend_commands").DispatchWheel(friend, player, command_id)
 end)
 

@@ -38,9 +38,14 @@ local weapon = entity("spear_wathgrithr_lightning_charged")
 weapon.components = {finiteuses = {GetPercent = function() return percent end},
     rechargeable = {IsCharged = function() return charged end}, aoeweapon_lunge = {},
     aoespell = {CastSpell = function() casts = casts + 1; return true end}}
-local carrying = true
-inst.components.inventory = {GetEquippedItem = function() return weapon end,
-    ReferenceAllItems = function() return carrying and {weapon} or {} end}
+local carrying, hand, active, contents, inventory_scans = true, weapon, nil, {}, 0
+weapon.components.inventoryitem = {GetGrandOwner = function() return inst end}
+inst.components.inventory = {GetEquippedItem = function() return hand end,
+    GetActiveItem = function() return active end,
+    ReferenceAllItems = function()
+        inventory_scans = inventory_scans + 1
+        return carrying and {weapon} or contents
+    end}
 inst.components.health = {IsDead = function() return false end}
 local Wigfrid = require("my_friend_wathgrithr")
 Wigfrid.Configure(inst)
@@ -93,7 +98,7 @@ fruitdragon.HasTag = function(_, tag) return tag == "fireimmune" end
 assert(Wigfrid.CanLunge(inst, fruitdragon, weapon), "fire-immune targets cannot be ignited")
 assert(scans == 0, "lunge selection must not scan nearby vegetation")
 entities = {}; blocked = true; assert(not Wigfrid.CanLunge(inst, target, weapon)); blocked = false
-carrying, leader = false, entity("wilson", 1)
+carrying, hand, leader = false, nil, entity("wilson", 1)
 now = 5 * 480 - 1; Wigfrid.UpdateRequest(inst); assert(#said == 0)
 now = 5 * 480; Wigfrid.UpdateRequest(inst)
 assert(said[1][1] == "spear_request" and said[1][2] == "Astra")
@@ -105,4 +110,48 @@ now = now + 31; assert(not Wigfrid.Answer(inst, leader, "不可以"))
 local saved = {}; Wigfrid.Save(inst, saved)
 local restored = entity("wathgrithr"); Wigfrid.Load(restored, saved)
 assert(restored._my_friend_spear_ask_after == inst._my_friend_spear_ask_after)
-print("PASS: native lunge cycle, target-only electrocution ignition checks, no vegetation scans, durability and timed requests")
+
+local function inventory_changed()
+    inst._my_friend_discovery_inventory = (inst._my_friend_discovery_inventory or 0) + 1
+end
+for _, prefab in ipairs({"spear_wathgrithr_lightning", "spear_wathgrithr_lightning_charged"}) do
+    local spear, owner = entity(prefab), inst
+    spear.components.inventoryitem = {GetGrandOwner = function() return owner end}
+    for _, location in ipairs({"hand", "active", "inventory", "backpack"}) do
+        hand, active, contents = nil, nil, {}
+        if location == "hand" then hand = spear
+        elseif location == "active" then active = spear
+        else contents = {spear} end
+        inventory_changed()
+        now = inst._my_friend_spear_ask_after
+        local replies, deadline = #said, inst._my_friend_spear_ask_after
+        Wigfrid.UpdateRequest(inst)
+        assert(#said == replies and inst._my_friend_spear_ask_after == deadline,
+            prefab .. " in " .. location .. " suppresses requests without moving the five-day deadline")
+        local before = inventory_scans
+        for iteration = 1, 20 do now = now + 5; Wigfrid.UpdateRequest(inst) end
+        assert(#said == replies and inventory_scans == before,
+            "unchanged possession must not repeatedly traverse carried inventory")
+        hand, active, contents, owner = nil, nil, {spear}, nil
+        inventory_changed()
+        Wigfrid.UpdateRequest(inst)
+        assert(#said == replies + 1 and said[#said][1] == "spear_request",
+            "a transferred spear must no longer suppress an overdue request")
+        owner = inst
+    end
+end
+
+local replies = #said
+active = weapon
+inventory_changed()
+Wigfrid.UpdateRequest(inst)
+assert(inst._my_friend_spear_question == nil and #said == replies,
+    "receiving a spear during the reply window clears the pending question")
+inst._my_friend_spear_question = {player = leader, deadline = now + 30}
+assert(not Wigfrid.Answer(inst, leader, "不给") and inst._my_friend_spear_question == nil)
+assert(#said == replies, "a fulfilled request must not produce a refusal response")
+active, contents = nil, {}
+inventory_changed()
+Wigfrid.UpdateRequest(inst)
+assert(#said == replies, "losing a spear must not bypass the existing five-day cooldown")
+print("PASS: native lunge cycle, target-only ignition checks, durability, timed requests, carried spear suppression, cached possession and fulfilled question cleanup")

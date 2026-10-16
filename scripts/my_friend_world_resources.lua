@@ -91,6 +91,15 @@ local function Available(inst, entity, needs, blocked)
     return matched and products or nil
 end
 
+local function Resolve(guid)
+    local entity = (Ents or {})[guid]
+    return entity ~= nil and entity:IsValid() and entity or nil
+end
+
+local function SameReference(cache, key, value)
+    return cache.references[key] == value and (value ~= nil or not cache["had_" .. key])
+end
+
 function M.Find(inst, needs, blocked, context)
     local now = GetTime()
     local keys = {}
@@ -103,25 +112,28 @@ function M.Find(inst, needs, blocked, context)
     local inventory_revision = inst._my_friend_discovery_inventory or 0
     local revision = Discovery.ResourceVersion(needs)
     local season = TheWorld.state ~= nil and TheWorld.state.season or nil
+    local leader = Policy.GetLeader(inst)
     local cache = queries[key]
     if cache ~= nil and cache.revision == revision and cache.inventory == inventory_revision
-        and cache.context == context and cache.home == inst._my_friend_home
-        and cache.base == inst._my_friend_base and cache.leader == Policy.GetLeader(inst)
+        and cache.context == context and SameReference(cache, "home", inst._my_friend_home)
+        and SameReference(cache, "base", inst._my_friend_base) and SameReference(cache, "leader", leader)
         and cache.season == season
         and (cache.x - x)^2 + (cache.z - z)^2 < 8^2 and now < cache.retry_at then
-        if cache.target ~= nil and Available(inst, cache.target, needs, blocked) ~= nil then
-            if not Behaviour.IsTargetUnsafe(inst, cache.target) then return cache.target end
-            cache.target, cache.safety_after = nil, 0
+        local target = cache.target_guid ~= nil and Resolve(cache.target_guid) or nil
+        if target ~= nil and Available(inst, target, needs, blocked) ~= nil then
+            if not Behaviour.IsTargetUnsafe(inst, target) then return target end
+            cache.target_guid, cache.safety_after = nil, 0
         end
-        if cache.target == nil then
+        if cache.target_guid == nil then
             -- Threats may move away without changing a resource. Revisit only
             -- the remembered candidates, never rediscover the entire world.
             if now >= cache.safety_after then
-                for _, candidate in ipairs(cache.candidates) do
-                    if Available(inst, candidate.entity, needs, blocked) ~= nil
-                        and not Behaviour.IsTargetUnsafe(inst, candidate.entity) then
-                        cache.target = candidate.entity
-                        return cache.target
+                for _, guid in ipairs(cache.candidates) do
+                    local candidate = Resolve(guid)
+                    if candidate ~= nil and Available(inst, candidate, needs, blocked) ~= nil
+                        and not Behaviour.IsTargetUnsafe(inst, candidate) then
+                        cache.target_guid = guid
+                        return candidate
                     end
                 end
                 cache.safety_after = now + 2
@@ -129,7 +141,10 @@ function M.Find(inst, needs, blocked, context)
             return
         end
     end
-    local candidates = {}
+    -- Keep the full ordering, including distant safe alternatives. Parallel
+    -- numeric tables avoid one allocation and one strong entity reference per
+    -- candidate; only GUIDs survive this call.
+    local candidates, scores = {}, {}
     local function Consider(entity)
         local products = Available(inst, entity, needs, blocked)
         if products ~= nil and Policy.InRange(inst, entity) then
@@ -140,10 +155,10 @@ function M.Find(inst, needs, blocked, context)
                 for prefab in pairs(needs) do if products[prefab] ~= nil then value = value + 1 end end
                 local region = M.RegionAtPoint(p.x, p.z)
                 local tile = TheWorld.Map:GetTileAtPoint(p.x, 0, p.z)
-                candidates[#candidates + 1] = { entity = entity,
-                    score = math.sqrt((p.x - x)^2 + (p.z - z)^2)
+                candidates[#candidates + 1] = entity.GUID
+                scores[entity.GUID] = math.sqrt((p.x - x)^2 + (p.z - z)^2)
                         - value * 3 - M.RegionScore(region, needs) * .5
-                        - M.TileScore(tile, needs) * .1 }
+                        - M.TileScore(tile, needs) * .1
             end
         end
     end
@@ -160,19 +175,21 @@ function M.Find(inst, needs, blocked, context)
         -- One fallback for a new search episode. Empty results persist until
         -- the need, area, inventory, relevant resource or retry deadline changes.
         for _, entity in pairs(Ents or {}) do
-            Discovery.ConfigureEntity(entity)
             Consider(entity)
         end
     end
-    table.sort(candidates, function(a, b) return a.score < b.score end)
+    table.sort(candidates, function(a, b) return scores[a] < scores[b] end)
     local best
-    for _, candidate in ipairs(candidates) do
-        if not Behaviour.IsTargetUnsafe(inst, candidate.entity) then best = candidate.entity break end
+    for _, guid in ipairs(candidates) do
+        local candidate = Resolve(guid)
+        if candidate ~= nil and not Behaviour.IsTargetUnsafe(inst, candidate) then best = candidate break end
     end
-    queries[key] = {target = best, candidates = candidates, safety_after = now + 2,
+    queries[key] = {target_guid = best ~= nil and best.GUID or nil, candidates = candidates, safety_after = now + 2,
         revision = Discovery.ResourceVersion(needs), season = season,
-        inventory = inventory_revision, context = context, home = inst._my_friend_home,
-        base = inst._my_friend_base, leader = Policy.GetLeader(inst), x = x, z = z,
+        inventory = inventory_revision, context = context,
+        references = setmetatable({home = inst._my_friend_home, base = inst._my_friend_base, leader = leader}, {__mode = "v"}),
+        had_home = inst._my_friend_home ~= nil, had_base = inst._my_friend_base ~= nil, had_leader = leader ~= nil,
+        x = x, z = z,
         retry_at = Discovery.RetryAt(inst)}
     local count = 0
     for _ in pairs(queries) do count = count + 1 end

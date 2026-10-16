@@ -159,6 +159,29 @@ function M.IsSpear(item)
     return item ~= nil and item:IsValid() and SPEARS[item.prefab] == true
 end
 
+local function OwnedSpear(inst, item)
+    local inventoryitem = M.IsSpear(item) and item.components.inventoryitem or nil
+    return inventoryitem ~= nil and inventoryitem:GetGrandOwner() == inst
+end
+
+local function HasCarriedSpear(inst)
+    local inventory = inst.components.inventory
+    if inventory == nil then return false end
+    if OwnedSpear(inst, inventory:GetEquippedItem(EQUIPSLOTS.HANDS))
+        or OwnedSpear(inst, inventory:GetActiveItem()) then return true end
+    local revision = inst._my_friend_discovery_inventory or 0
+    if inst._my_friend_spear_inventory_revision == revision then
+        return inst._my_friend_has_carried_spear == true
+    end
+    local found = false
+    for _, item in ipairs(inventory:ReferenceAllItems()) do
+        if OwnedSpear(inst, item) then found = true break end
+    end
+    inst._my_friend_spear_inventory_revision = revision
+    inst._my_friend_has_carried_spear = found
+    return found
+end
+
 local function Weapon(inst)
     local inventory = inst.components.inventory
     local item = inventory ~= nil and inventory:GetEquippedItem(EQUIPSLOTS.HANDS) or nil
@@ -227,6 +250,10 @@ function M.Answer(inst, player, text)
     if inst.prefab ~= "wathgrithr" or pending == nil or pending.player ~= player
         or Policy.GetLeader(inst) ~= player or GetTime() >= pending.deadline
         or type(text) ~= "string" then return false end
+    if HasCarriedSpear(inst) then
+        inst._my_friend_spear_question = nil
+        return false
+    end
     local lower = text:lower():match("^%s*(.-)%s*$")
     local refused = false
     for _, word in ipairs({"不行", "不可以", "不给", "没材料", "没有", "不給", "沒材料", "沒有"}) do
@@ -250,10 +277,16 @@ function M.UpdateRequest(inst)
         or inst:HasTag("playerghost") or inst._my_friend_possess_parked
         or inst.components.health:IsDead() or inst._my_friend_under_threat
         or Policy.IsBusy(inst) then return end
-    if GetTime() < (inst._my_friend_spear_ask_after or 0) then return end
+    local due = GetTime() >= (inst._my_friend_spear_ask_after or 0)
+    if not due and inst._my_friend_spear_question == nil then return end
     local leader = Policy.GetLeader(inst)
     if not Policy.IsLocalPlayer(leader) or leader:HasTag("playerghost")
         or Policy.DistanceSq(inst, leader) > 20^2 then return end
+    if HasCarriedSpear(inst) then
+        inst._my_friend_spear_question = nil
+        return
+    end
+    if not due then return end
     local name = leader:GetDisplayName()
     if type(name) ~= "string" then return end
     if require("my_friend_dialogue").RandomReply(inst, "spear_request", name) then

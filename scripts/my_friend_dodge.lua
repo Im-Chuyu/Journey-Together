@@ -8,6 +8,7 @@ local function DistanceSq(a, b) return (a.x - b.x)^2 + (a.z - b.z)^2 end
 function M.Reset(inst)
     local state = inst._my_friend_dodge
     if state ~= nil then
+        if state.profiles ~= nil and state.profiles.ResetScanCache ~= nil then state.profiles:ResetScanCache() end
         state.target, state.row, state.enemypos, state.friendpos = nil, nil, nil, nil
         state.idle_since, state.lastframe = nil, nil
         state.monitoring, state.hold_attack = nil, nil

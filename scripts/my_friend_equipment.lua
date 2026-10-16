@@ -391,9 +391,7 @@ local function IsBroken(item)
         and (item:HasTag("broken")
             or finite ~= nil and finite:GetPercent() <= .15
             or fueled ~= nil and fueled:GetPercent() <= .15
-                and (item:HasTag("needssewing") or item.components.sewing ~= nil
-                    or item.prefab == "heatstone" or item.prefab == "heatrock")
-            or armor ~= nil and not armor.indestructible and (armor.condition or 0) <= 0)
+            or armor ~= nil and not armor.indestructible and armor:GetPercent() <= .15)
 end
 
 local function IsCombatHandItem(item)
@@ -401,18 +399,6 @@ local function IsCombatHandItem(item)
         and item.components.equippable ~= nil
         and item.components.equippable.equipslot == EQUIPSLOTS.HANDS
         and (item.components.weapon ~= nil or item.components.tool ~= nil)
-end
-
-local function IsOrdinaryThermalGear(item)
-    local components = item ~= nil and item.components or nil
-    if components == nil or components.equippable == nil
-        or not item:HasTag("needssewing")
-        or components.insulator == nil and components.waterproofer == nil then
-        return false
-    end
-    return not item:HasAnyTag("forgerepairable_lunarplant",
-        "forgerepairable_voidcloth", "forgerepairable_wagpunk_bits",
-        "forgerepairable_dreadstone")
 end
 
 local function IsUrgentRepairItem(item)
@@ -529,71 +515,94 @@ function M.GetDroppedCombatItemAction(inst)
 end
 
 local function FindRepairKit(inst, item, items)
-    local inventory = inst.components.inventory
-    if inventory == nil then return end
-    local forge = item.components ~= nil and item.components.forgerepairable or nil
-    local material = forge ~= nil and forge.repairmaterial or nil
-    if material == nil then
-        for _, candidate in ipairs({"lunarplant", "voidcloth", "wagpunk_bits", "dreadstone"}) do
-            if item:HasTag("forgerepairable_" .. candidate) then
-                material = candidate
-                break
+    local forge = item.components.forgerepairable
+    for _, kit in ipairs(items) do
+        local kitforge = kit.components ~= nil and kit.components.forgerepair or nil
+        local ii = kit:IsValid() and kit.components.inventoryitem or nil
+        if ii ~= nil and not ii.islockedinslot and ii:GetGrandOwner() == inst
+            and (kit.components.finiteuses == nil or kit.components.finiteuses:GetUses() > 0) then
+            if forge ~= nil and forge.repairable ~= false and kitforge ~= nil
+                and kitforge.repairmaterial ~= nil and forge.repairmaterial == kitforge.repairmaterial then
+                return kit, ACTIONS.REPAIR
+            end
+            if item.components.fueled ~= nil and item:HasTag("needssewing")
+                and kit.components.sewing ~= nil then
+                return kit, ACTIONS.SEW
             end
         end
     end
-    for _, kit in ipairs(items or inventory:ReferenceAllItems()) do
-        local kitforge = kit.components ~= nil and kit.components.forgerepair or nil
-        if material ~= nil and kitforge ~= nil
-            and kitforge.repairmaterial == material then
-            return kit, ACTIONS.REPAIR
-        end
-        -- The vanilla forge components mirror their material as tags. Keep
-        -- the tag fallback because broken Brightshade/Void items can rebuild
-        -- their repair component after reaching zero durability.
-        if material ~= nil and kitforge == nil
-            and kit:HasTag("forgerepair_" .. material)
-            and item:HasTag("forgerepairable_" .. material) then
-            return kit, ACTIONS.REPAIR
-        end
-        if material == nil and kit.components ~= nil and kit.components.sewing ~= nil
-            and (item:HasTag("needssewing") or IsOrdinaryThermalGear(item)
-                or item.prefab == "heatstone" or item.prefab == "heatrock") then
-            return kit, ACTIONS.SEW
+end
+
+local function CarriedForRepair(inst, item)
+    local ii = item ~= nil and item:IsValid() and item.components.inventoryitem or nil
+    return ii ~= nil and not ii.islockedinslot and ii:GetGrandOwner() == inst
+end
+
+local function NightmareEquipment(item)
+    local components = item.components
+    local fueled = components.fueled
+    return components.equippable ~= nil and components.pocketwatch == nil
+        and fueled ~= nil and fueled.accepting and FUELTYPE ~= nil
+        and (fueled.fueltype == FUELTYPE.NIGHTMARE or fueled.secondaryfueltype == FUELTYPE.NIGHTMARE)
+end
+
+local function NeedsNightmareFuel(inst, item)
+    if not NightmareEquipment(item) then return false end
+    local guid = inst._my_friend_equipment_refuel_guid
+    return guid == nil and item.components.fueled:GetPercent() < .1
+        or guid == item.GUID and item.components.fueled:GetPercent() <= .9
+end
+
+local function FindMaintenance(inst, item, items)
+    if not CarriedForRepair(inst, item) then return end
+    if IsBroken(item) then
+        local kit, action = FindRepairKit(inst, item, items)
+        if kit ~= nil then return kit, action, IsUrgentRepairItem(item) end
+    end
+    if NeedsNightmareFuel(inst, item) then
+        for _, fuel in ipairs(items) do
+            if CarriedForRepair(inst, fuel) and fuel.prefab == "nightmarefuel"
+                and fuel.components.fuel ~= nil and item.components.fueled:CanAcceptFuelItem(fuel) then
+                inst._my_friend_equipment_refuel_guid = item.GUID
+                local slot = item.components.equippable.equipslot
+                return fuel, ACTIONS.ADDFUEL, inst.components.inventory:GetEquippedItem(slot) == item
+            end
         end
     end
+end
+
+local function CheckRefuelTarget(inst, items)
+    local guid = inst._my_friend_equipment_refuel_guid
+    if guid == nil then return end
+    for _, item in ipairs(items) do
+        if item.GUID == guid and CarriedForRepair(inst, item) and NeedsNightmareFuel(inst, item) then return end
+    end
+    inst._my_friend_equipment_refuel_guid = nil
 end
 
 function M.GetRepairStatus(inst)
     if inst == nil or inst.components == nil or inst.components.inventory == nil
         or require("my_friend_policy").IsBusy(inst) then return false, false end
     local now = GetTime()
-    if now < (inst._my_friend_repair_status_until or 0) then
-        return inst._my_friend_repair_has == true, inst._my_friend_repair_urgent == true
-    end
     if now < (inst._my_friend_repair_after or 0) then
-        inst._my_friend_repair_status_until = now + REPAIR_STATUS_PERIOD
-        inst._my_friend_repair_has, inst._my_friend_repair_urgent = false, false
         return false, false
     end
+    local revision = inst._my_friend_discovery_inventory or 0
+    if inst._my_friend_repair_revision == revision
+        or now < (inst._my_friend_repair_status_until or 0) then
+        return inst._my_friend_repair_has == true, inst._my_friend_repair_urgent == true
+    end
     local items = inst.components.inventory:ReferenceAllItems()
+    CheckRefuelTarget(inst, items)
     local has, urgent = false, false
     for _, item in ipairs(items) do
-        if IsBroken(item) and item.components ~= nil
-            and (item.components.equippable ~= nil or item.components.armor ~= nil
-                or item.components.insulator ~= nil or item.components.forgerepairable ~= nil
-                or item:HasTag("forgerepairable_lunarplant")
-                or item:HasTag("forgerepairable_wagpunk_bits")
-                or item:HasTag("forgerepairable_dreadstone")
-                or item:HasTag("forgerepairable_voidcloth")
-                or item:HasTag("needssewing")
-                or item.prefab == "heatstone" or item.prefab == "heatrock") then
-            local kit = FindRepairKit(inst, item, items)
-            if kit ~= nil then
-                has = true
-                urgent = urgent or IsUrgentRepairItem(item)
-            end
+        local kit, _, important = FindMaintenance(inst, item, items)
+        if kit ~= nil then
+            has = true
+            urgent = urgent or important
         end
     end
+    inst._my_friend_repair_revision = revision
     inst._my_friend_repair_status_until = now + REPAIR_STATUS_PERIOD
     inst._my_friend_repair_has, inst._my_friend_repair_urgent = has, urgent
     return has, urgent
@@ -603,31 +612,41 @@ function M.GetRepairAction(inst)
     if inst == nil or inst.components == nil or inst.components.inventory == nil
         or require("my_friend_policy").IsBusy(inst)
         or GetTime() < (inst._my_friend_repair_after or 0) then return end
-    local ordinary
+    local target, material, kind
     local items = inst.components.inventory:ReferenceAllItems()
+    CheckRefuelTarget(inst, items)
     for _, item in ipairs(items) do
-        if IsBroken(item) and item.components ~= nil
-            and (item.components.equippable ~= nil or item.components.armor ~= nil
-                or item.components.insulator ~= nil or item.components.forgerepairable ~= nil
-                or item:HasTag("forgerepairable_lunarplant")
-                or item:HasTag("forgerepairable_wagpunk_bits")
-                or item:HasTag("forgerepairable_dreadstone")
-                or item:HasTag("forgerepairable_voidcloth")
-                or item:HasTag("needssewing")
-                or item.prefab == "heatstone" or item.prefab == "heatrock") then
-            local kit, action_id = FindRepairKit(inst, item, items)
-            if kit ~= nil and action_id ~= nil then
-                local action = BufferedAction(inst, item, action_id, kit)
-                action:AddSuccessAction(function()
-                    if inst:IsValid() then inst._my_friend_repair_after = GetTime() + 2 end
-                    if inst:IsValid() then inst._my_friend_repair_status_until = 0 end
-                end)
-                if IsUrgentRepairItem(item) then return action end
-                ordinary = ordinary or action
-            end
+        local kit, action_id, urgent = FindMaintenance(inst, item, items)
+        if kit ~= nil and action_id ~= nil then
+            if target == nil or urgent then target, material, kind = item, kit, action_id end
+            if urgent then break end
         end
     end
-    return ordinary
+    if target == nil then return end
+    local action = BufferedAction(inst, target, kind, material)
+    action.validfn = function()
+        if not CarriedForRepair(inst, target) or not CarriedForRepair(inst, material) then return false end
+        if kind == ACTIONS.ADDFUEL then
+            return NeedsNightmareFuel(inst, target) and material.components.fuel ~= nil
+                and target.components.fueled:CanAcceptFuelItem(material)
+        end
+        return IsBroken(target) and FindRepairKit(inst, target, {material}) == material
+    end
+    action:AddSuccessAction(function()
+        if not inst:IsValid() then return end
+        inst._my_friend_repair_after = GetTime() + (kind == ACTIONS.ADDFUEL and .15 or 2)
+        inst._my_friend_repair_status_until, inst._my_friend_repair_revision = 0, nil
+        if inst._my_friend_equipment_refuel_guid == target.GUID
+            and (not CarriedForRepair(inst, target) or not NeedsNightmareFuel(inst, target)) then
+            inst._my_friend_equipment_refuel_guid = nil
+        end
+    end)
+    action:AddFailAction(function()
+        if not inst:IsValid() then return end
+        inst._my_friend_repair_after = GetTime() + 2
+        inst._my_friend_repair_status_until, inst._my_friend_repair_revision = 0, nil
+    end)
+    return action
 end
 
 function M.HasRepairAction(inst)

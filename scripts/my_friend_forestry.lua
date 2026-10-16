@@ -79,27 +79,29 @@ end
 function M.Points(plot, spacing)
     spacing = spacing or M.SPACING
     local points = {}
-    for row = 0, 4 do
-        for col = 0, 4 do
-            -- Leave a small central aisle in a square 5x5 layout: 20 positions.
-            if not (row == 2 and col >= 1 and col <= 3
+    local count = plot.half_size ~= nil and math.floor(plot.half_size * 2 / spacing) + 1 or 5
+    local offset = (count - 1) / 2
+    for row = 0, count - 1 do
+        for col = 0, count - 1 do
+            if plot.half_size ~= nil or not (row == 2 and col >= 1 and col <= 3
                 or col == 2 and (row == 1 or row == 3)) then
-                points[#points + 1] = Vector3(plot.x + (col - 2) * spacing,
-                    0, plot.z + (row - 2) * spacing)
+                points[#points + 1] = Vector3(plot.x + (col - offset) * spacing,
+                    0, plot.z + (row - offset) * spacing)
             end
         end
     end
     return points
 end
 
-function M.Trees(inst)
+function M.Trees(inst, plot)
     local state = State(inst)
-    local plot = state ~= nil and state.forest or nil
+    plot = plot or state ~= nil and state.forest or nil
     local trees = {}
     if plot == nil then return trees end
-    for _, tree in ipairs(TheSim:FindEntities(plot.x, 0, plot.z, 15,
+    local range = plot.half_size ~= nil and math.sqrt(2) * plot.half_size + 2 or 15
+    for _, tree in ipairs(TheSim:FindEntities(plot.x, 0, plot.z, range,
         nil, {"INLIMBO", "FX"})) do
-        if IsTree(tree) and M.InPlot(inst, tree) then trees[#trees + 1] = tree end
+        if IsTree(tree) and (plot.half_size ~= nil or Contains(plot, tree:GetPosition())) then trees[#trees + 1] = tree end
     end
     return trees
 end
@@ -287,6 +289,24 @@ function M.EnsurePlot(inst, base, passable, safe)
     end
 end
 
+function M.SelectPlantPoint(inst, item, plot, trees, passable)
+    plot.blocked = plot.blocked or {}
+    local tried = false
+    for index, point in ipairs(plot.points or M.Points(plot, plot.spacing)) do
+        local occupied = false
+        for _, tree in ipairs(trees) do
+            if Distance(point, tree:GetPosition()) < 4 then occupied = true break end
+        end
+        if not occupied and GetTime() >= (plot.blocked[index] or 0) then
+            tried = true
+            if passable(point) and item.components.deployable:CanDeploy(point, nil, inst, 0) then
+                return point, index, true
+            end
+        end
+    end
+    return nil, nil, tried
+end
+
 function M.FindPlantPoint(inst, item, passable)
     local plot = State(inst).forest
     if plot == nil then return end
@@ -295,22 +315,11 @@ function M.FindPlantPoint(inst, item, passable)
     if #work > 0 then return end
     local trees = M.Trees(inst)
     if #trees >= M.TREE_LIMIT then return end
-    plot.blocked = plot.blocked or {}
-    local tried = false
-    for index, point in ipairs(M.Points(plot)) do
-        local occupied = false
-        for _, tree in ipairs(trees) do
-            if Distance(point, tree:GetPosition()) < 4 then occupied = true break end
-        end
-        if not occupied and GetTime() >= (plot.blocked[index] or 0) then
-            tried = true
-            if passable(point) and item.components.deployable:CanDeploy(point, nil, inst, 0) then
-                plot.unplantable_since = nil
-                return point, index
-            end
-        end
-    end
-    if tried then
+    local point, index, tried = M.SelectPlantPoint(inst, item, plot, trees, passable)
+    if point ~= nil then
+        plot.unplantable_since = nil
+        return point, index
+    elseif tried then
         plot.unplantable_since = plot.unplantable_since or GetTime()
         if GetTime() - plot.unplantable_since >= 30 then M.RejectPlot(inst, plot) end
     end

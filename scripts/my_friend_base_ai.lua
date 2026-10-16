@@ -3723,6 +3723,9 @@ function M.GetCommandAction(inst)
         return
     end
     local id = command.id
+    if id == "plant_trees" then
+        return require("my_friend_command_plant").GetAction(inst, command)
+    end
     if id == "butterfly" then
         return require("my_friend_command_butterfly").GetAction(inst, command)
     end
