@@ -31,7 +31,7 @@ local function IsValidThreat(inst, target)
     local self_defending = BehaviourAI.IsThreat(inst, target)
         or BehaviourAI.IsPriorityEngaged(inst, target)
     local engaged = assisting or self_defending
-    return require("my_friend_combat_rules").CanAttack(target)
+    return require("my_friend_combat_rules").CanAttack(target, inst)
         and (self_defending or player_attack_target
             or pending_player_attack)
         and (engaged or Policy.InRange(inst, target, 7))

@@ -384,7 +384,9 @@ end
 function M.IsPriorityEngaged(inst, target)
     local rules = require("my_friend_combat_rules")
     local active = rules.IsActiveDefenceWorld()
-    if not IsAlive(target) or target == inst or target:HasAnyTag("player", "my_friend", "structure", "wall")
+    if rules.IsFollowTargetPaused(inst, target) or rules.IsBeyondFollowCombatRange(inst)
+        or not IsAlive(target) or target == inst
+        or target:HasAnyTag("player", "my_friend", "structure", "wall")
         or not (active or rules.IsPriorityEnemy(target)) then return false end
     if M.IsThreat(inst, target) then return DistanceSq(inst, target) <= M.ASSIST_RANGE^2 end
     local combat = target.components ~= nil and target.components.combat or nil
@@ -395,6 +397,9 @@ function M.IsPriorityEngaged(inst, target)
 end
 
 function M.FindAssistTarget(inst)
+    local rules = require("my_friend_combat_rules")
+    rules.IsFollowTargetPaused(inst)
+    if rules.IsBeyondFollowCombatRange(inst) then inst._my_friend_assist_scan = nil return end
     local leader = Policy.GetLeader(inst)
     if leader == nil or not Policy.InRange(inst, inst, M.ASSIST_RANGE) then return end
     local now = GetTime()
@@ -405,10 +410,12 @@ function M.FindAssistTarget(inst)
     if cached ~= nil and cached.leader == leader and now < cached.untiltime then
         local recent = M.GetLeaderAttackCount(inst, cached.target) > 0
             or action_target == cached.target
-        return recent and IsAlive(cached.target) and cached.target or nil
+        return recent and IsAlive(cached.target) and not rules.IsFollowTargetPaused(inst, cached.target)
+            and cached.target or nil
     end
     local function ValidTarget(entity)
         return entity ~= nil and entity ~= inst and entity ~= leader and IsAlive(entity)
+            and not rules.IsFollowTargetPaused(inst, entity)
             and not entity:HasAnyTag("player", "my_friend", "structure", "wall")
             and entity.components ~= nil and entity.components.combat ~= nil
             and Policy.InRange(inst, entity, M.ASSIST_RANGE)
@@ -441,7 +448,9 @@ end
 function M.StartHurtRetreat(inst, source, fire_distance, source_position)
     if source == nil or not source:IsValid() or not IsAlive(inst)
         or inst:HasTag("playerghost") then return end
-    if fire_distance == nil and (require("my_friend_combat_rules").IsPriorityEnemy(source)
+    if fire_distance == nil and (require("my_friend_combat_rules").IsBeyondFollowCombatRange(inst)
+        or require("my_friend_combat_rules").IsFollowTargetPaused(inst, source)
+        or require("my_friend_combat_rules").IsPriorityEnemy(source)
         or M.IsPriorityEngaged(inst, source)) then return end
     local now = GetTime()
     source_position = source_position or source:GetPosition()
@@ -644,6 +653,13 @@ function M.OnEnvironmentalDamage(inst, data)
     RememberHazard(inst, source, data.cause)
 end
 
+function M.UpdateFollowCombatReturn(inst)
+    if inst._my_friend_hurt_fire_distance == nil
+        and require("my_friend_combat_rules").IsBeyondFollowCombatRange(inst) then
+        inst._my_friend_hurt_until, inst._my_friend_hurt_evade_until = nil, nil
+    end
+end
+
 function M.UpdateHazardRetreat(inst)
     local point, radius = GetContactHazard(inst)
     if point == nil then return end
@@ -780,11 +796,14 @@ function M.GetLeaderAttackCount(inst, target)
 end
 
 function M.FindThreat(inst, range)
+    local rules = require("my_friend_combat_rules")
+    rules.IsFollowTargetPaused(inst)
+    if rules.IsBeyondFollowCombatRange(inst) then inst._my_friend_threat_scan = nil return end
     local now = GetTime()
     local wanted_range = range or M.THREAT_RANGE
     local cached = inst._my_friend_threat_scan
     if cached ~= nil and cached.range == wanted_range and now < cached.untiltime
-        and (cached.target == nil or IsAlive(cached.target)) then
+        and (cached.target == nil or IsAlive(cached.target) and not rules.IsFollowTargetPaused(inst, cached.target)) then
         return cached.target
     end
     local x, y, z = inst.Transform:GetWorldPosition()
@@ -794,7 +813,7 @@ function M.FindThreat(inst, range)
         local ignored_attacker = GetTime() < (inst._my_friend_hurt_until or 0)
             and entity == inst._my_friend_hurt_attacker
             and entity:HasTag("player")
-        if not ignored_attacker then
+        if not ignored_attacker and not rules.IsFollowTargetPaused(inst, entity) then
             local attacks = M.GetLeaderAttackCount(inst, entity)
             if not entity:HasTag("player")
                 and (M.IsThreat(inst, entity) or attacks > 0 or M.IsPriorityEngaged(inst, entity)) then
@@ -830,8 +849,9 @@ function M.FindEscapeThreat(inst, range)
     local target = cached ~= nil and cached.escape_target or nil
     -- Aggro can switch during the scan cache lifetime. Recheck the cached
     -- attacker, and also notice if the combat candidate now targets us.
-    if M.IsThreat(inst, target) then return target end
-    if M.IsThreat(inst, candidate) then return candidate end
+    local rules = require("my_friend_combat_rules")
+    if M.IsThreat(inst, target) and not rules.IsFollowTargetPaused(inst, target) then return target end
+    if M.IsThreat(inst, candidate) and not rules.IsFollowTargetPaused(inst, candidate) then return candidate end
 end
 
 local function HasWorkingArmor(item)
@@ -1031,7 +1051,7 @@ function M.EstimateFight(friendhealth, enemyhealth, outgoing, incoming,
 end
 
 function M.CanCounterAttack(inst, target)
-    if not require("my_friend_combat_rules").CanAttack(target)
+    if not require("my_friend_combat_rules").CanAttack(target, inst)
         or not IsAlive(target) or not IsAlive(inst)
         or inst.components.inventory == nil or inst.components.combat == nil then
         return false
@@ -1122,7 +1142,7 @@ end
 -- weapon/armour scoring out of that loop; ownership and disarm still update now.
 function M.CanContinueCombat(inst, target)
     if not IsAlive(inst) or not IsAlive(target)
-        or not require("my_friend_combat_rules").CanAttack(target)
+        or not require("my_friend_combat_rules").CanAttack(target, inst)
         or inst.components.inventory == nil or inst.components.combat == nil
         or require("my_friend_equipment").FindDroppedCombatItem(inst) ~= nil then
         if inst ~= nil then inst._my_friend_combat_check = nil end

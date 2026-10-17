@@ -871,6 +871,7 @@ function MyFriendBrain:OnStart()
         if leader == nil and not ghost then BaseAI.EnsureBase(inst) end
         BehaviourAI.UpdateFireRetreat(inst)
         BehaviourAI.UpdateHazardRetreat(inst)
+        BehaviourAI.UpdateFollowCombatReturn(inst)
         local hurt_evade = GetTime() < (inst._my_friend_hurt_evade_until or 0)
         local threat = not ghost and not hurt_evade
             and BehaviourAI.FindThreat(inst) or nil

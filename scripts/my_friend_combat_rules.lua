@@ -2,6 +2,80 @@ local M = {}
 local SHADOWS = {terrorbeak = true, crawlinghorror = true, nightmarebeak = true,
     nightmareterror = true}
 M.ACTIVE_DEFENCE_BEFORE_DAY = 500
+M.FOLLOW_DISENGAGE_TIME = 5
+M.FOLLOW_COMBAT_RANGE = 32
+
+function M.IsBeyondFollowCombatRange(inst)
+    if inst == nil then return false end
+    local policy = require("my_friend_policy")
+    local leader = policy.GetLeader(inst)
+    return leader ~= nil and not policy.IsRoaming(inst)
+        and policy.DistanceSq(inst, leader) > M.FOLLOW_COMBAT_RANGE^2
+end
+
+function M.IsFollowTargetPaused(inst, target)
+    local state = inst ~= nil and inst._my_friend_follow_combat_pause or nil
+    if state == nil then return false end
+    local leader = require("my_friend_policy").GetLeader(inst)
+    if GetTime() >= state.until_time or leader == nil or leader.GUID ~= state.leader_guid then
+        inst._my_friend_follow_combat_pause = nil
+        inst._my_friend_threat_scan, inst._my_friend_assist_scan, inst._my_friend_combat_check = nil, nil, nil
+        return false
+    end
+    return target ~= nil and state.targets[target.GUID] == true
+end
+
+function M.DisengageForFollow(inst, player)
+    M.IsFollowTargetPaused(inst)
+    local previous = inst._my_friend_follow_combat_pause
+    local targets = previous ~= nil and previous.leader_guid == player.GUID and previous.targets or {}
+    local function Remember(target)
+        if type(target) == "table" and target.IsValid ~= nil and target:IsValid()
+            and target.GUID ~= nil and target.components ~= nil
+            and target.components.combat ~= nil and target.components.health ~= nil
+            and not target.components.health:IsDead() and not target:HasAnyTag("player", "my_friend") then
+            targets[target.GUID] = true
+        end
+    end
+    local combat = inst.components.combat
+    if combat ~= nil then Remember(combat.target) end
+    Remember(inst._my_friend_assist_target)
+    Remember(inst._my_friend_combat_equipment_target)
+    local root = inst.brain ~= nil and inst.brain.bt ~= nil and inst.brain.bt.root or nil
+    local function RememberNode(node)
+        if node == nil then return end
+        Remember(node.target)
+        for _, child in ipairs(node.children or {}) do RememberNode(child) end
+    end
+    if root ~= nil and root.active ~= nil and (root.active.id == "combat" or root.active.id == "assist") then
+        RememberNode(root.active.node)
+    end
+    local action = inst.GetBufferedAction ~= nil and inst:GetBufferedAction() or nil
+    if action ~= nil and action.action == ACTIONS.ATTACK then Remember(action.target) end
+    if GetTime() < (inst._my_friend_hurt_evade_until or 0) and inst._my_friend_hurt_fire_distance == nil then
+        Remember(inst._my_friend_hurt_attacker)
+    end
+    inst._my_friend_follow_combat_pause = next(targets) ~= nil
+        and {leader_guid = player.GUID, targets = targets, until_time = GetTime() + M.FOLLOW_DISENGAGE_TIME} or nil
+    if M.IsFollowTargetPaused(inst, inst._my_friend_hurt_attacker) and inst._my_friend_hurt_fire_distance == nil then
+        inst._my_friend_hurt_until, inst._my_friend_hurt_evade_until = nil, nil
+    end
+    if combat ~= nil then combat:SetTarget(nil) end
+    inst._my_friend_assist_target, inst._my_friend_assist_started = nil, nil
+    inst._my_friend_assist_candidate, inst._my_friend_assist_until = nil, nil
+    inst._my_friend_threat_scan, inst._my_friend_assist_scan, inst._my_friend_combat_check = nil, nil, nil
+    inst._my_friend_combat_hand_item, inst._my_friend_combat_hand_until = nil, nil
+    inst._my_friend_combat_equipment_target = nil
+    inst._my_friend_under_threat, inst._my_friend_can_fight = false, false
+    if action ~= nil and action.action == ACTIONS.ATTACK then
+        action._my_friend_cancelled = true
+        inst:ClearBufferedAction()
+        local locomotor = inst.components.locomotor
+        if locomotor ~= nil and locomotor.bufferedaction == action then locomotor:Clear() end
+    end
+    inst._my_friend_replan_requested = true
+    if inst.brain ~= nil then inst.brain:ForceUpdate() end
+end
 
 function M.IsActiveDefenceWorld()
     local cycles = TheWorld ~= nil and TheWorld.state ~= nil and TheWorld.state.cycles or nil
@@ -14,8 +88,10 @@ function M.IsPriorityEnemy(target)
         and not target:HasAnyTag("player", "my_friend")
 end
 
-function M.CanAttack(target)
+function M.CanAttack(target, inst)
     return target ~= nil and target:IsValid()
+        and not M.IsBeyondFollowCombatRange(inst)
+        and not M.IsFollowTargetPaused(inst, target)
         and (target.prefab ~= "lunarthrall_plant" or target.tired == true)
 end
 
@@ -36,7 +112,7 @@ function M.Configure(inst)
     combat._my_friend_target_guard = true
     local can = combat.CanTarget
     combat.CanTarget = function(self, target, ...)
-        if target ~= nil and not M.CanAttack(target) then return false end
+        if target ~= nil and not M.CanAttack(target, self.inst) then return false end
         return can(self, target, ...)
     end
 end

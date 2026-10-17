@@ -202,7 +202,7 @@ end
 
 function M.CanLunge(inst, target, weapon)
     if inst.prefab ~= "wathgrithr" or not M.IsSpear(weapon)
-        or weapon ~= Weapon(inst) or not Rules.CanAttack(target)
+        or weapon ~= Weapon(inst) or not Rules.CanAttack(target, inst)
         or target.components.health == nil or target.components.health:IsDead()
         or target.components.combat == nil or Rules.BurnsWhenElectrocuted(target)
         or Policy.IsBusy(inst) and (inst.sg == nil or inst.sg.currentstate.name ~= "combat_lunge_start")

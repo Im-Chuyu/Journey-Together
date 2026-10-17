@@ -12,6 +12,7 @@ local leader, friend
 package.loaded.my_friend_policy = {
     GetLeader = function() return leader end,
     IsLocalPlayer = function(p) return p == leader and p ~= nil end,
+    IsRoaming = function() return false end,
     InRange = function() return true end,
     DistanceSq = function() return 4 end,
 }
