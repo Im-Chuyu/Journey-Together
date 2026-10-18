@@ -259,7 +259,7 @@ function RideToLeader:CheckArrivalDecision(leader)
         inst._my_friend_mount_keep_riding = true
         return
     end
-    if Platforms.NeedsCrossing(inst, leader) then
+    if Platforms.NeedsCrossing(inst, leader) or Platforms.NeedsBoardingStep(inst) then
         inst._my_friend_mount_keep_riding = nil
         return
     end
@@ -305,16 +305,25 @@ end
 
 function RideToLeader:FollowMounted(leader)
     local inst, now = self.inst, GetTime()
-    if inst.sg ~= nil and inst.sg:HasStateTag("busy") then return end
-    if Platforms.FollowCrossing(inst, leader) then
+    if inst.sg ~= nil and (inst.sg:HasStateTag("busy") or inst.sg:HasStateTag("jumping")) then return end
+    local embarker = inst.components.embarker
+    if embarker ~= nil and embarker:HasDestination() then return end
+    if inst._my_friend_follow_route_reset then
+        Platforms.ResetRoute(inst)
+        inst._my_friend_follow_route_reset = nil
         self.patrol_target, self.next_patrol = nil, nil
         self.chasing = true
+    end
+    Platforms.ResetAfterPlatformChange(inst, leader)
+    if Platforms.FollowBoardingStep(inst, leader) then
+        self.patrol_target, self.next_patrol = nil, nil
         return
     end
+    local different_platforms = Platforms.NeedsCrossing(inst, leader)
     local origin, position = leader:GetPosition(), inst:GetPosition()
     local distance = Policy.DistanceSq(inst, leader)
-    if distance > M.DISMOUNT_DISTANCE_SQ then self.chasing = true end
-    if distance <= M.PATROL_MIN_DISTANCE^2 then self.chasing = false end
+    if different_platforms or distance > M.DISMOUNT_DISTANCE_SQ then self.chasing = true end
+    if not different_platforms and distance <= M.PATROL_MIN_DISTANCE^2 then self.chasing = false end
     local point
     if self.chasing then
         self.patrol_target = nil
@@ -335,11 +344,13 @@ function RideToLeader:FollowMounted(leader)
         end
         point = self.patrol_target
     end
-    if point ~= nil and inst:GetCurrentPlatform() == nil then
+    local platform_move = different_platforms or inst:GetCurrentPlatform() ~= nil
+    if point ~= nil and not platform_move then
         point = Navigation.GetSteeringPoint(inst, point, true)
     end
     if point ~= nil then
-        inst.components.locomotor:GoToPoint(point, nil, true)
+        if platform_move then Platforms.Run(inst, point)
+        else inst.components.locomotor:GoToPoint(point, nil, true) end
     else
         inst.components.locomotor:Stop()
     end

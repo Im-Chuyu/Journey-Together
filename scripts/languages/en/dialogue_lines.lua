@@ -21,7 +21,15 @@
 
 local M = {}
 
+M.combat_encouragement_words = {"you can do it", "you got this", "you've got this", "keep it up", "don't give up", "i believe in you", "come on", "well done"}
+
 M.lines = {
+    combat_encouraged = {
+        {"Thanks, {1}! I'll do my best!"},
+        {"Your encouragement helps. I've got this!"},
+        {"I hear you, {1}! I'll watch for an opening."},
+        {"I'll stay careful and give it my best shot."},
+    },
     pet_feed = {
     -- fn1
         {"Hungry, little one? Here, have a bite."},

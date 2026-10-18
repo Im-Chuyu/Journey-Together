@@ -10,9 +10,18 @@ function M.IsProtected(food)
 end
 
 function M.CanCook(inst)
-    return require("my_friend_policy").GetLeader(inst) == nil
-        and not require("my_friend_home").NoConstruction(inst)
-        and not require("my_friend_base_ai").IsComplete(inst)
+    local health = inst ~= nil and inst.components ~= nil and inst.components.health or nil
+    return health ~= nil and not health:IsDead() and not inst:HasTag("playerghost")
+end
+
+-- Roasting and crock-pot recipe selection have different purposes. Do not
+-- apply roasting's health/freshness filter to an entire pot or to base mode.
+function M.NeedsRoasting(inst, item, health)
+    if item == nil or item.components == nil or item.components.cookable == nil
+        or item.components.edible == nil or M.IsProtected(item) then return false end
+    if health == nil then health = require("my_friend_food_ai").GetFoodDeltas(inst, item) end
+    local perish = item.components.perishable
+    return health < 0 or perish ~= nil and perish:GetPercent() < (TUNING.PERISH_STALE or .2)
 end
 
 function M.IsStale(item)
@@ -52,6 +61,7 @@ function M.CookAction(act, original)
     if inst ~= nil and inst:HasTag("my_friend") then
         if not M.CanCook(inst) then return false end
         if act.invobject ~= nil and M.IsProtected(act.invobject) then return false end
+        if act.invobject ~= nil and not M.NeedsRoasting(inst, act.invobject) then return false end
         local target = act.target
         local c = target ~= nil and target.components ~= nil and target.components.container or nil
         if c ~= nil and target.components.stewer ~= nil then

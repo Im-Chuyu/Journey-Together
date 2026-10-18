@@ -6,6 +6,7 @@ can add shared files and optional character-specific files:
 ```text
 scripts/languages/<code>/command_words.lua
 scripts/languages/<code>/dialogue_lines.lua
+scripts/languages/<code>/games.lua
 scripts/languages/<code>/characters/<character>.lua
 scripts/languages/<code>/characters/<character>_command_words.lua
 ```
@@ -30,3 +31,7 @@ a pull request. Do not edit
 `modmain.lua`, AI behavior files, or the language loader for a translation.
 The maintainer reviews and merges the files, then adds the language option to
 `modinfo.lua` before releasing it in the mod.
+
+`games.lua` contains board-game UI labels and server error reasons. Preserve
+all keys and `%s` formatting placeholders. Missing translations fall back to
+Chinese. Game identifiers such as `gomoku` remain unchanged.

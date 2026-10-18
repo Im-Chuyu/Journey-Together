@@ -27,7 +27,7 @@ inst.components.eater = {caneat = {"MEAT"}, preferseating = {"MEAT"},
     healthabsorption = 1, hungerabsorption = 1, sanityabsorption = 1,
     CanEat = function(_, item) return item.components.edible.foodtype == "MEAT" end,
     PrefersToEat = function() return true end, DoFoodEffects = function() return true end}
-inst.components.health = {currenthealth = 150, maxhealth = 150}
+inst.components.health = {currenthealth = 150, maxhealth = 150, IsDead = function() return false end}
 inst.components.hunger = {current = 60, max = 150, GetPercent = function() return .4 end}
 inst.components.sanity = {current = 100, max = 200}
 local function item(name, freshness, foodtype, h, f, s)
@@ -42,9 +42,9 @@ local function item(name, freshness, foodtype, h, f, s)
     return value
 end
 assert(Rules.CanCook(inst))
-leader = {}; assert(not Rules.CanCook(inst)); leader = nil
-manual = true; assert(not Rules.CanCook(inst)); manual = false
-complete = true; assert(not Rules.CanCook(inst)); complete = false
+leader = {}; assert(Rules.CanCook(inst)); leader = nil
+manual = true; assert(Rules.CanCook(inst)); manual = false
+complete = true; assert(Rules.CanCook(inst)); complete = false
 for _, name in ipairs({"royal_jelly", "royaljelly", "mandrake", "tallbirdegg", "deerclops_eyeball", "minotaurhorn"}) do
     local food = item(name, 1, "MEAT", 40, 75, 50)
     assert(Food.Evaluate(inst, food) == nil and Food.CommandScore(inst, food) == nil, name)
@@ -93,8 +93,8 @@ assert(Food.FindBestFood(inst) == jerky, "ordinary food remains available")
 function inst:HasTag(tag) return tag == "my_friend" end
 local calls = 0
 local original = function() calls = calls + 1; return true end
-leader = {}; assert(not Rules.CookAction({doer = inst}, original) and calls == 0); leader = nil
-assert(Rules.CookAction({doer = inst}, original) and calls == 1)
+leader = {}; assert(Rules.CookAction({doer = inst}, original) and calls == 1); leader = nil
+assert(Rules.CookAction({doer = inst}, original) and calls == 2)
 local potitems = {item("meat", 1), item("meat", 1), item("cookedmeat", 1), item("berries", 1)}
 local act = {doer = inst, target = {components = {stewer = {},
     container = {GetAllItems = function() return potitems end}}}}
@@ -103,4 +103,30 @@ potitems[1] = item("meat", .49); assert(Rules.CookAction(act, original))
 potitems[1] = jerky; assert(not Rules.CookAction(act, original))
 local player = {HasTag = function() return false end}
 assert(Rules.CookAction({doer = player}, original), "ordinary players keep native cooking")
-print("PASS: construction-only cooking, protected foods, boss drops excluded from autonomous eating across roles/emergencies, raw eggs, freshness and Wigfrid food priorities")
+local raw = item("meat", 1, "MEAT", 1, 25, -10)
+raw.components.cookable = {product = "cookedmeat"}
+inst.components.inventory.ReferenceAllItems = function() return {raw} end
+inst.components.health.currenthealth, inst.components.sanity.current = 150, 200
+inst.components.hunger.current = 60
+assert(not Rules.NeedsRoasting(inst, raw) and Food.FindBestFood(inst) == raw,
+    "a hungry healthy companion must eat raw meat despite its sanity cost")
+inst.components.hunger.current = 0
+assert(Food.FindBestFood(inst) == raw, "starvation must not reject food for its sanity cost")
+inst.components.hunger.current, inst.components.health.currenthealth = 100, 50
+local healing = item("healing_raw", 1, "MEAT", 30, 5, -10)
+healing.components.cookable = {}
+assert(Food.Evaluate(inst, healing) ~= nil, "healing food with sanity cost remains available")
+local harmful = item("monstermeat", 1, "MEAT", -20, 18.75, -15)
+harmful.components.cookable = {}
+assert(Rules.NeedsRoasting(inst, harmful))
+for _, freshness in ipairs({.5, .21, .2}) do
+    local food = item("meat", freshness, "MEAT", 0, 25, -10)
+    food.components.cookable = {}
+    assert(not Rules.NeedsRoasting(inst, food), "only freshness strictly below 20% triggers roasting")
+end
+local red = item("meat", .199, "MEAT", 0, 25, -10)
+red.components.cookable = {}
+assert(Rules.NeedsRoasting(inst, red))
+assert(not Rules.CookAction({doer = inst, invobject = raw}, original))
+assert(Rules.CookAction({doer = inst, invobject = red}, original))
+print("PASS: cooking across modes, health/red-freshness roasting, sanity-cost hunger/healing food, protected ingredients and role diets")

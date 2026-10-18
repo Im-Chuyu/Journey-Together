@@ -391,7 +391,9 @@ function M.IsPriorityEngaged(inst, target)
     if M.IsThreat(inst, target) then return DistanceSq(inst, target) <= M.ASSIST_RANGE^2 end
     local combat = target.components ~= nil and target.components.combat or nil
     local victim = combat ~= nil and combat.target or nil
-    return Policy.IsLocalPlayer(victim) and not victim:HasTag("playerghost")
+    local leader = Policy.GetLeader(inst)
+    return leader ~= nil and victim == leader
+        and Policy.IsLocalPlayer(leader) and not leader:HasTag("playerghost")
         and (active or Policy.InRange(inst, target, M.ASSIST_RANGE))
         and DistanceSq(inst, target) <= M.ASSIST_RANGE^2
 end
@@ -401,7 +403,11 @@ function M.FindAssistTarget(inst)
     rules.IsFollowTargetPaused(inst)
     if rules.IsBeyondFollowCombatRange(inst) then inst._my_friend_assist_scan = nil return end
     local leader = Policy.GetLeader(inst)
-    if leader == nil or not Policy.InRange(inst, inst, M.ASSIST_RANGE) then return end
+    if leader == nil or leader:HasTag("playerghost")
+        or not Policy.InRange(inst, inst, M.ASSIST_RANGE) then
+        inst._my_friend_assist_scan = nil
+        return
+    end
     local now = GetTime()
     local buffered = leader.GetBufferedAction ~= nil and leader:GetBufferedAction() or nil
     local action_target = buffered ~= nil and buffered.action == ACTIONS.ATTACK
@@ -802,9 +808,16 @@ function M.FindThreat(inst, range)
     local now = GetTime()
     local wanted_range = range or M.THREAT_RANGE
     local cached = inst._my_friend_threat_scan
-    if cached ~= nil and cached.range == wanted_range and now < cached.untiltime
-        and (cached.target == nil or IsAlive(cached.target) and not rules.IsFollowTargetPaused(inst, cached.target)) then
-        return cached.target
+    local leader = Policy.GetLeader(inst)
+    if cached ~= nil and cached.leader == leader and cached.range == wanted_range
+        and now < cached.untiltime then
+        local target = cached.target
+        -- Aggro can change between scans. Revalidate the relationship without
+        -- repeating the world query or losing the independent escape candidate.
+        if target ~= nil and IsAlive(target) and not rules.IsFollowTargetPaused(inst, target)
+            and (M.IsThreat(inst, target) or M.GetLeaderAttackCount(inst, target) > 0
+                or M.IsPriorityEngaged(inst, target)) then return target end
+        return
     end
     local x, y, z = inst.Transform:GetWorldPosition()
     local closest, closestscore, escape_target, escape_score
@@ -837,7 +850,7 @@ function M.FindThreat(inst, range)
         end
     end
     inst._my_friend_threat_scan = {
-        range = wanted_range, target = closest, escape_target = escape_target,
+        leader = leader, range = wanted_range, target = closest, escape_target = escape_target,
         untiltime = now + .6,
     }
     return closest
@@ -1004,6 +1017,14 @@ function M.EquipBestCombatArmor(inst, attacker, weapon)
     end
 end
 
+-- Defence must also run on the unarmed/weak-hand and recovery paths.
+local function EquipCombatDefense(inst, target)
+    local combat = target.components ~= nil and target.components.combat or nil
+    local weapon = combat ~= nil and combat.GetWeapon ~= nil and combat:GetWeapon() or nil
+    M.EquipBestCombatArmor(inst, target, weapon)
+    return weapon
+end
+
 local function GetArmorStats(inventory, attacker, weapon)
     local absorption, condition, protected = 0, 0, false
     for _, slot in ipairs(require("my_friend_equip_slots").All()) do
@@ -1058,12 +1079,18 @@ function M.CanCounterAttack(inst, target)
     end
     local inventory = inst.components.inventory
     local hand = inventory:GetEquippedItem(EQUIPSLOTS.HANDS)
-    if require("my_friend_equipment").FindDroppedCombatItem(inst) ~= nil then return false end
+    if require("my_friend_equipment").FindDroppedCombatItem(inst) ~= nil then
+        EquipCombatDefense(inst, target)
+        return false
+    end
     local leader = Policy.GetLeader(inst)
     local self_defending = M.IsThreat(inst, target)
-    local assisting = leader ~= nil
-        and (inst._my_friend_assist_scan ~= nil
-                and inst._my_friend_assist_scan.target == target
+    local scan = inst._my_friend_assist_scan
+    local action = leader ~= nil and leader.GetBufferedAction ~= nil and leader:GetBufferedAction() or nil
+    local assisting = leader ~= nil and not leader:HasTag("playerghost")
+        and (scan ~= nil and scan.leader == leader and GetTime() < scan.untiltime
+                and scan.target == target and action ~= nil
+                and action.action == ACTIONS.ATTACK and action.target == target
             or M.GetLeaderAttackCount(inst, target) > 0)
         and Policy.InRange(inst, inst, M.ASSIST_RANGE)
         and Policy.InRange(inst, target, M.ASSIST_RANGE)
@@ -1072,6 +1099,8 @@ function M.CanCounterAttack(inst, target)
     local priority = M.IsPriorityEngaged(inst, target)
     if weaponitem == nil or not weaponitem:IsValid() or type(damage) ~= "number" or damage <= 25
         or weaponitem ~= hand and IsActiveLight(hand) then
+        EquipCombatDefense(inst, target)
+        if not IsAlive(target) or not IsAlive(inst) then return false end
         if not assisting and not self_defending and not priority then return false end
         local health = inst.components.health
         return priority or health == nil or health.GetPercent == nil or health:GetPercent() >= .15
@@ -1083,6 +1112,8 @@ function M.CanCounterAttack(inst, target)
         damage = WeaponDamage(inst, target, weaponitem) or 0
     end
     if weaponitem == nil or not weaponitem:IsValid() or damage <= 25 then
+        EquipCombatDefense(inst, target)
+        if not IsAlive(target) or not IsAlive(inst) then return false end
         if not assisting and not self_defending and not priority then return false end
         local health = inst.components.health
         return priority or health == nil or health.GetPercent == nil or health:GetPercent() >= .15
@@ -1100,9 +1131,7 @@ function M.CanCounterAttack(inst, target)
     local enemyhealth = target.components ~= nil and target.components.health or nil
     local health = inst.components.health
     local is_wanda = inst.prefab == "wanda" and inst.components.oldager ~= nil
-    local enemyweapon = enemycombat ~= nil and enemycombat.GetWeapon ~= nil
-        and enemycombat:GetWeapon() or nil
-    M.EquipBestCombatArmor(inst, target, enemyweapon)
+    local enemyweapon = EquipCombatDefense(inst, target)
     if not IsAlive(target) or not IsAlive(inst) or not weaponitem:IsValid() then return false end
     if enemyweapon ~= nil and not enemyweapon:IsValid() then enemyweapon = nil end
     local absorption, armorcondition, protected = GetArmorStats(

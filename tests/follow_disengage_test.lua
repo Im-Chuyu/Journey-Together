@@ -189,6 +189,7 @@ inst.tags.attack, inst.tags.abouttoattack = true, true
 local before_moves, before_attacks, before_scans = moves, attacks, scans
 local requested_at = now
 assert(Commands.Dispatch(inst, player, "温蒂，跟随"))
+assert(inst._my_friend_follow_route_reset, "an accepted follow order must request a fresh route")
 assert(wakes > 0 and scans == before_scans, "accepting follow must wake the AI without a new world scan")
 assert(queued.failed and not queued:validfn() and inst.components.combat.target == nil)
 assert(not Rules.CanAttack(enemy, inst) and not inst.components.combat:CanTarget(enemy))
@@ -276,4 +277,63 @@ player.pos.x = 33
 AI.StartHurtRetreat(inst, stranger)
 assert(inst._my_friend_hurt_until == nil, "new ordinary hits must not restart a distant hit-retreat loop")
 math.random = random
+
+-- Real multiplayer policy and live combat continuation, including stale
+-- assistance left behind by a change of leader or a change of creature aggro.
+local other = entity("wilson", 3, {player = true})
+other.userid = "other_player"
+AllPlayers = {player, other}
+TheWorld._my_friend = inst
+player.pos.x, inst.health, now = 2, 1, 100
+inst._my_friend_hurt_until, inst._my_friend_hurt_evade_until = nil, nil
+inst._my_friend_follow_combat_pause = nil
+enemy._my_friend_player_attacks = nil
+local Combat = require("behaviours/my_friend_combat")
+local function fresh_threat()
+    inst._my_friend_threat_scan = nil
+    return AI.FindThreat(inst)
+end
+for _, day in ipairs({10, 499}) do
+    TheWorld.state.cycles = day
+    leader = nil
+    enemy.components.combat.target = other
+    assert(fresh_threat() == nil and not AI.IsPriorityEngaged(inst, enemy),
+        "independent companions must ignore creatures targeting any player")
+    AI.RecordPlayerAttack(other, {target = enemy})
+    assert(fresh_threat() == nil and AI.FindAssistTarget(inst) == nil,
+        "another player's attack records do not authorize independent assistance")
+    leader = player
+    assert(fresh_threat() == nil and AI.FindAssistTarget(inst) == nil,
+        "an idle leader must not inherit another player's fight")
+    enemy.components.combat.target = player
+    assert(fresh_threat() == enemy, "the current leader's attacker remains eligible")
+    local scan_count = scans
+    enemy.components.combat.target = other
+    assert(AI.FindThreat(inst) == nil and scans == scan_count,
+        "cached aggro must be revalidated without another world scan")
+    inst._my_friend_assist_target = enemy
+    inst._my_friend_assist_scan = {leader = other, target = enemy, untiltime = now + 1}
+    other.bufferedaction = {action = ACTIONS.ATTACK, target = enemy}
+    inst._my_friend_threat_scan = nil
+    inst.components.combat:SetTarget(enemy)
+    local node = Combat(inst)
+    node.target = enemy
+    before_attacks = attacks
+    node:Visit()
+    assert(node.status == FAILED and attacks == before_attacks,
+        "a live combat node must reject stale assistance for another leader")
+    leader = nil
+    assert(fresh_threat() == nil)
+    enemy.components.combat.target = inst
+    assert(fresh_threat() == enemy and AI.CanCounterAttack(inst, enemy),
+        "independent self-defence still uses existing creature rules")
+    leader = player
+    enemy.components.combat.target = other
+    AI.RecordPlayerAttack(player, {target = enemy})
+    assert(fresh_threat() == enemy and AI.FindAssistTarget(inst) == enemy,
+        "the current leader's own attacks remain eligible")
+    leader = nil
+    assert(AI.FindThreat(inst) == nil, "stopping follow invalidates a cached assist immediately")
+    enemy._my_friend_player_attacks = nil
+end
 print("PASS: 32-unit automatic combat leash, chat/wheel follow interruption, five-second target pause, queued attack/lunge guards, normal-rule resumption and busy/environmental protection")

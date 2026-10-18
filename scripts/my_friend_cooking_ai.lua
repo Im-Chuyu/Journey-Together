@@ -1,4 +1,3 @@
-local FoodAI = require("my_friend_food_ai")
 local SurvivalAI = require("my_friend_survival_ai")
 local Policy = require("my_friend_policy")
 local M = {}
@@ -71,14 +70,6 @@ function M.GetCampfireAction(inst)
     return Policy.GuardAction(inst, action)
 end
 
-local function NeedsCooking(inst, item)
-    if item.components.cookable == nil then return false end
-    local health, _, sanity = FoodAI.GetFoodDeltas(inst, item)
-    local perish = item.components.perishable
-    return health < 0 or sanity < 0
-        or perish ~= nil and perish:GetPercent() < .5
-end
-
 function M.Remember(inst, source)
     if source.prefab ~= "firepit" then return end
     local point = source:GetPosition()
@@ -98,9 +89,11 @@ function M.GetAction(inst)
     local inventory = inst.components.inventory
     local food = inventory:FindItem(function(item)
         return item.components.edible ~= nil and inst.components.eater:CanEat(item)
-            and not require("my_friend_pets").IsIngredient(inst, item)
-            and not require("my_friend_food_rules").IsProtected(item)
-            and NeedsCooking(inst, item)
+            and inst.components.eater:PrefersToEat(item)
+            and item.components.inventoryitem ~= nil
+            and not item.components.inventoryitem.islockedinslot
+            and not require("my_friend_food_storage").IsReserved(inst, item)
+            and require("my_friend_food_rules").NeedsRoasting(inst, item)
     end)
     if food == nil then
         inst._my_friend_cook_until = nil
@@ -120,7 +113,11 @@ function M.GetAction(inst)
             local action = BufferedAction(inst, best, ACTIONS.COOK, food)
             action.validfn = function()
                 return require("my_friend_food_rules").CanCook(inst)
-                    and food:IsValid() and not require("my_friend_food_rules").IsProtected(food)
+                    and food:IsValid() and require("my_friend_food_rules").NeedsRoasting(inst, food)
+                    and food.components.inventoryitem:GetGrandOwner() == inst
+                    and not food.components.inventoryitem.islockedinslot
+                    and not require("my_friend_food_storage").IsReserved(inst, food)
+                    and inst.components.eater:CanEat(food)
             end
             action:AddSuccessAction(function()
                 inst._my_friend_food_supply_cache = nil

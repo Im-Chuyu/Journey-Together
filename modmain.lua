@@ -84,6 +84,12 @@ if _G.SaveGame ~= nil then
 end
 local ShardHome = require("my_friend_shard_home")
 local FriendReplication = require("my_friend_replication")
+require("my_friend_games_rpc").Install({
+    AddModRPCHandler = AddModRPCHandler,
+    AddClientModRPCHandler = AddClientModRPCHandler,
+    SendModRPCToClient = SendModRPCToClient,
+    GetClientModRPC = GetClientModRPC,
+})
 local ContainerCompat = require("my_friend_container_compat")
 AddClassPostConstruct("components/container_replica", ContainerCompat.WrapReplica)
 AddComponentPostInit("teleporter", require("my_friend_wormhole").Configure)
@@ -801,8 +807,6 @@ local function ConfigureFriend(inst)
     Dialogue.Configure(inst)
     require("my_friend_survival_ai").ConfigureShelter(inst)
     require("my_friend_offscreen").Configure(inst)
-    local Platforms = require("my_friend_platforms")
-    inst._my_friend_platform_task = inst:DoPeriodicTask(Platforms.OBSERVE_PERIOD, Platforms.Observe)
     inst._my_friend_care_task = inst:DoPeriodicTask(5, require("my_friend_social_ai").UpdateCare)
     inst._my_friend_beefalo_leash_task = inst:DoPeriodicTask(3,
         require("my_friend_riding").UpdateLeashing)
@@ -1607,6 +1611,7 @@ AddClassPostConstruct("widgets/targetindicator", function(self)
 end)
 
 AddClassPostConstruct("widgets/controls", function(self)
+    require("my_friend_games_client").Attach(self)
     local Panel = require("widgets/my_friend_panel")
     self.my_friend_panel = self:AddChild(Panel(self.owner))
     self.my_friend_panel:Hide()

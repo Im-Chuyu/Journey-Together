@@ -10,6 +10,8 @@ local SpecialCommands = require("my_friend_special_commands")
 local Language = require("my_friend_strings")
 local LanguageFiles = require("my_friend_language")
 local Characters = require("my_friend_characters")
+local shared_dialogue = LanguageFiles.DialogueLines(Language.language) or {}
+local ENCOURAGEMENT = shared_dialogue.combat_encouragement_words or {}
 
 -- Keywords live in scripts/languages/<code>/command_words.lua.
 -- Anything malformed there is skipped with a log line rather than taking the
@@ -332,6 +334,15 @@ function M.Dispatch(friend, player, message, from_wheel)
         return M.Rename(friend, player, rename)
     end
     local id = FindCommand(friend, text)
+    -- A chat reaction, not a work command: preserve the current task and
+    -- combat state. Explicit commands keep precedence over encouragement.
+    if id == nil and not from_wheel then
+        for _, word in ipairs(ENCOURAGEMENT) do
+            if type(word) == "string" and word ~= "" and Contains(text, word:lower()) then
+                return Dialogue.Encourage(friend, player)
+            end
+        end
+    end
     if not from_wheel and MaybeRefuseChinese(friend, addressed_message, id) then return true end
     if friend:HasTag("playerghost") then
         local portal = Contains(text, "大门") or Contains(text, "绚丽之门")
@@ -432,6 +443,7 @@ function M.Dispatch(friend, player, message, from_wheel)
             Riding.AllowAutoRide(friend)
             friend._my_friend_greeting_pause_until = nil
             friend._my_friend_follow_requested_until = GetTime() + 30
+            friend._my_friend_follow_route_reset = true
             Reply(friend, "follow_ok")
         else Reply(friend, "follow_busy") end
         return true

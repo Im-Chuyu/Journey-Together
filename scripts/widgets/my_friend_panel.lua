@@ -153,6 +153,24 @@ local MyFriendPanel = Class(Widget, function(self, owner)
     self.stats:SetPosition(INFO_X - 20, 140)
     self.stats:Hide()
 
+    -- info_frame bounds: x=[INFO_X-180, INFO_X+180], y=[112,190].
+    -- Keep the full 56x24 button inside its bottom-right edge, without hover scaling.
+    self.games = self:AddChild(ImageButton("images/global.xml", "square.tex"))
+    self.games:ForceImageSize(56, 24)
+    self.games:SetPosition(INFO_X + 152, 124)
+    self.games.scale_on_focus = false
+    self.games.move_on_click = false
+    self.games:SetHoverText(require("my_friend_games_strings").Get("affinity"))
+    self.games:SetImageNormalColour(.12, .17, .2, 1)
+    self.games:SetImageFocusColour(.25, .31, .34, 1)
+    self.games.label = self.games:AddChild(Text(DEFAULTFONT, 17, require("my_friend_games_strings").Get("games")))
+    self.games.label:SetClickable(false)
+    self.games:SetOnClick(function()
+        local friend = self.friend
+        self:HideFriend()
+        if friend ~= nil and friend:IsValid() then require("my_friend_games_client").Open(friend) end
+    end)
+
     self.slots = {}
     self.equips = EquipSlots.Panel(owner)
     self.backpackslots = {}
@@ -504,6 +522,7 @@ function MyFriendPanel:Refresh()
         score = self.owner._my_friend_affinity_net:value()
     end
     self.affinity:SetString(string.format(TextForLanguage("好感度 %.1f", "Affinity %.1f"), score))
+    if score >= 20 then self.games:Enable() else self.games:Disable() end
     if friend._my_friend_panel_net ~= nil then
         self.free_switch = ParseFreeSwitch(friend._my_friend_panel_net:value())
     end

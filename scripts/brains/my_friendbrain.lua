@@ -85,9 +85,9 @@ local function StartFriendWalk(inst, target)
     local requested = target
     if inst:GetCurrentPlatform() == nil then
         target = Navigation.GetSteeringPoint(inst, target, true)
+        local detour = Navigation.Unstick(inst, target or requested)
+        if detour ~= nil then target = detour end
     end
-    local detour = Navigation.Unstick(inst, target or requested)
-    if detour ~= nil then target = detour end
     if target == nil then inst.components.locomotor:Stop() return end
     if inst.sg ~= nil then
         if not IsFriendWalking(inst) then
@@ -114,8 +114,9 @@ local function StopFriendWalk(inst)
     end
 end
 
-local function StartFriendRun(inst, target, long_follow)
-    if long_follow and target ~= nil then
+local function StartFriendRun(inst, target, long_follow, different_platforms)
+    local platform_move = different_platforms or inst:GetCurrentPlatform() ~= nil
+    if long_follow and not platform_move and target ~= nil then
         target = Navigation.GetLongFollowPoint(inst, target)
     end
     if target == nil then
@@ -123,13 +124,12 @@ local function StartFriendRun(inst, target, long_follow)
         return
     end
     local requested = target
-    if inst:GetCurrentPlatform() == nil then
+    if not platform_move then
         target = Navigation.GetSteeringPoint(inst, target, true)
+        -- Land sidesteps must not aim back across the sea while aboard.
+        local detour = Navigation.Unstick(inst, target or requested)
+        if detour ~= nil then target = detour end
     end
-    -- Sidestep toward the next route point, never back across the sea toward
-    -- the leader while the terrain planner is still working.
-    local detour = Navigation.Unstick(inst, target or requested)
-    if detour ~= nil then target = detour end
     if target == nil then inst.components.locomotor:Stop() return end
     -- Do not bounce the stategraph between walk/idle while a nearby leader
     -- keeps moving. Locomotor can switch to running without cancelling itself.
@@ -137,15 +137,17 @@ local function StartFriendRun(inst, target, long_follow)
         and not inst.sg:HasStateTag("busy") then
         inst.sg:GoToState("idle")
     end
+    if platform_move then
+        Platforms.Run(inst, target)
+        return
+    end
     local old = inst._my_friend_last_move
-    local platform_move = inst:GetCurrentPlatform() ~= nil
     local refresh = old ~= nil and GetTime() >= old.untiltime
-        and (not platform_move or inst.components.locomotor.dest == nil)
     if old == nil or not old.run or refresh
         or (old.point - target):LengthSq() > 1 then
         Navigation.MoveToPoint(inst, target, true)
         inst._my_friend_last_move = {point = target, run = true,
-            untiltime = GetTime() + (platform_move and 1 or .45)}
+            untiltime = GetTime() + .45}
     end
 end
 
@@ -167,9 +169,16 @@ function MyFriendFollow:Visit()
     -- Never call locomotor:Stop while SGwilson owns a busy action. Stop()
     -- sends a locomote event and can cancel the vanilla eat/quickeat,
     -- revive, attack, or hit animation before it reaches its timeline.
-    if self.inst.sg ~= nil and self.inst.sg:HasStateTag("busy") then
+    if self.inst.sg ~= nil and (self.inst.sg:HasStateTag("busy")
+        or self.inst.sg:HasStateTag("jumping")) then
         self.status = RUNNING
-        self:Sleep(0.25)
+        self:Sleep(self.inst.sg:HasStateTag("jumping") and .1 or .25)
+        return
+    end
+    local embarker = self.inst.components.embarker
+    if embarker ~= nil and embarker:HasDestination() then
+        self.status = RUNNING
+        self:Sleep(.1)
         return
     end
     local ghost = self.inst:HasTag("playerghost")
@@ -222,29 +231,34 @@ function MyFriendFollow:Visit()
         self.leader = leader
         self.chasing = false
     end
-    Platforms.ResetAfterPlatformChange(self.inst)
-    if Platforms.NeedsCrossing(self.inst, leader) then
+    if self.inst._my_friend_follow_route_reset then
+        Platforms.ResetRoute(self.inst)
+        self.inst._my_friend_follow_route_reset = nil
+    end
+    Platforms.ResetAfterPlatformChange(self.inst, leader)
+    if Platforms.FollowBoardingStep(self.inst, leader) then
         self.stroll_target, self.next_stroll = nil, nil
-        self.chasing = true
-        Platforms.FollowCrossing(self.inst, leader)
         self.status = RUNNING
         self:Sleep(.1)
         return
     end
+    local different_platforms = Platforms.NeedsCrossing(self.inst, leader)
     -- Crossing seven units starts a chase. Once started, keep running until
     -- the companion is within three units; do not stop at the seven-unit
     -- boundary on the way back.
-    if dist_sq >= 49 or dist_sq > 9
+    if different_platforms or dist_sq >= 49 or dist_sq > 9
         and now < (self.inst._my_friend_follow_requested_until or 0) then
         self.chasing = true
     end
-    if self.chasing and dist_sq > 6.25 then
+    if self.chasing and (different_platforms or dist_sq > 6.25) then
         self.next_stroll = nil
         self.stroll_target = nil
         if IsFriendWalking(self.inst) then
             self.inst.sg:GoToState("idle")
         end
-        StartFriendRun(self.inst, Vector3(tx, ty, tz), true)
+        -- As in vanilla Follow, locomotor chooses a currently reachable hop
+        -- toward the leader. Ground steering only handles same-land travel.
+        StartFriendRun(self.inst, Vector3(tx, ty, tz), true, different_platforms)
         self.status = RUNNING
         self:Sleep(0.1)
         return
@@ -481,6 +495,7 @@ function MyFriendBrain:OnStart()
                 or id == "light_wait" or id == "thermal_wait" or id == "greeting"
                 or id == "construction_wait" or id == "command_wait" or id == "emote"
                 or id == "sit" or id == "expedition" or id == "fishing_wait"
+                or id == "game_sit"
                 or id == "expedition_wait" }
     end
     local function Action(id, score, getter, text, timeout, unrestricted)
@@ -675,6 +690,7 @@ function MyFriendBrain:OnStart()
         if command ~= nil and command.id == "chop" then return 0 end
         return c.leader ~= nil and not c.leaderdead and not c.waitlight
             and (Platforms.NeedsCrossing(inst, c.leader)
+                or Platforms.NeedsBoardingStep(inst)
                 or c.distance > Policy.ActivityRange(inst)^2
                 or c.rejoining)
             and 110 or 0
@@ -837,6 +853,8 @@ function MyFriendBrain:OnStart()
         return require("my_friend_pet_care").Score(inst, c)
     end), require("my_friend_pet_care").GetAction, "正在给自己的宠物喂食", 10)
     Add("emote", Alive(function() return Emotes.Score(inst) end), FriendEmote(inst))
+    local GamesCompanion = require("my_friend_games_companion")
+    Add("game_sit", Alive(function(c) return GamesCompanion.Score(inst, c) end), GamesCompanion.Behaviour(inst))
     Add("sit", Alive(function(c) return Sitting.Score(inst, c) end), Sitting.Behaviour(inst))
     Add("follow", Alive(function(c)
         return c.leader ~= nil and not c.leaderdead and not c.hurt_evade and 10 or 0

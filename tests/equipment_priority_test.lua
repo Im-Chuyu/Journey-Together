@@ -358,4 +358,42 @@ inst.components.moisture.inherentWaterproofness = 1
 inventory.items = {gear(inst, "umbrella", "hands", nil, nil, 1)}
 Equipment.UpdateLoadout(inst)
 assert(inventory.slots.hands == nil, "intrinsic protection removes the need for pure rain gear")
+-- Exercise the actual combat entry, not just the armour picker. None of
+-- these hand states may bypass defensive equipment or change fight policy.
+local rules = require("my_friend_combat_rules")
+local old_attack, old_threat, old_priority = rules.CanAttack, AI.IsThreat, AI.IsPriorityEngaged
+rules.CanAttack = function() return true end
+AI.IsThreat = function() return true end
+AI.IsPriorityEngaged = function() return false end
+need, TheWorld.state.israining = nil, false
+for _, mode in ipairs({"empty", "weak_tool", "light", "broken_weapon", "recovery"}) do
+    inst, inventory = companion()
+    local head = gear(inst, "modded_helmet", "head", .8, {hot = 100}, 1)
+    local body = gear(inst, "modded_armor", "body", .85)
+    inventory.items = {head, body}
+    if mode ~= "empty" and mode ~= "recovery" then
+        local hand = gear(inst, "test_hand", "hands")
+        hand.components.weapon = {GetDamage = function() return mode == "weak_tool" and 17 or 40 end}
+        if mode == "light" then hand._my_friend_ai_light = true
+        elseif mode == "broken_weapon" then hand.tags.broken = true end
+        inventory.items[#inventory.items + 1] = hand
+        inventory:Equip(hand)
+        if mode == "light" then
+            local weapon = gear(inst, "spear", "hands")
+            weapon.components.weapon = {GetDamage = function() return 60 end}
+            inventory.items[#inventory.items + 1] = weapon
+        end
+    end
+    local original_recovery = Equipment.FindDroppedCombatItem
+    if mode == "recovery" then Equipment.FindDroppedCombatItem = function() return {} end end
+    local previous_hand = inventory:GetEquippedItem("hands")
+    assert(AI.CanCounterAttack(inst, enemy) == (mode ~= "recovery"), mode .. " preserves defence/recovery policy")
+    assert(inventory.slots.head == head and inventory.slots.body == body, mode .. " must wear carried armour")
+    if mode == "light" then assert(inventory.slots.hands == previous_hand, "preserve protected lighting") end
+    before = equips
+    AI.CanCounterAttack(inst, enemy)
+    assert(equips == before, "combat evaluation must not re-equip unchanged armour")
+    Equipment.FindDroppedCombatItem = original_recovery
+end
+rules.CanAttack, AI.IsThreat, AI.IsPriorityEngaged = old_attack, old_threat, old_priority
 print("PASS: combat/daily equipment priorities, aggregate rain protection, redundant gear release, multifunctional retention and stable loadouts")

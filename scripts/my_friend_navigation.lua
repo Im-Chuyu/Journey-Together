@@ -56,10 +56,17 @@ function M.IsNearHole(point)
 end
 
 function M.IsLand(point)
-    return point ~= nil and point.x ~= nil and point.z ~= nil
-        and TheWorld.Map:IsPassableAtPoint(point.x, 0, point.z)
-        and not TheWorld.Map:IsOceanTileAtPoint(point.x, 0, point.z)
-        and not M.IsNearHole(point)
+    if point == nil or point.x == nil or point.z == nil then return false end
+    local map = TheWorld.Map
+    -- Match vanilla walking/hop edge detection: shore and dock overhang is
+    -- walkable even above an ocean tile. Boats remain a separate route type.
+    local ground = map.IsVisualGroundAtPoint ~= nil
+        and map:IsVisualGroundAtPoint(point.x, 0, point.z)
+    if map.IsVisualGroundAtPoint == nil then
+        ground = map:IsPassableAtPoint(point.x, 0, point.z)
+            and not map:IsOceanTileAtPoint(point.x, 0, point.z)
+    end
+    return ground and not M.IsNearHole(point)
 end
 
 local function IsTerrainClear(a, b)

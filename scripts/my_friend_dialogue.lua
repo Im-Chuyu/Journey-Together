@@ -1,6 +1,6 @@
 local Speech = require("my_friend_speech")
 local M = {}
-local PERSONAL = {fed = true, fed_careful = true, gift = true,
+local PERSONAL = {combat_encouraged = true, fed = true, fed_careful = true, gift = true,
     gift_food = true, gift_food_settled = true, gift_sack = true, pickup_allowed = true,
     ask_pickup = true, revived_thanks = true, revive_player = true, skin_changed = true,
     revive_drop = true, player_attack = true, player_takes_food = true, player_takes_sack = true,
@@ -87,6 +87,18 @@ function M.Say(inst, kind, player)
     return true
 end
 
+-- Only actual combat targets count; threat scans and idle task labels do not.
+-- The normal personal queue supplies duplicate suppression, a six-second
+-- cooldown and quiet speech that does not interrupt attacks or dodging.
+function M.Encourage(inst, player)
+    local combat = inst.components ~= nil and inst.components.combat or nil
+    local target = combat ~= nil and combat.target or nil
+    if target == nil or not target:IsValid() or target:HasTag("playerghost")
+        or target.components == nil or target.components.health == nil
+        or target.components.health:IsDead() then return false end
+    return M.Say(inst, "combat_encouraged", player)
+end
+
 -- Immediate, guaranteed reply to a chat command. Bypasses the ambient queue.
 function M.Reply(inst, key, argument)
     if inst == nil or not inst:IsValid() or inst.components.talker == nil then return false end
@@ -139,7 +151,7 @@ local function ActivityKey(inst)
     if decision ~= nil then
         local ids = {combat = "activity_fight", assist = "activity_fight",
             catch_up_mount = "activity_ride", catch_up = "activity_follow",
-            follow = "activity_follow", sit = "activity_sit"}
+            follow = "activity_follow", sit = "activity_sit", game_sit = "activity_sit"}
         if ids[decision.task] ~= nil then return ids[decision.task] end
     end
     if inst.components ~= nil and inst.components.rider ~= nil

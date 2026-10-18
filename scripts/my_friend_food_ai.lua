@@ -195,7 +195,7 @@ function M.Evaluate(inst, food, stats)
         return math.max(1, 100 + score), perishdays, health, hunger, sanity
     end
     if require("my_friend_pets").IsIngredient(inst, food) then return end
-    if food.components.cookable ~= nil and (health < 0 or sanity < 0)
+    if require("my_friend_food_rules").NeedsRoasting(inst, food, health)
         and stats.hungerpercent > .2 and stats.healthpercent > .35 then return end
     if health < 0 and stats.health + health <= 1
         or hunger < 0 and stats.hunger + hunger <= 0

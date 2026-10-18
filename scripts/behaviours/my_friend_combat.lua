@@ -25,9 +25,15 @@ local function IsValidThreat(inst, target)
         or target.components == nil or target.components.health == nil
         or target.components.health:IsDead() or target.components.combat == nil then return false end
     local player_attack_target = BehaviourAI.GetLeaderAttackCount(inst, target) > 0
+    local leader = Policy.GetLeader(inst)
+    local scan = inst._my_friend_assist_scan
+    local action = leader ~= nil and leader.GetBufferedAction ~= nil and leader:GetBufferedAction() or nil
+    local pending_player_attack = leader ~= nil and not leader:HasTag("playerghost")
+        and scan ~= nil and scan.leader == leader and GetTime() < scan.untiltime
+        and scan.target == target and action ~= nil
+        and action.action == ACTIONS.ATTACK and action.target == target
     local assisting = target == inst._my_friend_assist_target
-    local pending_player_attack = inst._my_friend_assist_scan ~= nil
-        and inst._my_friend_assist_scan.target == target
+        and (player_attack_target or pending_player_attack)
     local self_defending = BehaviourAI.IsThreat(inst, target)
         or BehaviourAI.IsPriorityEngaged(inst, target)
     local engaged = assisting or self_defending
