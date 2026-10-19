@@ -51,7 +51,8 @@ local function HasEquipment(inst, kind)
             -- Torches and canes also have a weapon component. Only a combat
             -- weapon at least as strong as a spear replaces the basic weapon.
             -- Keep target-dependent weapons without calling damage on a fake target.
-            if kind == "spear" and c.equippable.equipslot == EQUIPSLOTS.HANDS
+            if kind == "spear" and item.prefab ~= "torch" and not item:HasTag("torch")
+                and c.equippable.equipslot == EQUIPSLOTS.HANDS
                 and c.weapon ~= nil and c.tool == nil
                 and (type(c.weapon.damage) == "function"
                     or type(c.weapon.damage) == "number"

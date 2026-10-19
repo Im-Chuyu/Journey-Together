@@ -657,7 +657,9 @@ function MyFriendBrain:OnStart()
         return not c.thermal and c.threat == nil
             and require("my_friend_command_tower").IsChanneling(inst) and 118 or 0
     end), StandStill(inst))
-    Action("temperature", Alive(function(c) return c.thermal and 115 or 0 end),
+    Action("temperature", Alive(function(c)
+        return c.thermal and (c.thermal_shade and 50 or 115) or 0
+    end),
         SurvivalAI.GetTemperatureAction, "正在处理体温问题")
     Action("repair", Alive(function(c)
         return c.repair and (c.urgent_repair and 139 or 113) or 0
@@ -877,6 +879,12 @@ function MyFriendBrain:OnStart()
         Exploration.Observe(inst)
         if inst.prefab == "wortox" then require("my_friend_wortox").BalanceSouls(inst) end
         local leader = Policy.GetLeader(inst)
+        if leader ~= nil and inst.components.temperature ~= nil
+            and inst.components.temperature.current >= SurvivalAI.COLD_START
+            and (inst._my_friend_thermal_need == "cold"
+                or inst._my_friend_thermal_target_need == "cold") then
+            SurvivalAI.StopForFollow(inst)
+        end
         Policy.UpdateVigil(inst)
         local leaderdead = Policy.IsLeaderDead(inst)
         local rejoining = Policy.UpdateFollowRequest(inst, leader)
@@ -963,6 +971,7 @@ function MyFriendBrain:OnStart()
             hunger = inst.components.hunger:GetPercent(),
             emergency_food = emergency_food,
             dark = dark,
+            thermal_shade = not ghost and SurvivalAI.IsShadeComfortOnly(inst) or false,
             thermal = thermal,
             needsfood = not ghost and FoodAI.NeedsFoodSupply(inst),
             reserve = ghost or LightAI.HasLightReserve(inst),

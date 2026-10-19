@@ -200,7 +200,7 @@ local function WantsRain(inst)
     local moisture = inst.components.moisture
     if moisture == nil then return false end
     local state = TheWorld ~= nil and TheWorld.state or nil
-    if state ~= nil and (state.israining == true or state.issnowing == true) then
+    if state ~= nil and state.israining == true then
         inst._my_friend_last_precipitation = GetTime()
         return true
     end

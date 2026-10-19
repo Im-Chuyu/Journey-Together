@@ -56,4 +56,10 @@ return {
     history_error = "歷史記錄暫時無法讀取或儲存，請稍後重試。",
     history_page = "第 %s / %s 頁 · 目前世界分片",
     history_pending = "結果正在儲存",
+    undo = "悔棋",
+    undo_question = "%s 申請悔棋，是否同意？",
+    undo_pending = "等待對方同意悔棋（30秒）",
+    undo_unavailable = "目前沒有可悔的棋步。",
+    undo_pending_error = "已有悔棋申請。",
+    black_unavailable = "對局超過兩步後不能申請黑子先手。",
 }

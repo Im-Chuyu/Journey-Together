@@ -2047,6 +2047,19 @@ local function GetPendingWorkAction(inst)
     return CreateGatherAction(inst, target, action_type, tool)
 end
 
+-- Special gathering uses the same persistent native work setup as mining.
+function M.GetCommandWorkAction(inst, target, action_type, tool)
+    if target == nil or not target:IsValid() or inst._my_friend_under_threat
+        or (action_type ~= ACTIONS.MINE and action_type ~= ACTIONS.CHOP)
+        or not Policy.InRange(inst, target) or IsBlocked(inst, target)
+        or not M.CanUseHandToolInCurrentLight(inst)
+        or not InventoryAI.IsUsableTool(inst, tool, action_type)
+        or inst.components.inventory:GetEquippedItem(EQUIPSLOTS.HANDS) ~= tool then return end
+    local workable = target.components.workable
+    if workable == nil or not workable:CanBeWorked() or workable:GetWorkAction() ~= action_type then return end
+    return Policy.GuardAction(inst, CreateGatherAction(inst, target, action_type, tool), 32)
+end
+
 function M.GetRepeatWorkAction(inst, target, action_type)
     if target == nil or not target:IsValid() or inst._my_friend_under_threat then return end
     -- Breaking our own skeleton takes several swings. It is not gathering, so
@@ -2060,7 +2073,7 @@ function M.GetRepeatWorkAction(inst, target, action_type)
     if HasLeader(inst) and (action_type == ACTIONS.CHOP or action_type == ACTIONS.MINE)
         and not (command ~= nil and (command.id == "chop" and action_type == ACTIONS.CHOP
             or command.id == "mine" and action_type == ACTIONS.MINE
-            or command.id == "rockfruit" and command.cracking
+            or command.id == "rockfruit" and command.phase == "mine"
                 and action_type == ACTIONS.MINE)) then return end
     local fixed_chop = command ~= nil and command.id == "chop" and action_type == ACTIONS.CHOP
     if target == nil or target ~= inst._my_friend_work_target
@@ -2893,7 +2906,7 @@ local function GetBaseWoodAction(inst)
 end
 
 local function FindFuelItem(inst, source)
-    for _, prefab in ipairs({"log", "twigs", "cutgrass"}) do
+    for _, prefab in ipairs({"log", "charcoal", "twigs", "cutgrass"}) do
         local item = inst.components.inventory:FindItem(function(candidate)
             return candidate.prefab == prefab
                 and source.components.fueled:CanAcceptFuelItem(candidate)
@@ -2909,7 +2922,7 @@ local function CreateFuelAction(inst, source)
         M.SetTask(inst, "正在使用基地火坑")
         return TimedAction(inst, source, ACTIONS.ADDFUEL, fuel)
     end
-    for _, prefab in ipairs({"log", "twigs", "cutgrass"}) do
+    for _, prefab in ipairs({"log", "charcoal", "twigs", "cutgrass"}) do
         local action = GetWithdrawAction(inst, {[prefab] = 1})
         if action ~= nil then return action end
     end

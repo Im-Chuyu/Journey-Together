@@ -56,4 +56,10 @@ return {
     history_error = "History could not be read or saved. Please retry.",
     history_page = "Page %s / %s · Current world shard",
     history_pending = "Saving results",
+    undo = "Undo",
+    undo_question = "%s requests a takeback. Accept?",
+    undo_pending = "Waiting for takeback approval (30 seconds)",
+    undo_unavailable = "There is no move to undo.",
+    undo_pending_error = "A takeback request is already pending.",
+    black_unavailable = "Black cannot be requested after the first two moves.",
 }

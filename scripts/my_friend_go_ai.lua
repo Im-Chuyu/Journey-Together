@@ -4,7 +4,7 @@ local M = {}
 local N, POINTS = 19, 361
 -- The small fixed beam keeps tactical look-ahead useful while bounding
 -- temporary boards. Nothing is retained between turns.
-local ROOT_LIMIT, BRANCH_LIMIT, REPLY_LIMIT = 12, 4, 3
+local ROOT_LIMIT, BRANCH_LIMIT, REPLY_LIMIT = 24, 8, 6
 local function Eye(board, i, side, neighbors)
     for _, j in ipairs(neighbors[i]) do if board[j] ~= side then return false end end
     local x, y = (i - 1) % N + 1, math.floor((i - 1) / N) + 1
@@ -35,7 +35,14 @@ local function Analyze(board, neighbors)
         end
     end end
     for i = 1, POINTS do if board[i] == 0 then
-        local g = map[neighbors[i][1]]
+        local g
+        -- The first adjacent intersection may itself be empty. Find any
+        -- bordering stone group before checking whether every neighbour
+        -- belongs to that same group; this keeps eye scoring accurate without
+        -- adding a search branch.
+        for _, j in ipairs(neighbors[i]) do
+            if map[j] ~= nil then g = map[j]; break end
+        end
         if g ~= nil and Eye(board, i, g.side, neighbors) then
             local same = true
             for _, j in ipairs(neighbors[i]) do if map[j] ~= g then same = false; break end end

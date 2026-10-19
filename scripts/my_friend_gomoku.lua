@@ -4,10 +4,13 @@ local DIRECTIONS = {{1, 0}, {0, 1}, {1, 1}, {1, -1}}
 local function Inside(x, y) return x >= 1 and x <= M.SIZE and y >= 1 and y <= M.SIZE end
 local function Index(x, y) return (y - 1) * M.SIZE + x end
 local function Integer(n) return type(n) == "number" and n == n and n % 1 == 0 end
+local function CopyBoard(board)
+    local copy = {}; for i = 1, M.SIZE * M.SIZE do copy[i] = board[i] end; return copy
+end
 function M.New()
     local board = {}
     for i = 1, M.SIZE * M.SIZE do board[i] = 0 end
-    return {board = board, turn = 1, count = 0, revision = 0, status = "playing"}
+    return {board = board, turn = 1, count = 0, revision = 0, status = "playing", history = {}}
 end
 local function Line(board, x, y, side, dx, dy)
     local count, open, cells = 1, 0, {Index(x, y)}
@@ -27,6 +30,9 @@ function M.Play(state, x, y)
     local index = Index(x, y)
     if state.board[index] ~= 0 then return false, "occupied" end
     local side = state.turn
+    state.history = state.history or {}
+    state.history[#state.history + 1] = {board = CopyBoard(state.board), turn = state.turn,
+        count = state.count, last = state.last}
     state.board[index], state.count, state.revision, state.last = side, state.count + 1, state.revision + 1, index
     for _, dir in ipairs(DIRECTIONS) do
         local count, _, cells = Line(state.board, x, y, side, dir[1], dir[2])
@@ -36,6 +42,21 @@ function M.Play(state, x, y)
     else state.turn = 3 - side end
     return true
 end
+function M.Undo(state, plies)
+    if state.status ~= "playing" or type(state.history) ~= "table" or #state.history == 0 then
+        return false, "undo_unavailable"
+    end
+    plies = math.max(1, math.floor(plies or 1))
+    local index = math.max(1, #state.history - plies + 1)
+    local previous = state.history[index]
+    for i = #state.history, index, -1 do state.history[i] = nil end
+    state.board, state.turn, state.count, state.last = CopyBoard(previous.board), previous.turn,
+        previous.count, previous.last
+    state.status, state.winner, state.line = "playing", nil, nil
+    state.revision = state.revision + 1
+    return true
+end
+function M.CanUndo(state) return state ~= nil and state.status == "playing" and state.history ~= nil and #state.history > 0 end
 local function Value(board, x, y, side)
     board[Index(x, y)] = side
     local total, win = 0, false

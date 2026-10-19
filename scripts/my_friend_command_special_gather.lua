@@ -4,6 +4,25 @@ local Discovery = require("my_friend_discovery")
 local Policy = require("my_friend_policy")
 local Dialogue = require("my_friend_dialogue")
 
+function M.AnswerRockFruit(inst, player, text)
+    local question = inst._my_friend_rockfruit_question
+    local command = inst._my_friend_command
+    if question == nil or question.player ~= player or GetTime() >= question.deadline
+        or Policy.GetLeader(inst) ~= player or command == nil or command.id ~= "rockfruit"
+        or command.player ~= player or command.phase ~= "ask"
+        or GetTime() >= command.deadline or inst:HasTag("playerghost")
+        or inst.components.health == nil or inst.components.health:IsDead() then return false end
+    local answer = require("my_friend_chat_replies").Match("rockfruit", text)
+    if answer == nil then return false end
+    inst._my_friend_rockfruit_question = nil
+    command.phase = answer == "yes" and "crack" or "store"
+    command.deadline = GetTime() + 180
+    Dialogue.Reply(inst, answer == "yes" and "rockfruit_mine_answer" or "rockfruit_store_answer")
+    inst._my_friend_replan_requested = true
+    if inst.brain ~= nil and inst.brain.ForceUpdate ~= nil then inst.brain:ForceUpdate() end
+    return true
+end
+
 local function DistSq(a, b) return a:GetDistanceSqToInst(b) end
 local function Reachable(inst, target)
     return target ~= nil and target:IsValid()
@@ -36,7 +55,8 @@ local function MineTool(inst, command)
     if preparation ~= nil then return nil, preparation end
     if tool ~= nil and inst.components.inventory:GetEquippedItem(EQUIPSLOTS.HANDS) ~= tool then
         if not inst.components.inventory:Equip(tool) then return nil end
-        return nil
+        -- Equip is synchronous. Returning nil here ended a confirmed cracking
+        -- command immediately after putting on its replacement pickaxe.
     end
     return tool
 end
@@ -125,20 +145,11 @@ local function RockFruit(inst, command)
         if preparation ~= nil then return preparation end
         if tool ~= nil then
             local target = mined[1]
-            local action
-            if command.cracking then
-                -- Continue through the work-target path used by the regular
-                -- mining command so repeated swings remain attached to this
-                -- target after the confirmation drop.
-                inst._my_friend_work_target = target
-                inst._my_friend_work_action = ACTIONS.MINE
-                inst._my_friend_work_left = target.components.workable:GetWorkLeft()
-                inst._my_friend_work_stall_deadline = GetTime() + 45
-                action = require("my_friend_base_ai").GetRepeatWorkAction(
-                    inst, target, ACTIONS.MINE)
-            else
-                action = Action(inst, target, ACTIONS.MINE, tool, "rockfruit")
-            end
+            -- Initial and confirmed cracking share the normal mining action,
+            -- including target locking and native swing continuation.
+            local action = require("my_friend_base_ai").GetCommandWorkAction(
+                inst, target, ACTIONS.MINE, tool)
+            if action ~= nil then action._my_friend_dialogue_kind = "rockfruit" end
             if action ~= nil then command.gathered = true return action end
         end
     end

@@ -83,10 +83,15 @@ local function ValidMatch(data)
         for _, entry in ipairs(data.chat) do if not Chat.Valid(entry) then return false end end
     end
     if data.version ~= nil and (type(data.version) ~= "number" or data.version % 1 ~= 0 or data.version < 0) then return false end
+    if data.count ~= nil and (type(data.count) ~= "number" or data.count % 1 ~= 0 or data.count < 0
+        or data.count > def.rules.SIZE^2) then return false end
     if data.black_offer ~= nil and (type(data.black_offer) ~= "table" or type(data.black_offer.id) ~= "string"
         or type(data.black_offer.from) ~= "string" or type(data.black_offer.name) ~= "string") then return false end
     if data.offer ~= nil and (type(data.offer) ~= "table" or type(data.offer.id) ~= "string"
         or type(data.offer.to) ~= "string" or (data.offer.kind ~= "count" and data.offer.kind ~= "draw_offer")) then return false end
+    if data.undo_offer ~= nil and (type(data.undo_offer) ~= "table" or type(data.undo_offer.id) ~= "string"
+        or type(data.undo_offer.to) ~= "string" or type(data.undo_offer.from) ~= "string"
+        or type(data.undo_offer.name) ~= "string") then return false end
     if data.status == "scoring" then
         if data.game ~= "go" or type(data.dead) ~= "table" or type(data.confirmed) ~= "table"
             or type(data.confirmed[1]) ~= "boolean" or type(data.confirmed[2]) ~= "boolean" then return false end

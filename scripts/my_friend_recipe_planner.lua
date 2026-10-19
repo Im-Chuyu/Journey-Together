@@ -44,12 +44,45 @@ function M.RecipeValue(inst, recipe)
     local eater = inst.components.eater
     if eater == nil or not AcceptsType(eater.caneat, recipe.foodtype)
         or not AcceptsType(eater.preferseating, recipe.foodtype) then return end
-    local value = h * 3 + f + s * 2
+    local value = M.NutritionValue(inst, h, f, s)
     if inst.prefab == "wathgrithr" then
         if recipe.name == "meatballs" then value = value + 10000
         elseif recipe.name == "bonestew" then value = value * .01 end
     end
     return value
+end
+
+-- Recipe value follows the current deficit instead of treating every meal as
+-- a fixed hunger/healing bundle. This keeps high-sanity meals ahead of stew
+-- when sanity is the missing stat, and high-health meals ahead when health is
+-- dangerous. The fallback preserves the old useful ordering for fixtures or
+-- characters whose stats are temporarily unavailable.
+function M.NutritionValue(inst, health, hunger, sanity)
+    local stats = Food.GetStats ~= nil and Food.GetStats(inst) or nil
+    local hw, fw, sw = 3, 1, 2
+    if stats ~= nil then
+        local lowhealth = stats.healthpercent < .35
+        local all_low = stats.healthpercent < .35 and stats.hungerpercent < .35
+            and stats.sanitypercent < .35
+        if lowhealth or all_low then
+            hw, fw, sw = 12, 6, 3
+        elseif stats.sanitypercent < .60 then
+            hw, fw, sw = 2, 3, 12
+        elseif stats.hungerpercent < .65 then
+            hw, fw, sw = 3, 10, 3
+        else
+            -- With all three stats healthy, stock the most useful calories.
+            hw, fw, sw = 1, 8, 2
+        end
+        local deficit_mode = lowhealth or stats.hungerpercent < .65 or stats.sanitypercent < .60
+        if deficit_mode then
+            health = math.min(math.max(0, health or 0), math.max(0, stats.healthmax - stats.health))
+            hunger = math.min(math.max(0, hunger or 0), math.max(0, stats.hungermax - stats.hunger))
+            sanity = math.min(math.max(0, sanity or 0), math.max(0, stats.sanitymax - stats.sanity))
+        end
+    end
+    local value = (health or 0) * hw + (hunger or 0) * fw + (sanity or 0) * sw
+    return value > 0 and value or nil
 end
 
 -- Evaluate every equally likely top-priority result, without consuming RNG.
@@ -103,7 +136,8 @@ function M.EvaluateSpecific(inst, cooker, prefabs, wanted, stale_meat)
     if not Food.CanHealWithFood(inst) then health = 0 end
     local hunger = recipe.hunger or 0
     local sanity = recipe.sanity or 0
-    return health * 3 + hunger + sanity * 2, recipe.cooktime or 1
+    local value = M.NutritionValue(inst, health, hunger, sanity)
+    return value, recipe.cooktime or 1
 end
 
 function M.Pool(inst, fridges, grounds)
@@ -136,7 +170,7 @@ function M.Pool(inst, fridges, grounds)
             if item.components.edible ~= nil and inst.components.eater:CanEat(item)
                 and inst.components.eater:PrefersToEat(item) then
                 local health, hunger, sanity = Food.GetFoodDeltas(inst, item)
-                value = math.max(0, health * 3 + hunger + sanity * 2)
+                value = M.NutritionValue(inst, health, hunger, sanity) or 0
             end
             group = {prefab = item.prefab, count = 0, value = value, sources = {}}
             groups[item.prefab] = group

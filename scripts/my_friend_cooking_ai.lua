@@ -135,10 +135,13 @@ function M.GetAction(inst)
         end
         local fueled = best.components.fueled
         if fueled ~= nil and fueled:IsEmpty() then
-            local fuel = inventory:FindItem(function(item)
-                return (item.prefab == "log" or item.prefab == "cutgrass" or item.prefab == "twigs")
-                    and fueled:CanAcceptFuelItem(item)
-            end)
+            local fuel
+            for _, prefab in ipairs({"log", "charcoal", "twigs", "cutgrass"}) do
+                fuel = inventory:FindItem(function(item)
+                    return item.prefab == prefab and fueled:CanAcceptFuelItem(item)
+                end)
+                if fuel ~= nil then break end
+            end
             if fuel ~= nil then
                 local action = BufferedAction(inst, best, ACTIONS.ADDFUEL, fuel)
                 action:AddSuccessAction(function()

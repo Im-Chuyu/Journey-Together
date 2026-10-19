@@ -1,7 +1,7 @@
 local M = {}
 
 local PROTECTED = {glommerfuel = true, mandrake = true,
-    royaljelly = true, royal_jelly = true}
+    royaljelly = true, royal_jelly = true, honeycomb = true}
 local BIG_MEAT = {meat = true, cookedmeat = true, meat_cooked = true}
 
 function M.IsProtected(food)

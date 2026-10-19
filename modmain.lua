@@ -5,7 +5,8 @@ local InventoryAI = require("my_friend_inventory")
 local Characters = require("my_friend_characters")
 local Language = require("my_friend_strings")
 Language.language = GetModConfigData("language") or "zh"
-require("my_friend_voice").enabled = GetModConfigData("voice_enabled") ~= false
+local voice_enabled = GetModConfigData("voice_enabled") ~= false
+require("my_friend_voice").enabled = voice_enabled
 local command_wheel_key = GetModConfigData("command_wheel_key") or "r"
 command_wheel_key = type(command_wheel_key) == "string" and command_wheel_key:lower() or "r"
 local command_wheel_key_code = command_wheel_key:match("^[a-z]$") ~= nil
@@ -45,14 +46,19 @@ local Home = require("my_friend_home")
 -- scripts/prefabs/my_friend_characters.lua rebuilds the real character.
 PrefabFiles = { "my_friend_characters" }
 
--- Each sound bank contains 70 dialogue events. Register every supplied bank
--- used by the current dialogue catalogue.
-Assets = Assets or {}
-for sound_bank = 1, 10 do
-    table.insert(Assets, Asset("SOUNDPACKAGE",
-        "sound/fs" .. sound_bank .. ".fev"))
-    table.insert(Assets, Asset("SOUND",
-        "sound/fs" .. sound_bank .. ".fsb"))
+-- Each sound bank contains 70 dialogue events. Custom banks are needed only
+-- for enabled Chinese voices; English/Russian use the character's native
+-- voice, and disabled voices must not reserve FMOD memory during world load.
+local custom_voice_enabled = voice_enabled
+    and (Language.language == "zh" or Language.language == "zh_tw")
+if custom_voice_enabled then
+    Assets = Assets or {}
+    for sound_bank = 1, 10 do
+        table.insert(Assets, Asset("SOUNDPACKAGE",
+            "sound/fs" .. sound_bank .. ".fev"))
+        table.insert(Assets, Asset("SOUND",
+            "sound/fs" .. sound_bank .. ".fsb"))
+    end
 end
 
 if _G.SaveGame ~= nil then
@@ -805,6 +811,7 @@ local function ConfigureFriend(inst)
     inst._my_friend_panel_task = inst:DoPeriodicTask(.5, PushPanelData)
     inst._my_friend_greeting_task = inst:DoPeriodicTask(CoreAI.GREETING_INTERVAL, CoreAI.UpdateGreetings)
     Dialogue.Configure(inst)
+    require("my_friend_contextual_events").ConfigureFriend(inst)
     require("my_friend_survival_ai").ConfigureShelter(inst)
     require("my_friend_offscreen").Configure(inst)
     inst._my_friend_care_task = inst:DoPeriodicTask(5, require("my_friend_social_ai").UpdateCare)
@@ -1756,6 +1763,7 @@ end)
 local function ConfigureFriendWorld(world)
     if world == nil or not world.ismastersim or world._my_friend_world_configured then return end
     world._my_friend_world_configured = true
+    require("my_friend_contextual_events").AttachWorld(world)
     Possess.Init(world)
     _G.print("[MyFriends] World lifecycle initialized: " .. tostring(world.prefab)
         .. ", shard=" .. tostring(_G.TheShard:GetShardId()))

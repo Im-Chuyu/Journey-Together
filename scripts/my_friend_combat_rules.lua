@@ -89,6 +89,9 @@ function M.IsPriorityEnemy(target)
 end
 
 function M.CanAttack(target, inst)
+    local hand = inst ~= nil and inst.components ~= nil and inst.components.inventory ~= nil
+        and inst.components.inventory:GetEquippedItem(EQUIPSLOTS.HANDS) or nil
+    if hand ~= nil and (hand.prefab == "torch" or hand:HasTag("torch")) then return false end
     return target ~= nil and target:IsValid()
         and not M.IsBeyondFollowCombatRange(inst)
         and not M.IsFollowTargetPaused(inst, target)

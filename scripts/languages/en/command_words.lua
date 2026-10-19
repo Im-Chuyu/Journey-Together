@@ -13,7 +13,6 @@ return {
               "don't move", "hold still"} },
     { id = "wait_for_me", en = {"wait for me", "wait up", "wait"} },
     { id = "set_base", en = {"this is home", "new base", "make this home", "our base", "home base"} },
-    { id = "allow_pickup", en = {"yes", "sure", "go ahead", "ok", "okay", "no problem"} },
     { id = "follow", en = {"follow me", "come with me", "come here", "find me",
               "stay with me", "let's go", "come back"} },
     { id = "ask_activity", en = {"what are you doing", "what are you up to"} },

@@ -74,6 +74,7 @@ function M.Feed(act)
         or target.sg == nil or not target.sg:HasStateTag("idle")
         or target.sg:HasAnyStateTag("busy", "attacking", "sleeping")
         or target:HasAnyTag("playerghost", "wereplayer")
+        or require("my_friend_food_ai").IsNonFoodMaterial(food)
         or target.components.eater == nil or food.components.edible == nil
         or food.components.inventoryitem == nil
         or food.components.inventoryitem:GetGrandOwner() ~= player then return false end

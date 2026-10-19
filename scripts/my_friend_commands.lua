@@ -110,7 +110,7 @@ local function HasChinese(text)
 end
 
 local function MaybeRefuseChinese(friend, command_text, id)
-    if id == nil or id == "allow_pickup" or id == "wathgrithr_lightning_spear" or not HasChinese(command_text)
+    if id == nil or id == "wathgrithr_lightning_spear" or not HasChinese(command_text)
         or math.random() >= .03 then return false end
     Dialogue.Reply(friend, "command_refuse_human")
     return true
@@ -148,6 +148,8 @@ function M.Clear(friend)
     end
     friend._my_friend_command = nil
     friend._my_friend_rockfruit_question = nil
+    friend._my_friend_sugar_question = nil
+    friend._my_friend_sugar_approved = nil
     friend._my_friend_seat_request = nil
     friend._my_friend_follow_requested_until = nil
     friend._my_friend_follow_settle_until = nil
@@ -245,12 +247,9 @@ end
 
 local function FindCommand(friend, text)
     local id, length = nil, 0
-    local answering = Home.IsAskPending(friend) or friend._my_friend_ghost_return_pending
     for _, command in ipairs(COMMANDS) do
-        -- Answers only count while a question is pending. Longest keyword
-        -- wins; configuration order breaks ties.
-        if (command.id ~= "allow_pickup" or answering)
-            and (command.character == nil or command.character == friend.prefab)
+        -- Longest keyword wins; configuration order breaks ties.
+        if (command.character == nil or command.character == friend.prefab)
             and (command.id ~= "stop_fish" or friend._my_friend_command ~= nil
                 and friend._my_friend_command.id == "fish")
             and (command.id ~= "revive" or friend:HasTag("playerghost")) then
@@ -269,50 +268,33 @@ function M.Dispatch(friend, player, message, from_wheel)
         or friend == nil or not friend:IsValid() or friend.components.health == nil then return false end
     message = message:match("^%s*(.-)%s*$")
     local addressed_message = AddressedMessage(friend, message)
-    if require("my_friend_wathgrithr").Answer(friend, player, addressed_message or message) then
-        return true
-    end
-    -- A pending backpack question also accepts a short reply without a name.
-    -- Exact answers prevent "not okay" / "不可以" granting permission.
-    if require("my_friend_carry_backpack").Answer(friend, player, addressed_message or message) then
-        return true
-    end
-    -- Public commands still need an address; their follow/permission checks
-    -- remain in the handlers below, independently of chat parsing.
-    if addressed_message == nil then return false end
-    local text = addressed_message:lower()
-    -- The rock-fruit command has a short follow-up question. Handle it before
-    -- normal keyword matching so "敲" cannot accidentally become "挖矿".
-    local rock_question = friend._my_friend_rockfruit_question
-    if rock_question ~= nil and rock_question.player == player
-        and GetTime() < rock_question.deadline then
-        if Contains(text, "不敲") or Contains(text, "别敲") or Contains(text, "不用敲")
-            or Contains(text, "不要敲") then
-            friend._my_friend_rockfruit_question = nil
-            local command = friend._my_friend_command
-            if command ~= nil and command.id == "rockfruit" then
-                command.phase = "store"
-                command.deadline = GetTime() + 180
-            end
-            Reply(friend, "rockfruit_store_answer")
-            return true
-        elseif Contains(text, "敲") or Contains(text, "要敲")
-            or Contains(text, "继续") or Contains(text, "好") then
-            friend._my_friend_rockfruit_question = nil
-            local command = friend._my_friend_command
-            if command ~= nil and command.id == "rockfruit" then
-                -- Collected rock fruit is an inventory item, while the native
-                -- MINE action only accepts the ground rock entity.  Let the
-                -- command state drop the collected raw fruit first, then
-                -- continue through the same native mining path used by a
-                -- direct "敲石果" command.
-                command.phase = "crack"
-                command.deadline = GetTime() + 180
-            end
-            Reply(friend, "rockfruit_mine_answer")
+    if not from_wheel then
+        -- A contextual reply never consumes an explicit wheel command.
+        if require("my_friend_wathgrithr").Answer(friend, player, addressed_message or message)
+            or require("my_friend_carry_backpack").Answer(friend, player, addressed_message or message) then
             return true
         end
+        local reply = addressed_message or message
+        if require("my_friend_food_ai").AnswerSugar(friend, player, reply)
+            or require("my_friend_command_special_gather").AnswerRockFruit(friend, player, reply) then
+            return true
+        end
+        if (Home.IsAskPending(friend) or friend._my_friend_ghost_return_pending)
+            and require("my_friend_chat_replies").Match("permission", reply) == "yes" then
+            if friend._my_friend_ghost_return_pending then
+                if friend._my_friend_ghost_return_player ~= player then return false end
+                local affinity = friend.components.my_friend_affinity
+                if affinity == nil then return false end
+                friend._my_friend_ghost_return_pending, friend._my_friend_ghost_return_player = nil, nil
+                affinity:RequestFollow(player)
+                return true
+            end
+            return Home.GrantPickup(friend, player)
+        end
     end
+    -- New commands need a name; replies above only need a live question.
+    if addressed_message == nil then return false end
+    local text = addressed_message:lower()
     local pet = require("my_friend_pets").Parse(text)
     if pet ~= nil then
         if not from_wheel and MaybeRefuseChinese(friend, addressed_message, "adopt_pet") then return true end
@@ -421,14 +403,6 @@ function M.Dispatch(friend, player, message, from_wheel)
         return Dialogue.AnswerActivity(friend)
     end
     if id == nil or affinity == nil then return false end
-    if friend._my_friend_ghost_return_pending and id == "allow_pickup" then
-        local return_player = friend._my_friend_ghost_return_player
-        if return_player ~= player then return false end
-        friend._my_friend_ghost_return_pending = nil
-        friend._my_friend_ghost_return_player = nil
-        affinity:RequestFollow(player)
-        return true
-    end
     -- A dead companion can still be ordered to follow its leader, but it must
     -- not enter any ordinary work, food, or inventory command while ghosted.
     if friend:HasTag("playerghost") and id ~= "follow" and id ~= "stop_follow" then
@@ -437,6 +411,7 @@ function M.Dispatch(friend, player, message, from_wheel)
     if id == "follow" then
         if not affinity:RequestFollow(player) then Reply(friend, "follow_unfamiliar") return false end
         if Policy.GetLeader(friend) == player then
+            require("my_friend_contextual_events").RecordFollowStarted(friend, player)
             require("my_friend_combat_rules").DisengageForFollow(friend, player)
             require("my_friend_ghost_commands").Cancel(friend)
             M.Clear(friend)
@@ -473,7 +448,6 @@ function M.Dispatch(friend, player, message, from_wheel)
         Reply(friend, "ride_stop_ok")
         return true
     end
-    if id == "allow_pickup" then return Home.GrantPickup(friend, player) end
     -- Sets how the next character change disposes of the companion's things.
     -- Gated by the same permission as the change itself, so a passer-by cannot
     -- arrange for the companion's gear to leave the world with it. Answered
@@ -532,7 +506,10 @@ function M.Dispatch(friend, player, message, from_wheel)
     end
     if id == "hold_position" then
         -- Stop following and live around this exact spot from now on.
-        affinity:StopFollowing(player)
+        local stopped = affinity:StopFollowing(player)
+        if stopped then
+            require("my_friend_contextual_events").RecordFollowStopped(friend, player)
+        end
         Home.Set(friend, friend:GetPosition(), "hold")
         Reply(friend, "describe_hold")
         Dialogue.Say(friend, "hold_position", player)
@@ -546,7 +523,11 @@ function M.Dispatch(friend, player, message, from_wheel)
     end
     if id == "stop_follow" then
         require("my_friend_ghost_commands").Cancel(friend)
-        return affinity:StopFollowing(player)
+        local stopped = affinity:StopFollowing(player)
+        if stopped then
+            require("my_friend_contextual_events").RecordFollowStopped(friend, player)
+        end
+        return stopped
     end
     if id == "stop_task" then
         friend._my_friend_command_drop = affinity:CanTakeItems(player) and true or nil

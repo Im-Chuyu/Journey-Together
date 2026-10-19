@@ -10,7 +10,7 @@ local ACTIONS = {menu = true, roster = true, bot = true, invite = true, reply = 
     cancel = true, move = true, resume = true, resign = true, leave = true,
     chat = true, black = true, black_reply = true, history = true,
     pass = true, count = true, draw_offer = true, offer_reply = true,
-    mark = true, confirm = true, play_on = true}
+    mark = true, confirm = true, play_on = true, undo = true, undo_reply = true}
 local function Active(game) return game ~= nil and not game.finished end
 local function Cancel(task) if task ~= nil then task:Cancel() end end
 local function Name(entity)
@@ -94,8 +94,9 @@ function Service:Snapshot(game, userid, open)
             and (participants[2].id == userid and 0 or 1) or 2, open = open == true,
         chat = game.chat, chat_seq = game.chat_seq, black_offer = game.black_offer, version = game.version or 0,
         offer = game.offer, dead = s.dead, confirmed = s.confirmed,
+        undo_offer = game.undo_offer,
         score = s.score or s.preview,
-        captures = s.captures, passes = s.passes}
+        captures = s.captures, passes = s.passes, count = s.count}
 end
 function Service:AddChat(game, participant, kind, value, quiet)
     game.chat_seq = game.chat_seq + 1
@@ -154,11 +155,15 @@ end
 function Service:ClearBlackOffer(game)
     Cancel(game.black_task); game.black_task, game.black_offer = nil, nil
 end
+function Service:ClearUndo(game)
+    Cancel(game.undo_task); game.undo_task, game.undo_offer = nil, nil
+end
 function Service:MakeBlack(game, userid)
     if game.participants[2].id ~= userid then return end
     Cancel(game.ai_task); game.ai_task = nil
     self:ClearBlackOffer(game)
     self:ClearOffer(game)
+    self:ClearUndo(game)
     game.participants[1], game.participants[2] = game.participants[2], game.participants[1]
     local revision = game.state.revision + 1
     game.state = Catalog.Get(game.game).rules.New(); game.state.revision = revision
@@ -190,6 +195,7 @@ function Service:Drop(game)
     Cancel(game.ai_task); Cancel(game.idle_task); Cancel(game.expiry_task)
     self:ClearBlackOffer(game)
     self:ClearOffer(game)
+    self:ClearUndo(game)
     self:Unlisten(game)
     for _, p in ipairs(game.participants) do
         if self.byuser[p.id] == game.id then self.byuser[p.id] = nil end
@@ -217,6 +223,7 @@ function Service:Finish(game, reason, winner)
     self:OutcomeTalk(game)
     self:ClearBlackOffer(game)
     self:ClearOffer(game)
+    self:ClearUndo(game)
     -- Finished boards/chats are transient. Only this compact result is durable.
     local archive = History.ForWorld(self.world)
     if archive ~= nil then
@@ -302,7 +309,7 @@ function Service:ClearOffer(game)
     Cancel(game.offer_task); game.offer_task, game.offer = nil, nil
 end
 function Service:AfterGo(game)
-    self:ClearOffer(game); self:ClearBlackOffer(game)
+    self:ClearOffer(game); self:ClearBlackOffer(game); self:ClearUndo(game)
     Cancel(game.ai_task); game.ai_task = nil
     if game.state.status == "scoring" then
         for side, p in ipairs(game.participants) do
@@ -311,6 +318,44 @@ function Service:AfterGo(game)
     end
     if game.state.status == "won" or game.state.status == "draw" then self:Finish(game)
     else self:Touch(game); self:Publish(game); self:ScheduleAI(game) end
+end
+function Service:UndoRequest(player, game, action, data)
+    local rules = Catalog.Get(game.game).rules
+    if rules.CanUndo == nil or rules.Undo == nil or game.state.status ~= "playing" then
+        self:Error(player, "undo_unavailable"); return
+    end
+    if action == "undo_reply" then
+        local offer = game.undo_offer
+        if offer == nil or offer.id ~= data.offer or offer.to ~= player.userid
+            or type(data.accept) ~= "boolean" then self:Error(player, "forbidden"); return end
+        if data.accept then
+            if not rules.Undo(game.state, 1) then self:Error(player, "undo_unavailable"); return end
+            self:ClearUndo(game); self:Touch(game); self:Publish(game); self:ScheduleAI(game)
+        else self:ClearUndo(game); self:Publish(game) end
+        return
+    end
+    if data.revision ~= game.state.revision then
+        self:Emit(player.userid, "state", self:Snapshot(game, player.userid)); self:Error(player, "stale"); return
+    end
+    if game.undo_offer ~= nil then self:Error(player, "undo_pending_error"); return end
+    local first, second = game.participants[1], game.participants[2]
+    local has_bot = first.bot or second.bot
+    if has_bot or first.id == second.id then
+        local plies = has_bot and math.min(2, #(game.state.history or {})) or 1
+        Cancel(game.ai_task); game.ai_task = nil
+        if not rules.Undo(game.state, plies) then self:Error(player, "undo_unavailable"); return end
+        self:Touch(game); self:Publish(game); self:ScheduleAI(game)
+        return
+    end
+    local opponent = first.id == player.userid and second or first
+    local offer = {id = self:ID("u"), from = player.userid, to = opponent.id, name = Name(player)}
+    game.undo_offer = offer
+    game.undo_task = self.world:DoTaskInTime(30, function()
+        if self.games[game.id] == game and game.undo_offer == offer then
+            self:ClearUndo(game); self:Publish(game)
+        end
+    end)
+    self:Publish(game)
 end
 function Service:AcceptOffer(game, kind)
     self:ClearOffer(game)
@@ -377,7 +422,8 @@ function Service:Request(player, action, data, friend)
     player._my_friend_games_limits = limits
     if now < (limits[action] or 0) then self:Error(player, "rate") return end
     limits[action] = now + (action == "invite" and 2 or action == "chat" and .8
-        or (action == "black" or action == "count" or action == "draw_offer") and 5 or action == "history" and .5 or .08)
+        or (action == "black" or action == "count" or action == "draw_offer" or action == "undo") and 5
+        or action == "history" and .5 or .08)
     if action == "history" then
         if not self:Access(player, friend) or not self:CanPlay(player) then self:Error(player, "forbidden"); return end
         if type(data.page) ~= "number" or data.page % 1 ~= 0 or data.page < 1 then return end
@@ -435,7 +481,8 @@ function Service:Request(player, action, data, friend)
     elseif action == "move" or action == "resign" or action == "resume" or action == "leave"
         or action == "chat" or action == "black" or action == "black_reply"
         or action == "pass" or action == "count" or action == "draw_offer" or action == "offer_reply"
-        or action == "mark" or action == "confirm" or action == "play_on" then
+        or action == "mark" or action == "confirm" or action == "play_on"
+        or action == "undo" or action == "undo_reply" then
         local game = self:Current(player.userid)
         if game == nil or action ~= "resume" and game.id ~= data.id then self:Error(player, "finished") return end
         if action == "resume" then self:Emit(player.userid, "state", self:Snapshot(game, player.userid, true)) return end
@@ -453,12 +500,16 @@ function Service:Request(player, action, data, friend)
             self:AddChat(game, p, data.kind, value, true); self:BotTalk(game, false, true); self:Publish(game); return
         end
         if not Active(game) then self:Error(player, "finished") return end
+        if action == "undo" or action == "undo_reply" then
+            self:UndoRequest(player, game, action, data); return
+        end
         if action == "pass" or action == "count" or action == "draw_offer" or action == "offer_reply"
             or action == "mark" or action == "confirm" or action == "play_on" then
             self:GoRequest(player, game, action, data); return
         end
         if action == "black" then
             if game.participants[1].id == player.userid then self:Error(player, "already_black") return end
+            if (game.state.count or 0) > 2 then self:Error(player, "black_unavailable"); return end
             if game.black_offer ~= nil then self:Error(player, "black_pending") return end
             if game.participants[1].bot then self:MakeBlack(game, player.userid); return end
             local offer = {id = self:ID("b"), from = player.userid, name = Name(player)}
@@ -491,6 +542,7 @@ function Service:Request(player, action, data, friend)
         local ok, reason = Catalog.Get(game.game).rules.Play(game.state, data.x, data.y)
         if not ok then self:Error(player, reason) return end
         self:ClearOffer(game)
+        self:ClearUndo(game)
         self:Cheer(game, player, false, true)
         if game.state.status ~= "playing" then self:Finish(game)
         else self:Touch(game); self:Publish(game); self:ScheduleAI(game) end

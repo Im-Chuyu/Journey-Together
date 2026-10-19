@@ -626,7 +626,19 @@ function M.OnColdDamage(inst)
     if now < (inst._my_friend_cold_check_after or 0) then return end
     inst._my_friend_cold_check_after = now + 1
     local source = require("my_friend_survival_ai").FindDamagingTemperatureSource(inst, true)
-    if source ~= nil then RememberHazard(inst, source, "cold") end
+    if source ~= nil then
+        RememberHazard(inst, source, "cold")
+        return
+    end
+    -- Summoned cold lights (for example `staffcoldlight`) use the regular
+    -- heater component rather than temperatureoverrider. Remember their
+    -- bounded area when an actual cold damage event is received.
+    source = require("my_friend_survival_ai").FindDamagingHeatSource(inst)
+    if source ~= nil then
+        local radius = math.max(M.HAZARD_RETREAT_RADIUS,
+            math.sqrt(DistanceSq(inst, source)) + 2)
+        RememberHazard(inst, source, "cold", source:GetPosition(), radius)
+    end
 end
 
 function M.OnEnvironmentalDamage(inst, data)
@@ -900,17 +912,23 @@ local function IsWeaponBroken(item)
     return fueled ~= nil and fueled:IsEmpty()
 end
 
+function M.IsTorchWeapon(item)
+    return item ~= nil and item:IsValid() and (item.prefab == "torch"
+        or item:HasTag("torch"))
+end
+
 function M.FindBestCombatWeapon(inst, target)
     if not IsAlive(inst) or target ~= nil and not IsAlive(target) then return end
     local inventory = inst.components.inventory
     if inventory == nil then return end
     local best = inventory:GetEquippedItem(EQUIPSLOTS.HANDS)
+    if M.IsTorchWeapon(best) then best = nil end
     if IsWeaponBroken(best) then best = nil end
     local bestdamage = WeaponDamage(inst, target, best) or 0
     if inventory.ReferenceAllItems ~= nil then
         for _, item in ipairs(inventory:ReferenceAllItems()) do
             local equippable = item:IsValid() and item.components ~= nil and item.components.equippable or nil
-            local damage = not IsWeaponBroken(item)
+            local damage = not M.IsTorchWeapon(item) and not IsWeaponBroken(item)
                 and WeaponDamage(inst, target, item) or nil
             if damage ~= nil and damage > bestdamage
                 and equippable ~= nil and equippable.equipslot == EQUIPSLOTS.HANDS
@@ -1079,6 +1097,16 @@ function M.CanCounterAttack(inst, target)
     end
     local inventory = inst.components.inventory
     local hand = inventory:GetEquippedItem(EQUIPSLOTS.HANDS)
+    -- A torch has a weapon component in vanilla, but it is lighting equipment,
+    -- never a combat weapon for the companion. Refuse the combat decision while
+    -- one is in hand so no attack action can be buffered around it.
+    if M.IsTorchWeapon(hand) then
+        if inventory:CanAcceptCount(hand, 1) > 0 then
+            local removed = inventory:Unequip(EQUIPSLOTS.HANDS)
+            if removed ~= nil then inventory:GiveItem(removed, nil, inst:GetPosition()) end
+        end
+        hand = nil
+    end
     if require("my_friend_equipment").FindDroppedCombatItem(inst) ~= nil then
         EquipCombatDefense(inst, target)
         return false

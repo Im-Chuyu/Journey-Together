@@ -207,7 +207,8 @@ local function GetPlan(inst)
     -- Automatic cooking supplies the companion; once a usable meal already
     -- exists, do not consume every remaining ingredient just because a pot is
     -- nearby. Explicit cook commands still pass through.
-    if wanted == nil and not Food.NeedsFoodSupply(inst) and HasReadyMeal(inst) then
+    if wanted == nil and not Food.NeedsFoodSupply(inst) and HasReadyMeal(inst)
+        and not Food.NeedsRecipeRecovery(inst) then
         inst._my_friend_recipe_cache = {pot = nil, plan = nil, untiltime = GetTime() + 10}
         return
     end
@@ -235,7 +236,7 @@ local function FindIngredients(inst, pot, remaining)
     local _, fridges, grounds = Nearby(inst, pot)
     local requested = inst._my_friend_recipe_requested ~= nil
     local pool = Planner.Pool(inst, (Owned(inst, pot) or Food.NeedsFoodSupply(inst)
-        or not HasReadyMeal(inst) or requested)
+        or Food.NeedsRecipeRecovery(inst) or not HasReadyMeal(inst) or requested)
         and fridges or {}, grounds)
     local available, carried, stored, ground, stale = {}, nil, nil, nil, nil
     for _, group in ipairs(pool) do
@@ -276,7 +277,8 @@ end
 
 function M.Score(inst, context)
     if not CanPlan(inst) or context ~= nil and (context.threat or context.dark
-        or context.thermal or context.hurt or context.hurt_evade) then return 0 end
+        or context.thermal and not context.thermal_shade
+        or context.hurt or context.hurt_evade) then return 0 end
     local pot = GetPlan(inst)
     if pot == nil or not Accessible(inst, pot) or pot.components.stewer:IsCooking() then return 0 end
     return Owned(inst, pot) and 102 or Food.NeedsFoodSupply(inst) and 99 or 68

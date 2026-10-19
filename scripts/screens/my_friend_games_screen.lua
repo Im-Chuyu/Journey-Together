@@ -209,6 +209,20 @@ function GameScreen:BuildBoard()
             self.confirm_leave = nil
         else self.confirm_leave = true; self.exit_button.label:SetString(L.Get("confirm_leave")) end
     end)
+    self.undo_button = UI.Button(self.root, L.Get("undo"), -305, -43, 210, 32, function()
+        local match = self.client.match
+        if match ~= nil then self.client.Send("undo", {id = match.id, revision = match.revision}) end
+    end)
+    self.undo_prompt = UI.Text(self.root, "", -305, -72, 18)
+    self.undo_prompt:SetRegionSize(240, 45)
+    local function UndoReply(accept)
+        local match = self.client.match
+        if match ~= nil and match.undo_offer ~= nil then
+            self.client.Send("undo_reply", {id = match.id, offer = match.undo_offer.id, accept = accept})
+        end
+    end
+    self.undo_accept = UI.Button(self.root, L.Get("yes"), -360, -105, 100, 30, function() UndoReply(true) end)
+    self.undo_decline = UI.Button(self.root, L.Get("decline"), -250, -105, 100, 30, function() UndoReply(false) end)
     self.go_buttons = {}
     local function Action(action)
         local match = self.client.match
@@ -258,6 +272,10 @@ function GameScreen:RefreshBoard()
     local playing = match ~= nil and match.status == "playing"
     local scoring = match ~= nil and match.status == "scoring"
     local ownturn = playing and (match.side == 0 or match.side == match.turn)
+    local stones = match ~= nil and match.count or 0
+    if match ~= nil and match.count == nil then
+        for _, value in ipairs(match.board or {}) do if value ~= 0 then stones = stones + 1 end end
+    end
     self.board:Refresh(match)
     if match ~= nil then
         self.black_name:SetTruncatedString(L.Get("black") .. ": " .. match.participants[1].name, 190, nil, true)
@@ -275,21 +293,47 @@ function GameScreen:RefreshBoard()
     end
     for i = 1, 2 do self:RefreshAvatar(i, match ~= nil and match.participants[i] or nil) end
     self.black_button:Hide(); self.black_accept:Hide(); self.black_decline:Hide(); self.black_prompt:Hide(); self.rules:Show()
+    self.undo_button:Hide(); self.undo_prompt:Hide(); self.undo_accept:Hide(); self.undo_decline:Hide()
     if playing or scoring then
         self.bot_button:Hide(); self.player_button:Hide()
         local offer = match.black_offer
         if offer ~= nil and match.side == 1 then
             self.black_accept:Show(); self.black_decline:Show(); self.black_prompt:Show(); self.rules:Hide()
-        elseif playing then
+        elseif playing and stones <= 2 then
             self.black_button:Show()
             if match.side == 2 and offer == nil then self.black_button:Enable() else self.black_button:Disable() end
             self.black_button.label:SetString(L.Get(offer ~= nil and "black_pending" or "request_black"))
         end
     else self.bot_button:Show(); self.bot_button:Enable(); self.player_button:Show(); self.player_button:Enable() end
     self:RefreshGo(match, playing, scoring)
-    if match ~= nil then self.exit_button:Show() else self.exit_button:Hide() end
+    if match ~= nil then
+        self.exit_button:Show()
+        self.exit_button:SetPosition(-305, match.game == "go" and -140 or -105)
+    else self.exit_button:Hide() end
+    self:RefreshUndo(match, playing)
     self.confirm_leave = nil; self.exit_button.label:SetString(L.Get("leave"))
     self.chat:Refresh()
+end
+function GameScreen:RefreshUndo(match, playing)
+    if match == nil or not playing then return end
+    local has_stone = false
+    for _, value in ipairs(match.board or {}) do if value ~= 0 then has_stone = true; break end end
+    if not has_stone and match.undo_offer == nil then return end
+    local y = match.game == "go" and -105 or -43
+    if match.undo_offer == nil then
+        self.undo_button:SetPosition(-305, y); self.undo_button:Show()
+        return
+    end
+    local offer = match.undo_offer
+    self.undo_prompt:SetPosition(-305, match.game == "go" and -72 or -43)
+    self.undo_prompt:Show()
+    if offer.to == ThePlayer.userid then
+        self.undo_prompt:SetString(L.Format("undo_question", offer.name))
+        self.undo_accept:SetPosition(-360, y); self.undo_decline:SetPosition(-250, y)
+        self.undo_accept:Show(); self.undo_decline:Show()
+    else
+        self.undo_prompt:SetString(L.Get("undo_pending"))
+    end
 end
 function GameScreen:RefreshGo(match, playing, scoring)
     for _, button in pairs(self.go_buttons) do button:Hide() end
@@ -305,7 +349,7 @@ function GameScreen:RefreshGo(match, playing, scoring)
     if not playing and not scoring then return end
     self.go_buttons.draw_offer:Show(); self.go_resign:Show()
     if playing then
-        self.black_button:SetPosition(-305, -92)
+        self.black_button:SetPosition(-305, -66)
         self.go_buttons.pass:Show(); self.go_buttons.count:Show()
         if match.side == 0 or match.side == match.turn then self.go_buttons.pass:Enable() else self.go_buttons.pass:Disable() end
     else

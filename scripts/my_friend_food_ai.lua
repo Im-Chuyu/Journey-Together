@@ -38,6 +38,8 @@ local FORBIDDEN_FOOD_PREFABS = {
 local AUTONOMOUS_FORBIDDEN_FOOD_PREFABS = {
     deerclops_eyeball = true,
     minotaurhorn = true,
+    jellybean = true,
+    charcoal = true,
 }
 
 function M.IsForbiddenFood(food)
@@ -45,6 +47,11 @@ function M.IsForbiddenFood(food)
     local prefab = type(food) == "string" and food or food.prefab
     return FORBIDDEN_FOOD_PREFABS[prefab] == true
         or AUTONOMOUS_FORBIDDEN_FOOD_PREFABS[prefab] == true
+end
+
+function M.IsNonFoodMaterial(food)
+    local prefab = type(food) == "string" and food or food ~= nil and food.prefab or nil
+    return prefab == "charcoal"
 end
 
 function M.Configure(inst)
@@ -105,6 +112,221 @@ local function GetStats(inst)
         sanitymax = sanitymax,
         sanitypercent = Clamp(sanity.current / sanitymax, 0, 1),
     }
+end
+
+function M.GetStats(inst) return GetStats(inst) end
+
+function M.NeedsRecipeRecovery(inst)
+    local stats = GetStats(inst)
+    return stats ~= nil and (stats.healthpercent < .90
+        or stats.hungerpercent < .65 or stats.sanitypercent < .60)
+end
+
+local SUGAR_SCAN_COOLDOWN = 4 * 60
+local function IsSugar(item)
+    return item ~= nil and item:IsValid() and item.prefab == "jellybean"
+        and item.components ~= nil and item.components.edible ~= nil
+        and item.components.inventoryitem ~= nil
+end
+
+local function CanEatSugar(inst, item)
+    local eater = inst.components.eater
+    local ii = item ~= nil and item.components ~= nil and item.components.inventoryitem or nil
+    return IsSugar(item) and ii ~= nil and not ii.islockedinslot
+        and eater ~= nil and eater:CanEat(item) and eater:PrefersToEat(item)
+        and not require("my_friend_food_storage").IsReserved(inst, item)
+end
+
+local function HasEnoughHealingFood(inst, stats)
+    local cached = inst._my_friend_sugar_healing_cache
+    if cached ~= nil and GetTime() < cached.untiltime then return cached.enough end
+    local deficit = math.max(0, stats.healthmax - stats.health)
+    if deficit <= 0 then
+        inst._my_friend_sugar_healing_cache = {enough = true, untiltime = GetTime() + 1.5}
+        return true
+    end
+    local total = 0
+    for _, item in ipairs(require("my_friend_food_storage").ReferenceItems(inst)) do
+        if item ~= nil and item:IsValid() and not M.IsForbiddenFood(item)
+            and item.components ~= nil and item.components.edible ~= nil
+            and item.components.inventoryitem ~= nil
+            and not item.components.inventoryitem.islockedinslot
+            and item.components.inventoryitem:GetGrandOwner() == inst
+            and not require("my_friend_food_storage").IsReserved(inst, item)
+            and inst.components.eater:CanEat(item)
+            and inst.components.eater:PrefersToEat(item) then
+            local health = GetFoodDeltas(inst, item)
+            if health > 0 then
+                local stack = item.components.stackable
+                local count = not inst.components.eater.eatwholestack and stack ~= nil and stack:StackSize() or 1
+                total = total + health * count
+            end
+        end
+    end
+    local enough = total >= deficit
+    inst._my_friend_sugar_healing_cache = {enough = enough, untiltime = GetTime() + 1.5}
+    return enough
+end
+
+local function CanSugarSource(inst, source)
+    return source ~= nil and source:IsValid() and source.components ~= nil
+        and source.components.container ~= nil
+        and not source:HasAnyTag("INLIMBO", "burnt", "fire")
+        and not source.components.container.readonlycontainer
+        and not source.components.container:IsRestricted(inst)
+        and not source.components.container:IsOpenedByOthers(inst)
+        and require("my_friend_inventory").CanWithdrawFrom(inst, source)
+        and require("my_friend_policy").InRange(inst, source)
+        and inst:GetCurrentPlatform() == source:GetCurrentPlatform()
+end
+
+local function FindCarriedSugar(inst)
+    for _, item in ipairs(require("my_friend_food_storage").ReferenceItems(inst)) do
+        if CanEatSugar(inst, item) and item.components.inventoryitem:GetGrandOwner() == inst then
+            return item
+        end
+    end
+end
+
+local function FindSugar(inst)
+    local carried = FindCarriedSugar(inst)
+    if carried ~= nil then return carried, inst end
+    if TheSim == nil or inst.Transform == nil then return end
+    local x, y, z = inst.Transform:GetWorldPosition()
+    for _, entity in ipairs(TheSim:FindEntities(x, y, z, 20, nil,
+        {"INLIMBO", "burnt", "fire"})) do
+        local inventoryitem = entity.components ~= nil and entity.components.inventoryitem or nil
+        if CanEatSugar(inst, entity) and inventoryitem.owner == nil and inventoryitem.canbepickedup
+            and entity:HasTag("_inventoryitem")
+            and entity:GetCurrentPlatform() == inst:GetCurrentPlatform()
+            and require("my_friend_policy").InRange(inst, entity) then
+            return entity, nil
+        end
+        if CanSugarSource(inst, entity) then
+            for _, item in ipairs(entity.components.container:GetAllItems()) do
+                if CanEatSugar(inst, item) and item.components.inventoryitem.owner == entity then
+                    return item, entity
+                end
+            end
+        end
+    end
+end
+
+function M.AnswerSugar(inst, player, text)
+    local pending = inst ~= nil and inst._my_friend_sugar_question or nil
+    if pending == nil or pending.player ~= player
+        or require("my_friend_policy").GetLeader(inst) ~= player
+        or GetTime() >= pending.deadline then return false end
+    local answer = require("my_friend_chat_replies").Match("sugar", text)
+    if answer == "yes" then
+        inst._my_friend_sugar_question = nil
+        inst._my_friend_sugar_approved = pending
+        pending.deadline = GetTime() + 30
+        require("my_friend_dialogue").RandomReply(inst, "sugar_accept")
+        inst._my_friend_replan_requested = true
+        return true
+    elseif answer == "no" then
+        inst._my_friend_sugar_question = nil
+        inst._my_friend_sugar_approved = nil
+        require("my_friend_dialogue").RandomReply(inst, "sugar_decline")
+        inst._my_friend_replan_requested = true
+        return true
+    end
+    return false
+end
+
+function M.GetSugarAction(inst)
+    local stats = GetStats(inst)
+    if stats == nil or stats.healthpercent >= .20 or HasEnoughHealingFood(inst, stats) then
+        inst._my_friend_sugar_question, inst._my_friend_sugar_approved = nil, nil
+        return
+    end
+    local now = GetTime()
+    local policy = require("my_friend_policy")
+    local leader = policy.GetLeader(inst)
+    if not policy.IsLocalPlayer(leader) or policy.DistanceSq(inst, leader) > 20^2 then
+        inst._my_friend_sugar_question, inst._my_friend_sugar_approved = nil, nil
+        return
+    end
+    local pending = inst._my_friend_sugar_question
+    if pending ~= nil and (now >= pending.deadline or pending.player ~= leader
+        or not CanEatSugar(inst, pending.item)) then
+        inst._my_friend_sugar_question = nil
+        pending = nil
+    end
+    local approved = inst._my_friend_sugar_approved
+    if approved ~= nil and (now >= approved.deadline or approved.player ~= leader) then
+        inst._my_friend_sugar_approved = nil
+        approved = nil
+    end
+    if approved == nil and pending ~= nil then return end
+    if approved == nil then
+        if now < (inst._my_friend_sugar_scan_after or 0) then return end
+        inst._my_friend_sugar_scan_after = now + SUGAR_SCAN_COOLDOWN
+        local item, source = FindSugar(inst)
+        if item == nil then return end
+        inst._my_friend_sugar_question = {player = leader, item = item, source = source,
+            deadline = now + 30}
+        require("my_friend_dialogue").RandomReply(inst, "sugar_ask", leader:GetDisplayName())
+        return
+    end
+    local item, source = approved.item, approved.source
+    if not CanEatSugar(inst, item) then inst._my_friend_sugar_approved = nil; return end
+    if source == inst and item.components.inventoryitem:GetGrandOwner() == inst then
+        local action = BufferedAction(inst, nil, ACTIONS.EAT, item)
+        action.validfn = function()
+            local current = GetStats(inst)
+            return current ~= nil and current.healthpercent < .20
+                and inst._my_friend_sugar_approved == approved and GetTime() < approved.deadline
+                and policy.GetLeader(inst) == approved.player
+                and CanEatSugar(inst, item) and item.components.inventoryitem:GetGrandOwner() == inst
+        end
+        action:AddSuccessAction(function()
+            inst._my_friend_sugar_approved = nil
+            inst._my_friend_sugar_healing_cache = nil
+        end)
+        action:AddFailAction(function()
+            inst._my_friend_sugar_approved = nil
+            inst._my_friend_sugar_healing_cache = nil
+        end)
+        return action
+    end
+    if source == nil then
+        local action = BufferedAction(inst, item, ACTIONS.PICKUP)
+        action.validfn = function()
+            return inst._my_friend_sugar_approved == approved and GetTime() < approved.deadline
+                and policy.GetLeader(inst) == approved.player
+                and CanEatSugar(inst, item) and item.components.inventoryitem.owner == nil
+                and item.components.inventoryitem.canbepickedup
+        end
+        action:AddSuccessAction(function()
+            if inst._my_friend_sugar_approved == approved
+                and item.components.inventoryitem:GetGrandOwner() == inst then
+                approved.source = inst
+            end
+        end)
+        action:AddFailAction(function() inst._my_friend_sugar_approved = nil end)
+        return action
+    end
+    if not CanSugarSource(inst, source) then inst._my_friend_sugar_approved = nil; return end
+    if inst.components.inventory:CanAcceptCount(item, 1) < 1 then return end
+    local action = BufferedAction(inst, source, ACTIONS.MY_FRIEND_WITHDRAW, item)
+    action._my_friend_withdraw_count = 1
+    action.validfn = function()
+        return inst._my_friend_sugar_approved == approved and GetTime() < approved.deadline
+            and policy.GetLeader(inst) == approved.player
+            and CanEatSugar(inst, item) and CanSugarSource(inst, source)
+            and item.components.inventoryitem.owner == source
+    end
+    action:AddSuccessAction(function()
+        if inst._my_friend_sugar_approved == approved then
+            local carried = FindCarriedSugar(inst)
+            if carried ~= nil then approved.item, approved.source = carried, inst
+            else inst._my_friend_sugar_approved = nil end
+        end
+    end)
+    action:AddFailAction(function() inst._my_friend_sugar_approved = nil end)
+    return action
 end
 
 function M.IsEmergency(inst, stats)
@@ -379,7 +601,7 @@ function M.GetEatAction(inst, commanded_food)
     if commanded_food == nil and GetTime() < (inst._my_friend_eat_after or 0)
         and not M.IsEmergency(inst) and inst.components.hunger:GetPercent() >= .2 then return end
     local food = commanded_food or M.FindBestFood(inst)
-    if food == nil then return end
+    if food == nil then return M.GetSugarAction(inst) end
     if commanded_food == nil and food.prefab ~= "meat_dried" and not M.IsEmergency(inst)
         and require("my_friend_recipe_cooking").ShouldReserve(inst, food) then return end
     local action = BufferedAction(inst, nil, ACTIONS.EAT, food)

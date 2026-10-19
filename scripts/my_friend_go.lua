@@ -22,6 +22,17 @@ local function Key(board)
     end
     return table.concat(chars)
 end
+local function Decode(key)
+    local board = {}
+    for i = 1, N * N, 4 do
+        local value = string.byte(key, math.floor((i - 1) / 4) + 1) or 0
+        board[i] = value % 4
+        board[i + 1] = math.floor(value / 4) % 4
+        board[i + 2] = math.floor(value / 16) % 4
+        board[i + 3] = math.floor(value / 64) % 4
+    end
+    return board
+end
 local function Group(board, first)
     local stones, seen, liberties, count = {first}, {[first] = true}, {}, 0
     local cursor = 1
@@ -42,7 +53,17 @@ end
 function M.New()
     local board = {}; for i = 1, N * N do board[i] = 0 end
     return {board = board, turn = 1, count = 0, revision = 0, status = "playing",
-        seen = {[Key(board)] = true}, passes = 0, captures = {0, 0}}
+        seen = {[Key(board)] = true}, passes = 0, captures = {0, 0}, history = {}}
+end
+local function PushHistory(s)
+    s.history = s.history or {}
+    s.history[#s.history + 1] = {key = Key(s.board), turn = s.turn, count = s.count,
+        last = s.last, passes = s.passes, captures = {s.captures[1], s.captures[2]}}
+end
+local function RebuildSeen(s)
+    s.seen = {}
+    for _, entry in ipairs(s.history or {}) do s.seen[entry.key] = true end
+    s.seen[Key(s.board)] = true
 end
 local function Trial(s, i)
     if s.board[i] ~= 0 then return nil, "occupied" end
@@ -67,8 +88,9 @@ function M.Play(s, x, y)
     if s.status ~= "playing" then return false, "finished" end
     local i = Index(x, y)
     if i == nil then return false, "invalid_move" end
+    PushHistory(s)
     local board, key, captured = Trial(s, i)
-    if board == nil then return false, key end
+    if board == nil then s.history[#s.history] = nil; return false, key end
     s.board, s.seen[key], s.last = board, true, i
     s.captures[s.turn] = s.captures[s.turn] + captured
     s.turn, s.count, s.revision, s.passes = 3 - s.turn, s.count + 1, s.revision + 1, 0
@@ -83,11 +105,29 @@ function M.BeginScoring(s)
 end
 function M.Pass(s)
     if s.status ~= "playing" then return false, "forbidden" end
+    PushHistory(s)
     s.turn, s.passes, s.last = 3 - s.turn, s.passes + 1, nil
     s.revision = s.revision + 1
     if s.passes >= 2 then M.BeginScoring(s) end
     return true
 end
+function M.Undo(s, plies)
+    if s.status ~= "playing" or type(s.history) ~= "table" or #s.history == 0 then
+        return false, "undo_unavailable"
+    end
+    plies = math.max(1, math.floor(plies or 1))
+    local index = math.max(1, #s.history - plies + 1)
+    local previous = s.history[index]
+    for i = #s.history, index, -1 do s.history[i] = nil end
+    s.board, s.turn, s.count, s.last, s.passes = Decode(previous.key), previous.turn,
+        previous.count, previous.last, previous.passes
+    s.captures = {previous.captures[1], previous.captures[2]}
+    s.status, s.winner, s.score, s.dead, s.confirmed, s.preview = "playing", nil, nil, nil, nil, nil
+    s.revision = s.revision + 1
+    RebuildSeen(s)
+    return true
+end
+function M.CanUndo(s) return s ~= nil and s.status == "playing" and s.history ~= nil and #s.history > 0 end
 function M.Mark(s, x, y)
     local i = Index(x, y)
     if s.status ~= "scoring" or i == nil or s.board[i] == 0 then return false, "invalid_move" end
