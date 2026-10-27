@@ -93,6 +93,9 @@ end
 
 function M.Set(inst, point, mode)
     if inst == nil or point == nil then return false end
+    -- A chosen home retires automatic construction. Combat interruptions do
+    -- not pass here and may still resume their unfinished prototype trip.
+    inst._my_friend_pending_recipe = nil
     inst._my_friend_hold_memory = nil
     inst._my_friend_home = {x = point.x, z = point.z, mode = mode or "base"}
     M.Apply(inst)

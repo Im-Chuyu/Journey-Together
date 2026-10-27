@@ -46,6 +46,7 @@ local AUTONOMOUS_FORBIDDEN_FOOD_PREFABS = {
     minotaurhorn = true,
     jellybean = true,
     charcoal = true,
+    ash = true,
 }
 
 function M.IsForbiddenFood(food)
@@ -57,7 +58,7 @@ end
 
 function M.IsNonFoodMaterial(food)
     local prefab = type(food) == "string" and food or food ~= nil and food.prefab or nil
-    return prefab == "charcoal"
+    return prefab == "charcoal" or prefab == "ash"
 end
 
 function M.Configure(inst)

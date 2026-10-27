@@ -15,6 +15,7 @@ local EQUIPMENT_RECIPES = {
     footballhat = true,
     hambat = true,
     umbrella = true,
+    sewing_kit = true,
 }
 
 local function ManualArea(inst)
@@ -72,7 +73,8 @@ function M.Score(inst, context)
     if Home.Mode(inst) == "base" then
         local combat = NeedsGoal(inst, "spear") or NeedsGoal(inst, "armorwood")
         if not (combat and GetTime() >= (state ~= nil and state.next_scan or 0)
-            or NeedsGoal(inst, "umbrella") and GetTime() >= (state ~= nil and state.rain_next_scan or 0)) then return 0 end
+            or NeedsGoal(inst, "umbrella") and GetTime() >= (state ~= nil and state.rain_next_scan or 0)
+            or NeedsGoal(inst, "sewing_kit") and GetTime() >= (state ~= nil and state.sewing_next_scan or 0)) then return 0 end
     end
     -- Food stocking has its own higher priority; a two-day stock deficit must
     -- not disable equipment when no food job can currently run.
@@ -84,6 +86,20 @@ end
 NeedsGoal = function(inst, name)
     if name == "umbrella" then
         return require("my_friend_equipment").GetAvailableRainProtection(inst) < M.RAIN_THRESHOLD
+    end
+    if name == "sewing_kit" then
+        local items = inst.components.inventory:ReferenceAllItems()
+        local active = inst.components.inventory:GetActiveItem()
+        if active ~= nil then items[#items + 1] = active end
+        for _, item in ipairs(items) do
+            local c = item:IsValid() and item.components or nil
+            local ii = c ~= nil and c.inventoryitem or nil
+            if c ~= nil and c.sewing ~= nil and ii ~= nil and ii:GetGrandOwner() == inst
+                and not ii.islockedinslot and not item:HasTag("broken")
+                and (c.finiteuses == nil or c.finiteuses:GetUses() > 0)
+                and (c.stackable == nil or c.stackable:StackSize() > 0) then return false end
+        end
+        return true
     end
     return not HasEquipment(inst, name, true)
 end
@@ -130,8 +146,8 @@ local function Station(inst, recipe)
     end
 end
 
-local function PlanSet(inst, snapshot, rain)
-    local choices = rain and {{"umbrella"}}
+local function PlanSet(inst, snapshot, goal)
+    local choices = goal ~= nil and {{goal}}
         or {{"footballhat", "hambat"}, {"armorwood", "spear"},
             {"footballhat"}, {"hambat"}, {"armorwood"}, {"spear"}}
     for _, set in ipairs(choices) do
@@ -180,6 +196,7 @@ local function GetManualAction(inst, area)
     end
     local function Retry()
         if step.goal == "umbrella" then state.rain_next_scan = GetTime() + M.BASE_RETRY
+        elseif step.goal == "sewing_kit" then state.sewing_next_scan = GetTime() + M.BASE_RETRY
         else state.next_scan = GetTime() + M.BASE_RETRY end
         state.steps, state.goal = nil, nil
         inst._my_friend_equipment_recipe = nil
@@ -190,15 +207,20 @@ local function GetManualAction(inst, area)
         local combat = (NeedsGoal(inst, "spear") or NeedsGoal(inst, "armorwood"))
             and GetTime() >= (state.next_scan or 0)
         local rain = NeedsGoal(inst, "umbrella") and GetTime() >= (state.rain_next_scan or 0)
-        if not combat and not rain then return end
+        local sewing = NeedsGoal(inst, "sewing_kit") and GetTime() >= (state.sewing_next_scan or 0)
+        if not combat and not rain and not sewing then return end
         snapshot = Materials.Snapshot(inst, area)
         if combat then
             state.steps = PlanSet(inst, snapshot)
             if state.steps == nil then state.next_scan = GetTime() + M.BASE_RETRY end
         end
         if state.steps == nil and rain then
-            state.steps = PlanSet(inst, snapshot, true)
+            state.steps = PlanSet(inst, snapshot, "umbrella")
             if state.steps == nil then state.rain_next_scan = GetTime() + M.BASE_RETRY end
+        end
+        if state.steps == nil and sewing then
+            state.steps = PlanSet(inst, snapshot, "sewing_kit")
+            if state.steps == nil then state.sewing_next_scan = GetTime() + M.BASE_RETRY end
         end
         step = state.steps ~= nil and state.steps[1] or nil
         if step == nil then return end

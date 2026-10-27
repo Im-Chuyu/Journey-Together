@@ -1,9 +1,12 @@
 local M = {}
 local Language = require("my_friend_strings")
+local Durations
 M.enabled = true
 local CHANNEL = "my_friend_talk"
 local LINE_CHANNEL = "my_friend_line"
 local EVENTS_PER_BANK = 70
+local UNKNOWN_LINE_DURATION = 7
+local LINE_END_PADDING = .1
 
 local function NativeSound(inst, ghost)
     return inst.talksoundoverride
@@ -28,41 +31,84 @@ local function VoiceIndex(key, index)
         or number ~= math.floor(number) then return end
     local bank = math.floor((number - 1) / EVENTS_PER_BANK) + 1
     -- fn numbers are global across all banks: fs2 starts at fn71.
-    return "fs" .. bank .. "/fs" .. bank .. "/fn" .. number
+    return "fs" .. bank .. "/fs" .. bank .. "/fn" .. number, number
+end
+
+local function CanPlayLine(inst)
+    return UsesCustomVoice() and TheWorld ~= nil and TheWorld.ismastersim
+        and inst ~= nil and inst:IsValid()
+        and inst._my_friend_is_companion == true
+        and not inst._my_friend_possess_parked
+        and not (inst:HasTag("playerghost") and inst.components.health ~= nil
+            and not inst.components.health:IsDead())
+        and inst.SoundEmitter ~= nil
+end
+
+local function ClearLines(inst)
+    local state = inst._my_friend_voice_lines
+    if state ~= nil and state.task ~= nil then state.task:Cancel() end
+    inst._my_friend_voice_lines = nil
+    if inst:IsValid() and inst.SoundEmitter ~= nil then inst.SoundEmitter:KillSound(LINE_CHANNEL) end
+end
+
+local PumpLines
+local function ScheduleLines(inst, state, delay)
+    if state.task ~= nil then return end
+    state.task = inst:DoTaskInTime(delay, function()
+        if inst._my_friend_voice_lines ~= state then return end
+        state.task = nil
+        PumpLines(inst, state)
+    end)
+end
+
+PumpLines = function(inst, state)
+    if not CanPlayLine(inst) then ClearLines(inst); return end
+    local remaining = state.ready_at - GetTime()
+    if remaining > 0 then ScheduleLines(inst, state, remaining); return end
+    -- A named event can remain registered after its audio ends, especially on
+    -- a server without an audio device. Never wait indefinitely on PlayingSound.
+    inst.SoundEmitter:KillSound(LINE_CHANNEL)
+    local line = table.remove(state.queue, 1)
+    if line == nil then inst._my_friend_voice_lines = nil; return end
+    M.Stop(inst, true)
+    -- Keep the normal volume and the companion's spatial emitter. Naming the
+    -- event lets lifecycle cleanup stop it and prevents overlapping clips.
+    local ok = pcall(inst.SoundEmitter.PlaySound, inst.SoundEmitter,
+        line.event, LINE_CHANNEL, 1, false)
+    if not ok then
+        -- Audio failure must not affect text or strand later queued lines.
+        local ghost = inst:HasTag("playerghost")
+        pcall(inst.SoundEmitter.PlaySound, inst.SoundEmitter,
+            NativeSound(inst, ghost), CHANNEL)
+        inst._my_friend_voice_task = inst:DoTaskInTime(2, function()
+            if inst:IsValid() then M.Stop(inst) else inst._my_friend_voice_task = nil end
+        end)
+    end
+    local duration = ok and line.duration or 2
+    state.ready_at = GetTime() + duration
+    ScheduleLines(inst, state, duration)
 end
 
 function M.PlayLine(inst, key, index)
-    if not UsesCustomVoice() then return end
-    if not TheWorld.ismastersim or inst == nil or not inst:IsValid()
-        or inst._my_friend_is_companion ~= true
-        or inst:HasTag("playerghost") and inst.components.health ~= nil
-            and not inst.components.health:IsDead()
-        or inst.SoundEmitter == nil then return end
-    local event = VoiceIndex(key, index)
-    if event ~= nil then
-        -- Replace the vanilla looping talk voice for this line. The custom
-        -- event is a one-shot voice clip and does not need a stop task.
-        M.Stop(inst, true)
-        inst.SoundEmitter:KillSound(LINE_CHANNEL)
-        -- Leave the event at the engine's normal volume.  The PlaySound
-        -- volume argument is a mix multiplier, not a gain stage; values above
-        -- 1 can be clamped or interact poorly with the FEV attenuation.
-        -- Play through the companion's own emitter. The entity transform is
-        -- the spatial anchor used by the engine for every connected client.
-        local ok = pcall(inst.SoundEmitter.PlaySound, inst.SoundEmitter,
-            event, nil, 1, false)
-        if not ok then
-            -- Keep a native voice available if the event bank is not loaded
-            -- on this shard/client. The dialogue text has already been sent
-            -- and must not be affected by an audio bank failure.
-            M.Stop(inst, true)
-            local ghost = inst:HasTag("playerghost")
-            pcall(inst.SoundEmitter.PlaySound, inst.SoundEmitter,
-                NativeSound(inst, ghost), CHANNEL)
-        end
+    if not CanPlayLine(inst) then return end
+    local event, number = VoiceIndex(key, index)
+    if event == nil then return end
+    Durations = Durations or require("my_friend_voice_durations")
+    M.Configure(inst)
+    local state = inst._my_friend_voice_lines
+    if state == nil then
+        state = {queue = {}, ready_at = 0}
+        inst._my_friend_voice_lines = state
     end
+    local duration = Durations[number]
+    duration = type(duration) == "number" and duration > 0
+        and duration < math.huge and duration + LINE_END_PADDING or UNKNOWN_LINE_DURATION
+    state.queue[#state.queue + 1] = {event = event, duration = duration}
+    if state.task == nil then PumpLines(inst, state) end
 end
 
+-- Stop only the native talk loop. Bubble completion and a new ontalk event
+-- must not cut off a custom clip or discard its queued successors.
 function M.Stop(inst, instant)
     if inst._my_friend_voice_task ~= nil then
         inst._my_friend_voice_task:Cancel()
@@ -113,9 +159,13 @@ function M.Configure(inst)
     inst._my_friend_voice_configured = true
     inst:ListenForEvent("ontalk", M.Play)
     inst:ListenForEvent("donetalking", function() M.Stop(inst) end)
-    inst:ListenForEvent("death", function() M.Stop(inst, true) end)
-    inst:ListenForEvent("ms_becameghost", function() M.Stop(inst, true) end)
-    inst:ListenForEvent("onremove", function() M.Stop(inst, true) end)
+    local function StopAll()
+        M.Stop(inst, true)
+        ClearLines(inst)
+    end
+    inst:ListenForEvent("death", StopAll)
+    inst:ListenForEvent("ms_becameghost", StopAll)
+    inst:ListenForEvent("onremove", StopAll)
 end
 
 return M

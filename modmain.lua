@@ -469,7 +469,6 @@ local CoreAI = require("my_friend_core_ai")
 local Dialogue = require("my_friend_dialogue")
 local Commands = require("my_friend_commands")
 local CookingAI = require("my_friend_cooking_ai")
-local ResourceMemory = require("my_friend_resource_memory")
 local Possess = require("my_friend_possess")
 local OldFriendCook = _G.ACTIONS.COOK.fn
 _G.ACTIONS.COOK.fn = function(act)
@@ -773,7 +772,6 @@ local function ConfigureFriend(inst)
             require("my_friend_wathgrithr").Save(self, data)
             require("my_friend_wickerbottom").Save(self, data)
             require("my_friend_feed_player").OnSave(self, data)
-            data.my_friend_resource_memory = ResourceMemory.Save(self, _G.GetTime())
             require("my_friend_migration").SaveWorldMemory(self, data)
             return refs
         end
@@ -799,7 +797,6 @@ local function ConfigureFriend(inst)
             require("my_friend_equipment").Load(self, data)
             self._my_friend_abigail_next = _G.GetTime()
                 + (data ~= nil and data.my_friend_abigail_next or 0)
-            ResourceMemory.Load(self, data ~= nil and data.my_friend_resource_memory, _G.GetTime())
             self._my_friend_shard_homes = data ~= nil and data.my_friend_shard_homes or {}
         end
         inst._my_friend_save_hooks_added = true
@@ -1023,7 +1020,8 @@ AddComponentAction("USEITEM", "edible", function(food, doer, target, actions, ri
     local score = net ~= nil and net:value() or 20
     local unsafe = food:HasAnyTag("badfood", "unsafefood", "spoiled")
         or (food.components ~= nil and Feeding.IsUnsafe(food, target))
-    if score < 0 or unsafe and score < 90 then
+    if require("my_friend_food_ai").IsNonFoodMaterial(food)
+        or score < 0 or unsafe and score < 90 then
         for i = #actions, 1, -1 do
             if actions[i] == _G.ACTIONS.FEEDPLAYER then table.remove(actions, i) end
         end
@@ -1516,7 +1514,6 @@ AddPrefabPostInitAny(function(inst)
             require("my_friend_wathgrithr").Load(self, data)
             require("my_friend_wickerbottom").Load(self, data)
             require("my_friend_feed_player").OnLoad(self, data)
-            ResourceMemory.Load(self, data ~= nil and data.my_friend_resource_memory, _G.GetTime())
             self._my_friend_shard_homes = data.my_friend_shard_homes or {}
             ConfigureFriend(self)
             require("my_friend_equipment").Load(self, data)

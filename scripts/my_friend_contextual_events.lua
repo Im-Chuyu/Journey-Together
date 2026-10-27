@@ -1,6 +1,6 @@
 -- Event-driven companion dialogue and non-rollback world memory.
 -- No global scan is created: world state callbacks inspect only the active
--- companion, and the rain task exists only while it is raining.
+-- companion. Weather dialogue runs once per precipitation start, without polling.
 local json = require("json")
 local Policy = require("my_friend_policy")
 local Dialogue = require("my_friend_dialogue")
@@ -14,7 +14,6 @@ local SEASON_LINES = {
 }
 local FOLLOW_REUNION = "follow_reunion"
 
-local function Cancel(task) if task ~= nil then task:Cancel() end end
 local function Friend(world)
     local friend = world ~= nil and world._my_friend or nil
     return friend ~= nil and friend:IsValid() and friend:HasTag("my_friend") and friend or nil
@@ -25,17 +24,6 @@ local function NearbyLeader(friend)
     if Policy.DistanceSq(friend, leader) > 20^2 then return end
     return leader
 end
-local function HasRainGear(friend)
-    local inventory = friend.components ~= nil and friend.components.inventory or nil
-    if inventory == nil then return false end
-    for _, slot in ipairs({EQUIPSLOTS.HEAD, EQUIPSLOTS.BODY, EQUIPSLOTS.HANDS}) do
-        local item = inventory:GetEquippedItem(slot)
-        local waterproofer = item ~= nil and item.components ~= nil and item.components.waterproofer or nil
-        if waterproofer ~= nil and waterproofer:GetEffectiveness() > .5 then return true end
-    end
-    return false
-end
-
 local function Speak(friend, key, leader)
     if friend == nil or key == nil or NearbyLeader(friend) == nil then return false end
     return Dialogue.RandomReply(friend, key, leader ~= nil and leader:GetDisplayName() or nil)
@@ -189,34 +177,21 @@ local function ReconcileCycles(world)
     DayChanged(world, world.state.cycles)
 end
 
-local function RainTick(friend)
-    local world = TheWorld
-    if world == nil or world.state == nil or world.state.israining ~= true then
-        Cancel(friend._my_friend_context_rain_task)
-        friend._my_friend_context_rain_task = nil
-        return
-    end
-    if not HasRainGear(friend) then Speak(friend, "rain_request") end
-end
-
-local function RainChanged(world, raining)
+local function WeatherChanged(world, field, active, key)
     local friend = Friend(world)
     if friend == nil then return end
-    Cancel(friend._my_friend_context_rain_task)
-    friend._my_friend_context_rain_task = nil
-    if raining ~= true then return end
-    RainTick(friend)
-    friend._my_friend_context_rain_task = friend:DoPeriodicTask(120, function()
-        if friend:IsValid() then RainTick(friend) end
-    end)
+    active = active == true
+    if friend[field] == active then return end
+    friend[field] = active
+    -- Use the callback value directly. Rain and snow can change in sequence
+    -- during one native precipitation event. No dialogue cooldown is applied.
+    if active then Speak(friend, key) end
 end
 
 function M.ConfigureFriend(friend)
     if friend == nil or friend._my_friend_context_configured then return end
     friend._my_friend_context_configured = true
     friend:ListenForEvent("onremove", function()
-        Cancel(friend._my_friend_context_rain_task)
-        friend._my_friend_context_rain_task = nil
         CancelRewindTask(friend)
         friend._my_friend_context_rewind_task = nil
     end)
@@ -225,8 +200,9 @@ function M.ConfigureFriend(friend)
         RememberLeader(TheWorld, friend, leader)
         TryScheduleRewind(TheWorld, friend)
     end)
-    if TheWorld ~= nil and TheWorld.state ~= nil and TheWorld.state.israining == true then
-        RainChanged(TheWorld, true)
+    if TheWorld ~= nil and TheWorld.state ~= nil then
+        WeatherChanged(TheWorld, "_my_friend_context_raining", TheWorld.state.israining, "rain_request")
+        WeatherChanged(TheWorld, "_my_friend_context_snowing", TheWorld.state.issnowing, "season_winter")
     end
     RememberLeader(TheWorld, friend, Policy.GetLeader(friend))
     TryScheduleRewind(TheWorld, friend)
@@ -260,7 +236,12 @@ function M.AttachWorld(world)
     -- reconcile once more after persistent memory finishes loading.
     world:WatchWorldState("cycles", function(_, cycles) DayChanged(world, cycles) end)
     world:WatchWorldState("season", function(_, season) SeasonChanged(world, season) end)
-    world:WatchWorldState("israining", function(_, raining) RainChanged(world, raining) end)
+    world:WatchWorldState("israining", function(_, raining)
+        WeatherChanged(world, "_my_friend_context_raining", raining, "rain_request")
+    end)
+    world:WatchWorldState("issnowing", function(_, snowing)
+        WeatherChanged(world, "_my_friend_context_snowing", snowing, "season_winter")
+    end)
     if state.key == nil or TheSim == nil then
         state.loaded = true
         state.current, state.previous = world.state.cycles or 0, world.state.cycles or 0

@@ -181,6 +181,7 @@ local RECIPE_NAMES = {
     footballhat = "猪皮头盔",
     hambat = "火腿棒",
     umbrella = "雨伞",
+    sewing_kit = "针线包",
     boards = "木板",
     cutstone = "石砖",
     transistor = "电子元件",
@@ -835,13 +836,15 @@ end
 local function GetNeededGroundAction(inst, needs, radius, include_cache)
     if needs == nil or next(needs) == nil then return end
     local x, y, z, range = Policy.SearchOrigin(inst, radius or M.RESOURCE_SEARCH_RANGE)
+    local origin = Vector3(x, y, z)
     local best, best_distance
-    for _, item in ipairs(TheSim:FindEntities(x, y, z, range,
+    for _, item in ipairs(Discovery.Query(inst, "base_ground_materials", "resources", x, y, z, range,
         {"_inventoryitem"}, CANT_TAGS)) do
         local inside_season_base = HasLeader(inst) or not M.IsComplete(inst)
             or not M.IsExtremeSeason(inst)
             or DistanceSqToPoint(item, M.GetBasePoint(inst)) <= M.BASE_RETURN_DISTANCE^2
         if (needs[item.prefab] or 0) > 0
+            and DistanceSqToPoint(item, origin) <= range^2
             and inside_season_base
             and CanPickUp(inst, item, include_cache ~= false)
             and Policy.InRange(inst, item) and not IsBlocked(inst, item)

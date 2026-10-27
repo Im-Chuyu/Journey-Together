@@ -21,6 +21,7 @@ function M.IsRealFoodType(foodtype)
         and foodtype ~= FOODTYPE.ELEMENTAL and foodtype ~= FOODTYPE.GEARS
         and foodtype ~= FOODTYPE.NITRE and foodtype ~= FOODTYPE.LUNAR_SHARDS
         and foodtype ~= FOODTYPE.CORPSE and foodtype ~= FOODTYPE.MIASMA
+        and foodtype ~= FOODTYPE.BURNT
 end
 
 function M.Say(friend, player, kind)

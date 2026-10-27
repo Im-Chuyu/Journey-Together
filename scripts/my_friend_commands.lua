@@ -422,6 +422,7 @@ function M.Dispatch(friend, player, message, from_wheel)
     if id == "follow" then
         if not affinity:RequestFollow(player) then Reply(friend, "follow_unfamiliar") return false end
         if Policy.GetLeader(friend) == player then
+            friend._my_friend_pending_recipe = nil
             require("my_friend_contextual_events").RecordFollowStarted(friend, player)
             require("my_friend_combat_rules").DisengageForFollow(friend, player)
             require("my_friend_ghost_commands").Cancel(friend)

@@ -232,7 +232,9 @@ function Affinity:SettleGift(userid, window)
     local counts = CarriedCounts(self.inst)
     local units = {}
     for _, entry in ipairs(window.entries or {}) do
-        local available = math.min(entry.count, counts[entry.prefab] or 0)
+        -- Older saves may still contain charcoal/ash misclassified as gifts.
+        local available = not require("my_friend_food_ai").IsNonFoodMaterial(entry.prefab)
+            and math.min(entry.count, counts[entry.prefab] or 0) or 0
         counts[entry.prefab] = (counts[entry.prefab] or 0) - available
         for _ = 1, available do
             if #units >= 64 then break end
@@ -419,6 +421,7 @@ function Affinity:OnLoad(data)
             local entries = {}
             for _, entry in ipairs(window.entries) do
                 if type(entry) == "table" and type(entry.prefab) == "string"
+                    and not require("my_friend_food_ai").IsNonFoodMaterial(entry.prefab)
                     and type(entry.count) == "number" and type(entry.value) == "number" then
                     entries[#entries + 1] = {
                         prefab = entry.prefab,
