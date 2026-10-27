@@ -92,6 +92,13 @@ function M.CanAttack(target, inst)
     local hand = inst ~= nil and inst.components ~= nil and inst.components.inventory ~= nil
         and inst.components.inventory:GetEquippedItem(EQUIPSLOTS.HANDS) or nil
     if hand ~= nil and (hand.prefab == "torch" or hand:HasTag("torch")) then return false end
+    if target ~= nil and target:IsValid() and inst ~= nil then
+        local behavior = require("my_friend_behavior_ai")
+        if behavior.ShouldRetreatUnequipped(inst, target) then
+            behavior.RememberUnequippedRetreat(inst, target)
+            return false
+        end
+    end
     return target ~= nil and target:IsValid()
         and not M.IsBeyondFollowCombatRange(inst)
         and not M.IsFollowTargetPaused(inst, target)

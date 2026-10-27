@@ -12,16 +12,17 @@ local function Usable(item)
         and not item.components.inventoryitem.islockedinslot and not item:HasTag("nocrafting")
 end
 
-local function Nearby(inst, source)
+local function Nearby(inst, source, area)
     if not source:IsValid() then return false end
     -- Crafting materials belong to the companion's immediate work area.
     -- Policy.SearchOrigin intentionally follows the leader for ordinary
     -- activity scans; using it here made a following companion ignore items
     -- and chests beside itself whenever the leader was elsewhere.
     local x, y, z = inst.Transform:GetWorldPosition()
+    if area ~= nil then x, z = area.origin.x, area.origin.z end
     local position = source:GetPosition()
     return not source:HasAnyTag("INLIMBO", "burnt", "fire")
-        and (position.x - x)^2 + (position.z - z)^2 <= RANGE^2
+        and (position.x - x)^2 + (position.z - z)^2 <= (area ~= nil and area.radius or RANGE)^2
         and inst:GetCurrentPlatform() == source:GetCurrentPlatform()
 end
 
@@ -31,38 +32,38 @@ local function IsStorage(source)
         or source.prefab == "saltbox" or source.prefab == "dragonflychest"
 end
 
--- Count carried and external materials once, then withdraw only the shortage.
--- Planning and execution use the same source rules, including leader-open chests.
-function M.Plan(inst, recipe)
-    local remaining = {}
-    for _, ingredient in ipairs(recipe.ingredients or {}) do
-        remaining[ingredient.type] = (remaining[ingredient.type] or 0)
-            + math.max(1, RoundBiasedUp(ingredient.amount * (inst.components.builder.ingredientmod or 1)))
+-- A snapshot lives only for the current planning call. Discovery keeps GUIDs,
+-- not these item references, between decisions.
+function M.Snapshot(inst, area)
+    local snapshot, seen = {}, {}
+    local function Add(item, source, carried)
+        if not seen[item] and Usable(item) then
+            snapshot[#snapshot + 1] = {item = item, source = source, carried = carried}
+        end
+        seen[item] = true
     end
     local items = inst.components.inventory:ReferenceAllItems()
     local active = inst.components.inventory:GetActiveItem()
     if active ~= nil then items[#items + 1] = active end
-    local seen = {}
-    for _, item in ipairs(items) do
-        if not seen[item] and Usable(item) and remaining[item.prefab] ~= nil then
-            remaining[item.prefab] = math.max(0, remaining[item.prefab] - Size(item))
+    for _, item in ipairs(items) do Add(item, nil, true) end
+    local sources
+    if area ~= nil then
+        local discovery = require("my_friend_discovery")
+        sources = {}
+        local found = {}
+        for _, kind in ipairs({"resources", "containers"}) do
+            for _, source in ipairs(discovery.Query(inst, "equipment_" .. kind, kind,
+                area.origin.x, 0, area.origin.z, area.radius, nil, {"INLIMBO", "burnt", "fire"})) do
+                if not found[source] then sources[#sources + 1], found[source] = source, true end
+            end
         end
-        seen[item] = true
+    else
+        local x, y, z = inst.Transform:GetWorldPosition()
+        sources = TheSim:FindEntities(x, y, z, RANGE, nil, {"INLIMBO", "burnt", "fire"})
     end
-    local x, y, z = inst.Transform:GetWorldPosition()
-    local sources = TheSim:FindEntities(x, y, z, RANGE, nil, {"INLIMBO", "burnt", "fire"})
     table.sort(sources, function(a, b) return inst:GetDistanceSqToInst(a) < inst:GetDistanceSqToInst(b) end)
-    local plan = {}
-    local function Add(item, source)
-        if not seen[item] and Usable(item) and (remaining[item.prefab] or 0) > 0 then
-            local count = math.min(remaining[item.prefab], Size(item))
-            plan[#plan + 1] = {item = item, source = source, count = count}
-            remaining[item.prefab] = remaining[item.prefab] - count
-        end
-        seen[item] = true
-    end
     for _, source in ipairs(sources) do
-        if Nearby(inst, source) then
+        if Nearby(inst, source, area) then
             if IsStorage(source)
                 and Inventory.CanWithdrawFrom(inst, source) then
                 for _, item in ipairs(source.components.container:GetAllItems()) do Add(item, source) end
@@ -72,11 +73,31 @@ function M.Plan(inst, recipe)
             end
         end
     end
+    return snapshot
+end
+
+-- Count carried and external materials once, then withdraw only the shortage.
+function M.Plan(inst, recipe, area, snapshot)
+    local remaining, plan = {}, {}
+    for _, ingredient in ipairs(recipe.ingredients or {}) do
+        remaining[ingredient.type] = (remaining[ingredient.type] or 0)
+            + math.max(1, RoundBiasedUp(ingredient.amount * (inst.components.builder.ingredientmod or 1)))
+    end
+    for _, entry in ipairs(snapshot or M.Snapshot(inst, area)) do
+        local item = entry.item
+        if (remaining[item.prefab] or 0) > 0 then
+            local count = math.min(remaining[item.prefab], Size(item))
+            if not entry.carried then
+                plan[#plan + 1] = {item = item, source = entry.source, count = count}
+            end
+            remaining[item.prefab] = remaining[item.prefab] - count
+        end
+    end
     for _, count in pairs(remaining) do if count > 0 then return end end
     return plan
 end
 
-function M.GetAction(inst, plan)
+function M.GetAction(inst, plan, area)
     local entry = plan ~= nil and plan[1] or nil
     if entry == nil then return end
     local item, source = entry.item, entry.source
@@ -88,7 +109,7 @@ function M.GetAction(inst, plan)
     action._my_friend_crafting_material = true
     action._my_friend_withdraw_count = count
     action.validfn = function()
-        return Usable(item) and Nearby(inst, source or item)
+        return Usable(item) and Nearby(inst, source or item, area)
             and item.components.inventoryitem.owner == source
             and (source == nil or Inventory.CanWithdrawFrom(inst, source))
     end

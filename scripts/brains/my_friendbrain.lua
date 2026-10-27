@@ -685,12 +685,15 @@ function MyFriendBrain:OnStart()
     Action("command_drop", Alive(function(c)
         return c.leader ~= nil and (inst._my_friend_drop_backpack or inst._my_friend_command_drop) and 93 or 0
     end), SocialAI.GetDropAction, nil)
-    Add("catch_up_mount", Alive(function(c) return Riding.Score(inst, c) end),
+    Add("catch_up_mount", Alive(function(c)
+        return not require("my_friend_basic_equipment").IsBaseEquipmentTravel(inst) and Riding.Score(inst, c) or 0
+    end),
         Riding.Behaviour(inst))
     Add("catch_up", Alive(function(c)
         local command = Commands.Get(inst)
         if command ~= nil and command.id == "chop" then return 0 end
         return c.leader ~= nil and not c.leaderdead and not c.waitlight
+            and not require("my_friend_basic_equipment").IsBaseEquipmentTravel(inst)
             and (Platforms.NeedsCrossing(inst, c.leader)
                 or Platforms.NeedsBoardingStep(inst)
                 or c.distance > Policy.ActivityRange(inst)^2

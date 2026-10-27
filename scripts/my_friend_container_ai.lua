@@ -215,11 +215,13 @@ local function NextMealAction(inst, meal)
         end
         if record == nil then FinishMeal(inst, meal) return end
         local shouldeat = not FoodAI.IsForbiddenFood(record.item)
+            and FoodAI.CanSafelyEat(inst, record.item)
             and (not meal.ate or meal.command == nil and FoodAI.Evaluate(inst, record.item) ~= nil)
         if shouldeat then
             action = BufferedAction(inst, nil, ACTIONS.EAT, record.item)
             action.validfn = function()
                 return not FoodAI.IsForbiddenFood(record.item) and IsCarried(inst, record.item)
+                    and FoodAI.CanSafelyEat(inst, record.item)
             end
             local before = Count(record.item)
             action:AddSuccessAction(function()
@@ -282,6 +284,7 @@ local function NextMealAction(inst, meal)
                 action = BufferedAction(inst, nil, ACTIONS.EAT, food)
                 action.validfn = function()
                     return not FoodAI.IsForbiddenFood(food)
+                        and FoodAI.CanSafelyEat(inst, food)
                         and IsAvailable(inst, target) and container:GetItemSlot(food) ~= nil
                         and (IsOwnSack(inst, target) or InventoryAI.CanReachContainer(inst, target))
                         and (container:IsOpenedBy(inst) or leader ~= nil and container:IsOpenedBy(leader))

@@ -11,6 +11,12 @@ local FOOD_SUPPLY_MIN_COUNT = 4
 local EMERGENCY_THRESHOLD = .15
 local GetFoodDeltas
 
+local function CanSurviveFood(inst, delta)
+    local health = inst.components.health
+    return health ~= nil and not health:IsDead()
+        and (delta >= 0 or health.currenthealth + delta > 0)
+end
+
 local function Clamp(value, minimum, maximum)
     return math.max(minimum, math.min(maximum, value))
 end
@@ -64,6 +70,14 @@ function M.Configure(inst)
         -- use the native diet rules; only universally forbidden foods block it.
         local prefab = type(food) == "string" and food or food ~= nil and food.prefab or nil
         return FORBIDDEN_FOOD_PREFABS[prefab] ~= true and can(self, food, ...)
+    end
+    local eat = eater.Eat
+    eater.Eat = function(self, food, feeder, ...)
+        -- Health can change after selection or during the eating animation.
+        -- Player feeding retains its separate native diet/permission rules.
+        if inst:HasTag("my_friend") and (feeder == nil or feeder == inst)
+            and not M.CanSafelyEat(inst, food) then return false end
+        return eat(self, food, feeder, ...)
     end
 end
 
@@ -353,8 +367,14 @@ GetFoodDeltas = function(inst, food)
         health, hunger, sanity = eater.custom_stats_mod_fn(
             inst, health, hunger, sanity, food, inst)
     end
-    if not M.CanHealWithFood(inst) then health = 0 end
+    if health > 0 and not M.CanHealWithFood(inst) then health = 0 end
     return health * stackmult, hunger * stackmult, sanity * stackmult
+end
+
+function M.CanSafelyEat(inst, food)
+    if food == nil or not food:IsValid() or food.components == nil
+        or food.components.edible == nil or inst.components.eater == nil then return false end
+    return CanSurviveFood(inst, GetFoodDeltas(inst, food))
 end
 
 local function IsInBeargerSack(item)
@@ -397,6 +417,7 @@ function M.Evaluate(inst, food, stats)
     stats = stats or GetStats(inst)
     if stats == nil then return end
     local health, hunger, sanity = GetFoodDeltas(inst, food)
+    if not CanSurviveFood(inst, health) then return end
     -- Tiny recovery items such as ice and light bulbs are never worth an
     -- eating action. This rule also applies during emergencies.
     if not HasMeaningfulRecovery(health, hunger, sanity) then return end
@@ -404,7 +425,6 @@ function M.Evaluate(inst, food, stats)
     if M.IsEmergency(inst, stats) then
         -- Actual eater deltas include spoilage, food memory and character
         -- absorption. In an emergency only a lethal serving is vetoed.
-        if health < 0 and stats.health + health <= 0 then return end
         local perishdays = GetPerishData(food)
         local healing = math.min(math.max(0, health), stats.healthmax - stats.health)
         local calories = math.min(math.max(0, hunger), stats.hungermax - stats.hunger)
@@ -602,12 +622,14 @@ function M.GetEatAction(inst, commanded_food)
         and not M.IsEmergency(inst) and inst.components.hunger:GetPercent() >= .2 then return end
     local food = commanded_food or M.FindBestFood(inst)
     if food == nil then return M.GetSugarAction(inst) end
+    if not M.CanSafelyEat(inst, food) then return end
     if commanded_food == nil and food.prefab ~= "meat_dried" and not M.IsEmergency(inst)
         and require("my_friend_recipe_cooking").ShouldReserve(inst, food) then return end
     local action = BufferedAction(inst, nil, ACTIONS.EAT, food)
     action.validfn = function()
         return food:IsValid() and not M.IsForbiddenFood(food)
             and inst.components.eater:CanEat(food)
+            and M.CanSafelyEat(inst, food)
             and food.components.inventoryitem:GetGrandOwner() == inst
     end
     action:AddSuccessAction(function()

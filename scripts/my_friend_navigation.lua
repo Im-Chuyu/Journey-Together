@@ -88,6 +88,9 @@ function M.InTravelRange(inst, point)
     local root = inst.brain ~= nil and inst.brain.bt ~= nil and inst.brain.bt.root or nil
     local action = inst._my_friend_navigation_action
         or root ~= nil and root.active ~= nil and root.active.node.action or nil
+    if action ~= nil and action._my_friend_base_equipment ~= nil then
+        return require("my_friend_basic_equipment").InTravelRange(inst, action, point)
+    end
     if action ~= nil and action._my_friend_rescue_target ~= nil then
         return require("my_friend_rescue").InTravelRange(inst, action, point)
     end

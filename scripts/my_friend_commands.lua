@@ -17,6 +17,7 @@ local ENCOURAGEMENT = shared_dialogue.combat_encouragement_words or {}
 -- Anything malformed there is skipped with a log line rather than taking the
 -- whole mod down, so a typo in the config never stops the world from loading.
 local COMMANDS = {}
+local PORTAL_REVIVE_WORDS = {}
 do
     -- Character-specific command files are loaded during mod initialisation,
     -- before every vanilla character is guaranteed to be present in
@@ -54,6 +55,14 @@ do
                 if #words > 0 then
                     COMMANDS[#COMMANDS + 1] = {id = entry.id, words = words,
                         character = entry.character or character}
+                    if entry.id == "revive" then
+                        for _, word in ipairs(type(entry.portal_keywords) == "table" and entry.portal_keywords or {}) do
+                            if type(word) == "string" then
+                                word = word:lower():match("^%s*(.-)%s*$")
+                                if #word > 0 then PORTAL_REVIVE_WORDS[#PORTAL_REVIVE_WORDS + 1] = word end
+                            end
+                        end
+                    end
                 end
             end
         end
@@ -326,12 +335,14 @@ function M.Dispatch(friend, player, message, from_wheel)
         end
     end
     if not from_wheel and MaybeRefuseChinese(friend, addressed_message, id) then return true end
-    if friend:HasTag("playerghost") then
-        local portal = Contains(text, "大门") or Contains(text, "绚丽之门")
-            or Contains(text, "天体传送门") or Contains(text, "portal")
-        if id == "revive" or portal then
-            return require("my_friend_ghost_commands").Request(friend, player, portal)
+    if friend:HasTag("playerghost") and id == "revive" then
+        -- Destination and revival words are independent groups. Both must
+        -- match; a portal mention alone is not a resurrection request.
+        local portal = false
+        for _, word in ipairs(PORTAL_REVIVE_WORDS) do
+            if Contains(text, word) then portal = true break end
         end
+        return require("my_friend_ghost_commands").Request(friend, player, portal)
     end
     if id == "wait_for_me" then
         if friend:HasTag("playerghost") or affinity == nil or affinity:Get(player) < 20 then return false end

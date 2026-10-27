@@ -92,6 +92,13 @@ function MyFriendCombat:Visit()
     end
     if not IsValidThreat(self.inst, self.target)
         or not BehaviourAI.CanContinueCombat(self.inst, self.target) then
+        if self.target ~= nil and BehaviourAI.ShouldRetreatUnequipped(self.inst, self.target) then
+            BehaviourAI.RememberUnequippedRetreat(self.inst, self.target)
+            InterruptAttackForDodge(self.inst)
+            self.inst._my_friend_replan_requested = true
+            if combat.target == self.target then combat:SetTarget(nil) end
+            if self.inst._my_friend_assist_target == self.target then self.inst._my_friend_assist_target = nil end
+        end
         self.target = nil
         self.status = FAILED
         Stop(self.inst)

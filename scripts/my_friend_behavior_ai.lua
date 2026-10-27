@@ -573,7 +573,9 @@ local function RememberHazard(inst, source, cause, centre, distance)
     elseif aura ~= nil then
         point, radius = source:GetPosition(), aura.radius
     elseif override ~= nil then
-        point, radius = source:GetPosition(), override:GetActiveRadius()
+        point = source:GetPosition()
+        radius = require("my_friend_survival_ai").GetTemperatureDangerRadius(inst, source,
+            cause == "cold" or cause == "freezing")
     elseif point == nil or inst._my_friend_hazard_source ~= nil
         or inst._my_friend_hazard_cause ~= cause
         or (current.x - point.x)^2 + (current.z - point.z)^2 > radius^2 then
@@ -633,7 +635,7 @@ function M.OnColdDamage(inst)
     -- Summoned cold lights (for example `staffcoldlight`) use the regular
     -- heater component rather than temperatureoverrider. Remember their
     -- bounded area when an actual cold damage event is received.
-    source = require("my_friend_survival_ai").FindDamagingHeatSource(inst)
+    source = require("my_friend_survival_ai").FindDamagingHeatSource(inst, false, true)
     if source ~= nil then
         local radius = math.max(M.HAZARD_RETREAT_RADIUS,
             math.sqrt(DistanceSq(inst, source)) + 2)
@@ -877,6 +879,26 @@ function M.FindEscapeThreat(inst, range)
     local rules = require("my_friend_combat_rules")
     if M.IsThreat(inst, target) and not rules.IsFollowTargetPaused(inst, target) then return target end
     if M.IsThreat(inst, candidate) and not rules.IsFollowTargetPaused(inst, candidate) then return candidate end
+    local retreat = inst._my_friend_unequipped_retreat
+    if retreat ~= nil then
+        local previous = (Ents or {})[retreat.guid]
+        local leader = Policy.GetLeader(inst)
+        if IsAlive(previous) and (leader ~= nil and leader.GUID or nil) == retreat.leader_guid
+            and not rules.IsBeyondFollowCombatRange(inst) and not rules.IsFollowTargetPaused(inst, previous)
+            and DistanceSq(inst, previous) < M.THREAT_SAFE_DISTANCE^2
+            and M.ShouldRetreatUnequipped(inst, previous) then return previous end
+        inst._my_friend_unequipped_retreat = nil
+    end
+end
+
+function M.RememberUnequippedRetreat(inst, target)
+    local combat = inst.components.combat
+    if target ~= nil and (combat ~= nil and combat.target == target or inst._my_friend_assist_target == target) then
+        local leader = Policy.GetLeader(inst)
+        local previous = inst._my_friend_unequipped_retreat
+        if previous == nil or previous.guid ~= target.GUID then inst._my_friend_replan_requested = true end
+        inst._my_friend_unequipped_retreat = {guid = target.GUID, leader_guid = leader ~= nil and leader.GUID or nil}
+    end
 end
 
 local function HasWorkingArmor(item)
@@ -917,22 +939,32 @@ function M.IsTorchWeapon(item)
         or item:HasTag("torch"))
 end
 
-function M.FindBestCombatWeapon(inst, target)
+local function UsableCombatWeapon(inst, item)
+    local c = item ~= nil and item:IsValid() and item.components or nil
+    local eq = c ~= nil and c.equippable or nil
+    local ii = c ~= nil and c.inventoryitem or nil
+    return eq ~= nil and eq.equipslot == EQUIPSLOTS.HANDS
+        and (eq.IsRestricted == nil or not eq:IsRestricted(inst))
+        and ii ~= nil and not ii.islockedinslot and ii:GetGrandOwner() == inst
+        and not M.IsTorchWeapon(item) and not IsWeaponBroken(item)
+end
+
+function M.FindBestCombatWeapon(inst, target, items)
     if not IsAlive(inst) or target ~= nil and not IsAlive(target) then return end
     local inventory = inst.components.inventory
     if inventory == nil then return end
     local best = inventory:GetEquippedItem(EQUIPSLOTS.HANDS)
-    if M.IsTorchWeapon(best) then best = nil end
-    if IsWeaponBroken(best) then best = nil end
+    if not UsableCombatWeapon(inst, best) then best = nil end
     local bestdamage = WeaponDamage(inst, target, best) or 0
     if inventory.ReferenceAllItems ~= nil then
-        for _, item in ipairs(inventory:ReferenceAllItems()) do
-            local equippable = item:IsValid() and item.components ~= nil and item.components.equippable or nil
-            local damage = not M.IsTorchWeapon(item) and not IsWeaponBroken(item)
-                and WeaponDamage(inst, target, item) or nil
-            if damage ~= nil and damage > bestdamage
-                and equippable ~= nil and equippable.equipslot == EQUIPSLOTS.HANDS
-                and (equippable.IsRestricted == nil or not equippable:IsRestricted(inst)) then
+        if items == nil then
+            items = inventory:ReferenceAllItems()
+            local active = inventory:GetActiveItem()
+            if active ~= nil then items[#items + 1] = active end
+        end
+        for _, item in ipairs(items) do
+            local damage = UsableCombatWeapon(inst, item) and WeaponDamage(inst, target, item) or nil
+            if damage ~= nil and damage > bestdamage then
                 best, bestdamage = item, damage
             end
         end
@@ -963,6 +995,45 @@ local function GetArmorValue(inst, item, slot, attacker, weapon)
     local condition = armor.indestructible and math.huge
         or math.max(0, armor.condition or 0)
     return absorption, condition
+end
+
+function M.ShouldRetreatUnequipped(inst, target)
+    local c = inst ~= nil and inst.components or nil
+    local health, inventory = c ~= nil and c.health or nil, c ~= nil and c.inventory or nil
+    if inst == nil or not inst:HasTag("my_friend") or health == nil or inventory == nil or health.GetPercent == nil
+        or health:GetPercent() >= .8 then return false end
+    local now = GetTime()
+    local version = inst._my_friend_discovery_inventory or 0
+    local hand = inventory:GetEquippedItem(EQUIPSLOTS.HANDS)
+    local cached = inst._my_friend_unequipped_combat
+    local cachedarmor = cached ~= nil and cached.armor_guid ~= nil and (Ents or {})[cached.armor_guid] or nil
+    local cachedweapon = cached ~= nil and cached.weapon_guid ~= nil and (Ents or {})[cached.weapon_guid] or nil
+    local enemyweapon = target ~= nil and target.components ~= nil and target.components.combat ~= nil
+        and target.components.combat.GetWeapon ~= nil and target.components.combat:GetWeapon() or nil
+    if cached ~= nil and cached.target_guid == (target ~= nil and target.GUID or nil) and cached.version == version
+        and cached.hand_guid == (hand ~= nil and hand.GUID or nil) and now < cached.until_time
+        and (cached.armor_guid == nil or cachedarmor ~= nil
+            and GetArmorValue(inst, cachedarmor, cached.armor_slot, target, enemyweapon) ~= nil)
+        and (cached.weapon_guid == nil or UsableCombatWeapon(inst, cachedweapon)) then return cached.retreat end
+    local items = inventory:ReferenceAllItems()
+    local active = inventory:GetActiveItem()
+    if active ~= nil then items[#items + 1] = active end
+    local weapon, damage = M.FindBestCombatWeapon(inst, target, items)
+    local armor
+    if (damage or 0) < 25 then
+        for _, item in ipairs(items) do
+            local eq = item:IsValid() and item.components ~= nil and item.components.equippable or nil
+            if eq ~= nil and eq.equipslot ~= EQUIPSLOTS.HANDS
+                and GetArmorValue(inst, item, eq.equipslot, target, enemyweapon) ~= nil then armor = item break end
+        end
+    end
+    local retreat = (damage or 0) < 25 and armor == nil
+    inst._my_friend_unequipped_combat = {target_guid = target ~= nil and target.GUID or nil, version = version,
+        hand_guid = hand ~= nil and hand.GUID or nil, armor_guid = armor ~= nil and armor.GUID or nil,
+        armor_slot = armor ~= nil and armor.components.equippable.equipslot or nil,
+        weapon_guid = not retreat and armor == nil and weapon ~= nil and weapon.GUID or nil,
+        retreat = retreat, until_time = now + .25}
+    return retreat
 end
 
 function M.GetThermalInsulation(item, need)

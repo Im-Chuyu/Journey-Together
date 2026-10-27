@@ -15,6 +15,13 @@ Use `zh`, `en`, and `ru` as references. Keep command `id` values and dialogue
 keys unchanged. A language file contains only one language. Chinese is the
 fallback when a file is missing.
 
+The shared `revive` command may provide `portal_keywords`, a separate list of
+destination words such as `gate` or `portal`. A named ghost companion goes to
+a portal only when both a destination and a revival keyword occur in the chat
+message. Revival keywords without a destination use nearby resurrection,
+just like the wheel. Keep these word groups separate and preserve the `revive`
+ID; do not replace them with fixed phrases such as `portal respawn`.
+
 For Chinese voice lines, both `zh/dialogue_lines.lua` and
 `zh_tw/dialogue_lines.lua` contain their own `voice_order` table. The two
 tables must keep the same `fn_number` for matching lines because the audio

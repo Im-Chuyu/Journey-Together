@@ -284,7 +284,7 @@ function M.GetFireDangerRadius(source)
     return distance
 end
 
-function M.FindDamagingHeatSource(inst, fire_only)
+function M.FindDamagingHeatSource(inst, fire_only, cold)
     local x, y, z = inst.Transform:GetWorldPosition()
     local best, bestscore
     local temperature = inst.components.temperature
@@ -292,13 +292,14 @@ function M.FindDamagingHeatSource(inst, fire_only)
         if source ~= inst and source.entity:GetParent() == nil then
             local heater = source.components.heater
             local heat = heater ~= nil and heater:GetHeat(inst) or nil
-            local damage = fire_only and M.GetFireDangerRadius(source) or GetDamageDistance(source)
+            local damage = cold and 0
+                or fire_only and M.GetFireDangerRadius(source) or GetDamageDistance(source)
             local cutoff = heater ~= nil and (heater:GetHeatRadiusCutoff() or 10) or damage
             local p = source:GetPosition()
             local distance = (p.x - x)^2 + (p.z - z)^2
             local temperature_damage = not fire_only and temperature ~= nil and heat ~= nil
-                and ((heater:IsExothermic() and heat > temperature.current)
-                    or (heater:IsEndothermic() and heat < temperature.current))
+                and ((not cold and heater:IsExothermic() and heat > temperature.current)
+                    or (cold and heater:IsEndothermic() and heat < temperature.current))
             if (damage > 0 or not fire_only and temperature ~= nil
                     and temperature_damage)
                 and distance < (fire_only and damage or math.max(cutoff, damage))^2 then
@@ -316,6 +317,11 @@ function M.GetTemperatureDangerRadius(inst, source, cold)
     if override == nil or temperature == nil then return 0 end
     local radius, value = override:GetActiveRadius(), override:GetTemperature()
     if radius > 0 and (cold and value < 0 or not cold and value > temperature.overheattemp) then
+        -- The ward's broad ambient cooling can be offset by heaters. Only
+        -- its ground ice directly clamps body temperature every frame.
+        if cold and source.prefab == "deerclopseyeball_sentryward" then
+            radius = math.min(radius, TUNING.DEERCLOPSEYEBALL_SENTRYWARD_GROUND_ICE_RADIUS or 3.5)
+        end
         return radius
     end
     return 0
@@ -336,7 +342,7 @@ function M.FindDamagingTemperatureSource(inst, cold)
         end
     end
     local radius = closest ~= nil and M.GetTemperatureDangerRadius(inst, closest, cold) or 0
-    if radius > 0 then return closest, radius end
+    if radius > 0 and bestdistance <= radius^2 then return closest, radius end
 end
 
 local function GetSourceData(inst, source, need)

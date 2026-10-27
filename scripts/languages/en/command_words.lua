@@ -3,7 +3,7 @@
 return {
     { id = "plant_trees", label = "Plant Trees", keywords = {"plant trees", "plant them", "plant the seeds"} },
     { id = "squeeze_heart", label = "Squeeze Heart", keywords = {"squeeze", "press", "squeeze heart"} },
-    { id = "revive", en = {"revive", "resurrect", "come back to life"} },
+    { id = "revive", en = {"revive", "resurrect", "come back to life", "respawn"}, portal_keywords = {"gate", "florid postern", "portal"} },
     { id = "farewell_gift", en = {"take it with you", "take them with you", "it's yours", "keep it"} },
     { id = "farewell_keep", en = {"leave it behind", "leave your things", "don't take it"} },
     { id = "stop_follow", en = {"don't follow me", "stop following", "leave me alone", "go away",

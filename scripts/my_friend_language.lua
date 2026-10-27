@@ -19,7 +19,7 @@ function M.CommandWords(language)
                 or entry.zh or entry.en
             if type(words) == "table" then
                 result[#result + 1] = {id = entry.id, keywords = words,
-                    character = entry.character, label = entry.label}
+                    character = entry.character, label = entry.label, portal_keywords = entry.portal_keywords}
             end
         end
     end

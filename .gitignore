@@ -5,6 +5,9 @@ server_log.txt
 client_log.txt
 *.dmp
 
+# Workspace-local temporary validation scripts and fixtures
+tests/.local/
+
 # Editor and OS files
 .vscode/
 .idea/

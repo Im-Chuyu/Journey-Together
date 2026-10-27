@@ -3,7 +3,7 @@
 return {
     { id = "plant_trees", label = "种树", keywords = {"种树", "种下去", "种吧"} },
     { id = "squeeze_heart", label = "挤压双尾心", keywords = {"挤", "压", "按", "捏"} },
-    { id = "revive", zh = {"复活", "重生", "归来", "活"} },
+    { id = "revive", zh = {"复活", "重生", "归来", "活"}, portal_keywords = {"大门", "绚丽之门", "传送门"} },
     { id = "farewell_gift", zh = {"带走吧","拿走吧","不要了","送你"} },
     { id = "farewell_keep", zh = {"东西留下","留下东西","别带走"} },
     { id = "stop_follow", zh = {"别跟着我","别找我","走开","快走","离开","别烦我","你走","自己玩","一边去","取消跟随"} },

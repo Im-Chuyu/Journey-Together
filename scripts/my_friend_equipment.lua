@@ -245,18 +245,52 @@ local function RainProtection(item)
         and Clamp01(c.waterproofer:GetEffectiveness()) or 0
 end
 
-local function OtherRainProtection(inst, excluded_slot)
-    local inventory = inst.components.inventory
+local function InherentRainProtection(inst)
     local moisture = inst.components.moisture
     local total = moisture ~= nil and (moisture.inherentWaterproofness or 0) or 0
     if moisture ~= nil and moisture.waterproofnessmodifiers ~= nil then
         total = total + (moisture.waterproofnessmodifiers:Get() or 0)
     end
+    return total
+end
+
+local function OtherRainProtection(inst, excluded_slot)
+    local inventory = inst.components.inventory
+    local total = InherentRainProtection(inst)
     if inventory == nil then return total end
     for _, slot in ipairs(EquipSlots.All()) do
         if slot ~= excluded_slot then total = total + RainProtection(inventory:GetEquippedItem(slot)) end
     end
     return total
+end
+
+-- Count the best usable item per slot, not every spare helmet in a backpack.
+-- This is preparation for rain, independent of whether it is raining now.
+function M.GetAvailableRainProtection(inst)
+    local inventory = inst.components.inventory
+    local total = InherentRainProtection(inst)
+    if inventory == nil then return Clamp01(total) end
+    local protection = {}
+    for _, slot in ipairs(EquipSlots.All()) do protection[slot] = 0 end
+    local function Consider(item)
+        local c = item ~= nil and item:IsValid() and item.components or nil
+        local eq = c ~= nil and c.equippable or nil
+        local ii = c ~= nil and c.inventoryitem or nil
+        if eq ~= nil and protection[eq.equipslot] ~= nil and c.waterproofer ~= nil
+            and (eq.IsRestricted == nil or not eq:IsRestricted(inst))
+            and ii ~= nil and ii:GetGrandOwner() == inst and not ii.islockedinslot
+            and not item:HasTag("broken") and not Survival().IsWornOut(item)
+            and (c.finiteuses == nil or c.finiteuses:GetUses() > 0)
+            and (c.fueled == nil or not c.fueled:IsEmpty())
+            and (c.armor == nil or c.armor.indestructible or c.armor.condition == nil or c.armor.condition > 0) then
+            protection[eq.equipslot] = math.max(protection[eq.equipslot], RainProtection(item))
+        end
+    end
+    for slot in pairs(protection) do Consider(inventory:GetEquippedItem(slot)) end
+    for _, item in ipairs(inventory:ReferenceAllItems()) do Consider(item) end
+    Consider(inventory:GetActiveItem())
+    for _, value in pairs(protection) do total = total + value end
+    return Clamp01(total)
 end
 
 local function Score(inst, item, needs)

@@ -168,6 +168,10 @@ function M.GuardAction(inst, action, radius)
             if command == nil or command.id ~= "chop" or target ~= leader then return false end
         elseif act._my_friend_chop_loot ~= nil then
             if target == nil or target:GetDistanceSqToPoint(act._my_friend_chop_loot) > 5^2 then return false end
+        elseif act._my_friend_base_equipment ~= nil then
+            local equipment = require("my_friend_basic_equipment")
+            if target ~= nil and not equipment.InTravelRange(inst, act, target:GetPosition())
+                or point ~= nil and not equipment.InTravelRange(inst, act, point) then return false end
         elseif act._my_friend_crafting_material then
             -- Crafting commands scan and withdraw from the companion's own
             -- immediate work area. Do not apply the ordinary leader-centred
