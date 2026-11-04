@@ -53,7 +53,26 @@ function M.Move(x, y)
     end
     if match == nil or match.status ~= "playing" or M.pending_move ~= nil
         or match.side ~= 0 and match.side ~= match.turn then return end
-    local size = Catalog.Get(match.game).rules.SIZE
+    local rules = Catalog.Get(match.game).rules
+    local size = rules.SIZE
+    if match.game == "xiangqi" then
+        local i = rules.Index(x, y)
+        if i == nil then return end
+        if rules.Side(match.board[i]) == match.turn then
+            M.selected_from = M.selected_from ~= i and i or nil
+            if M.screen ~= nil then M.screen:Refresh() end
+            return
+        end
+        local from = M.selected_from
+        if from == nil or not rules.Legal(match.board, match.turn, from, i) then return end
+        M.pending_move = match.revision
+        if M.Send("move", {id = match.id, revision = match.revision, x = x, y = y,
+            from_x = (from - 1) % size + 1, from_y = math.floor((from - 1) / size) + 1}) then
+            M.selected_from = nil
+        else M.pending_move = nil end
+        if M.screen ~= nil then M.screen:Refresh() end
+        return
+    end
     if match.board[(y - 1) * size + x] ~= 0 then return end
     M.pending_move = match.revision
     if not M.Send("move", {id = match.id, revision = match.revision, x = x, y = y}) then M.pending_move = nil end
@@ -84,7 +103,7 @@ local function ValidMatch(data)
     end
     if data.version ~= nil and (type(data.version) ~= "number" or data.version % 1 ~= 0 or data.version < 0) then return false end
     if data.count ~= nil and (type(data.count) ~= "number" or data.count % 1 ~= 0 or data.count < 0
-        or data.count > def.rules.SIZE^2) then return false end
+        or data.count > (def.rules.MAX_COUNT or (data.game == "go" and 100000 or def.rules.SIZE^2))) then return false end
     if data.black_offer ~= nil and (type(data.black_offer) ~= "table" or type(data.black_offer.id) ~= "string"
         or type(data.black_offer.from) ~= "string" or type(data.black_offer.name) ~= "string") then return false end
     if data.offer ~= nil and (type(data.offer) ~= "table" or type(data.offer.id) ~= "string"
@@ -103,9 +122,14 @@ local function ValidMatch(data)
     if data.score ~= nil and (type(data.score) ~= "table" or type(data.score[1]) ~= "number"
         or type(data.score[2]) ~= "number" or data.score[1] < 0 or data.score[1] > 361
         or data.score[2] < 0 or data.score[2] > 368.5) then return false end
-    for i = 1, def.rules.SIZE^2 do
-        if data.board[i] ~= 0 and data.board[i] ~= 1 and data.board[i] ~= 2 then return false end
+    for i = 1, def.rules.CELLS or def.rules.SIZE^2 do
+        local piece = data.board[i]
+        if type(piece) ~= "number" or piece % 1 ~= 0 or piece < 0
+            or piece > (data.game == "xiangqi" and 14 or 2) then return false end
     end
+    if data.game == "xiangqi" and (data.check ~= nil and type(data.check) ~= "boolean"
+        or data.last_from ~= nil and (type(data.last_from) ~= "number" or data.last_from % 1 ~= 0
+            or data.last_from < 1 or data.last_from > 90)) then return false end
     return data.winner == nil or data.winner == 1 or data.winner == 2
 end
 function M.Receive(kind, payload)
@@ -155,6 +179,7 @@ function M.Receive(kind, payload)
         if M.match ~= nil and M.match.id == data.id and (M.match.version or 0) > (data.version or 0) then return end
         local pending = M.match ~= nil and M.match.id == data.id and M.pending_move or nil
         if pending ~= nil and (data.revision > pending or data.status ~= "playing" and data.status ~= "scoring") then pending = nil end
+        if M.match == nil or M.match.id ~= data.id or M.match.revision ~= data.revision then M.selected_from = nil end
         M.match, M.game, M.pending_move, M.message = data, data.game, pending, nil
         if data.open then M.Show("board") end
     elseif kind == "left" then

@@ -137,6 +137,26 @@ local function ResolveVanilla(strid, strtbl)
     end
 end
 
+local function IsDynamicKey(key)
+    return key == "ai_dynamic" or key:match("^[^/]+/ai_dynamic$") ~= nil
+end
+
+local function InstallDynamicChatEcho()
+    local history = ChatHistory
+    if history == nil or history._my_friend_dynamic_echo
+        or type(history.OnChatterMessage) ~= "function" then return end
+    local previous = history.OnChatterMessage
+    history.OnChatterMessage = function(self, inst, name_colour, message, colour, icon, background, priority, silent, ...)
+        local talker = inst ~= nil and inst.components ~= nil and inst.components.talker or nil
+        local chatter = talker ~= nil and talker.chatter or nil
+        local raw = chatter ~= nil and chatter.strtbl:value() or nil
+        if silent and inst ~= nil and inst:HasTag("my_friend") and type(raw) == "string"
+            and IsDynamicKey(raw:match("^[^\1]+") or "") then silent = false end
+        return previous(self, inst, name_colour, message, colour, icon, background, priority, silent, ...)
+    end
+    history._my_friend_dynamic_echo = true
+end
+
 -- Client side resolver for talker.chatter. Receives the raw net variables.
 function M.Resolve(inst, strid, strtbl)
     local raw = strtbl:value()
@@ -146,6 +166,10 @@ function M.Resolve(inst, strid, strtbl)
     if split ~= nil then
         key, argument = raw:sub(1, split - 1), raw:sub(split + 1)
     end
+    -- Native chatter normally hides the live notification within 8 units of
+    -- the camera. Explicit model replies should notify nearby players too.
+    -- Resolve runs before OnChatterMessage on both listen hosts and clients.
+    if IsDynamicKey(key) then InstallDynamicChatEcho() end
     return M.Text(key, math.max(1, strid:value()), argument)
         or ResolveVanilla(strid, strtbl)
 end

@@ -19,6 +19,23 @@ function M.Request(inst, player)
     inst._my_friend_seat_request = {leader = player, chair = chair, expires = GetTime() + 30}
     return true
 end
+function M.RequestTarget(inst, player, chair, model, issuer)
+    if not M.CanUseSeat(inst, chair, player, COMMAND_RANGE) then return end
+    local request = {leader = player, chair = chair, expires = GetTime() + 30, strict = true, model = model == true, issuer = issuer}
+    inst._my_friend_seat_request = request
+    inst._my_friend_replan_requested = true
+    return request
+end
+
+local function SeatLeader(inst)
+    local leader = Policy.GetLeader(inst)
+    local request = inst._my_friend_seat_request
+    if leader == nil and request ~= nil and request.model then
+        local api = require("my_friend_body_api")
+        if api.Valid(inst) ~= nil and api.Authorize(inst, request.issuer or request.leader) then return request.leader end
+    end
+    return leader
+end
 
 local function Request(inst, leader)
     local request = inst._my_friend_seat_request
@@ -50,9 +67,9 @@ local function Choice(inst, leader)
 end
 
 function M.Available(inst, context)
-    local leader = Policy.GetLeader(inst)
+    local leader = SeatLeader(inst)
     local c = context or {}
-    return leader ~= nil and Policy.IsLocalPlayer(leader)
+    return leader ~= nil and (leader == inst or Policy.IsLocalPlayer(leader))
         and not leader:HasTag("playerghost") and not inst:HasTag("playerghost")
         and not inst.components.health:IsDead()
         and (leader.components.health == nil or not leader.components.health:IsDead())
@@ -99,7 +116,7 @@ function M.FindSeat(inst, leader, together, range)
 end
 
 function M.Score(inst, context)
-    local leader = Policy.GetLeader(inst)
+    local leader = SeatLeader(inst)
     if leader == nil then return 0 end
     local request = Request(inst, leader)
     if request == nil and GetTime() < (inst._my_friend_sit_suppressed_until or 0) then return 0 end
@@ -129,14 +146,14 @@ function Sit:Visit()
     local inst, now = self.inst, GetTime()
     if self.status == READY then
         if M.Score(inst) == 0 then self.status = FAILED return end
-        local leader = Policy.GetLeader(inst)
+        local leader = SeatLeader(inst)
         local request = Request(inst, leader)
         local choice = Choice(inst, leader)
         local range = request ~= nil and COMMAND_RANGE or SEAT_RANGE
         local chair = request ~= nil and request.chair
             or M.FindSeat(inst, leader, choice.session ~= nil)
         if not M.CanUseSeat(inst, chair, leader, range) then
-            chair = request ~= nil and M.FindSeat(inst, leader, false, range) or nil
+            chair = request ~= nil and not request.strict and M.FindSeat(inst, leader, false, range) or nil
         end
         inst._my_friend_next_seat_scan = now + 5
         if chair == nil then

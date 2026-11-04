@@ -35,6 +35,10 @@ local function Carrying(inst)
 end
 
 local function FindStatue(inst, command)
+    if command.body_target ~= nil then
+        local target=(Ents or {})[command.body_target]
+        return CanPickUp(inst,target) and not require("my_friend_navigation").IsBlocked(inst,target:GetPosition()) and target or nil
+    end
     local origin = command.origin or command.player:GetPosition()
     local x, _, z = origin:Get()
     local best, distance
@@ -48,6 +52,8 @@ local function FindStatue(inst, command)
     end
     return best
 end
+
+M.CanPickUp = CanPickUp
 
 local function FinishWalking(inst)
     Dialogue.Reply(inst, "carry_statue_follow")

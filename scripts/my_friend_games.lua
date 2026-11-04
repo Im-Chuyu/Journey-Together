@@ -89,7 +89,8 @@ function Service:Snapshot(game, userid, open)
         end
     end
     return {id = game.id, game = game.game, board = s.board, turn = s.turn, status = s.status,
-        winner = s.winner, last = s.last, line = s.line, revision = s.revision, reason = game.reason,
+        winner = s.winner, last = s.last, last_from = s.last_from, check = s.check,
+        line = s.line, revision = s.revision, reason = game.reason,
         participants = participants, side = participants[1].id == userid
             and (participants[2].id == userid and 0 or 1) or 2, open = open == true,
         chat = game.chat, chat_seq = game.chat_seq, black_offer = game.black_offer, version = game.version or 0,
@@ -160,7 +161,7 @@ function Service:ClearUndo(game)
 end
 function Service:MakeBlack(game, userid)
     if game.participants[2].id ~= userid then return end
-    Cancel(game.ai_task); game.ai_task = nil
+    self:CancelAI(game)
     self:ClearBlackOffer(game)
     self:ClearOffer(game)
     self:ClearUndo(game)
@@ -192,7 +193,7 @@ function Service:Watch(record, entity, fn)
 end
 function Service:Drop(game)
     if self.games[game.id] ~= game then return end
-    Cancel(game.ai_task); Cancel(game.idle_task); Cancel(game.expiry_task)
+    self:CancelAI(game); Cancel(game.idle_task); Cancel(game.expiry_task)
     self:ClearBlackOffer(game)
     self:ClearOffer(game)
     self:ClearUndo(game)
@@ -219,7 +220,7 @@ function Service:Finish(game, reason, winner)
     if game.state.status == "playing" or game.state.status == "scoring" then
         game.state.status, game.state.revision = "ended", game.state.revision + 1
     end
-    game.reason, game.state.winner = reason, winner or game.state.winner
+    game.reason, game.state.winner = reason or game.state.reason, winner or game.state.winner
     self:OutcomeTalk(game)
     self:ClearBlackOffer(game)
     self:ClearOffer(game)
@@ -231,8 +232,8 @@ function Service:Finish(game, reason, winner)
             winner = game.state.winner, draw = game.state.status == "draw", reason = game.reason,
             score = game.state.score, day = self.world.state ~= nil and self.world.state.cycles or nil})
     end
-    Cancel(game.ai_task); Cancel(game.idle_task)
-    game.ai_task, game.idle_task = nil, nil
+    self:CancelAI(game); Cancel(game.idle_task)
+    game.idle_task = nil
     self:Unlisten(game)
     Cancel(game.expiry_task)
     game.expiry_task = self.world:DoTaskInTime(600, function()
@@ -286,31 +287,67 @@ function Service:Roster(player)
     table.sort(list, function(a, b) return a.id < b.id end)
     self:Emit(player.userid, "roster", {players = list})
 end
+function Service:CancelAI(game)
+    Cancel(game.ai_task)
+    game.ai_task, game.ai_search, game.ai_token = nil, nil, nil
+end
 function Service:ScheduleAI(game)
     local nextplayer = game.participants[game.state.turn]
-    if game.state.status ~= "playing" or not nextplayer.bot then return end
-    game.ai_task = self.world:DoTaskInTime(.35, function()
+    if game.state.status ~= "playing" or not nextplayer.bot or game.ai_task ~= nil then return end
+    local revision, turn = game.state.revision, game.state.turn
+    local token = {}; game.ai_token = token
+    local function Step()
+        if game.ai_token ~= token then return end
         game.ai_task = nil
-        if not self.world:IsValid() or self.games[game.id] ~= game or game.state.status ~= "playing" then return end
-        if self:Companion(game) == nil then self:Finish(game, "left") return end
+        if not self.world:IsValid() or self.games[game.id] ~= game or game.state.status ~= "playing"
+            or game.state.revision ~= revision or game.state.turn ~= turn then self:CancelAI(game); return end
+        if self:Companion(game) == nil then self:Finish(game, "left"); return end
         local rules = Catalog.Get(game.game).rules
-        local x, y = rules.ChooseMove(game.state)
+        local x, y, fx, fy
+        if rules.BeginSearch ~= nil then
+            -- Simultaneous boards share the world's search allowance. Their
+            -- per-turn node caps do not multiply into an unbounded frame stall.
+            local tick, clock = GetTime(), os ~= nil and os.clock or nil
+            if self.ai_tick ~= tick then self.ai_tick, self.ai_used = tick, 0 end
+            if self.ai_used >= .006 then
+                game.ai_task = self.world:DoTaskInTime(FRAMES or 1 / 30, Step)
+                return
+            end
+            local started = clock ~= nil and clock() or 0
+            game.ai_search = game.ai_search or rules.BeginSearch(game.state)
+            local ok, done, tx, ty, sx, sy = pcall(game.ai_search.Step, game.ai_search)
+            self.ai_used = self.ai_used + (clock ~= nil and clock() - started or .006)
+            if not ok then
+                print("[MyFriendsGames] Companion search failed: " .. tostring(done))
+                self:Finish(game, "stopped"); return
+            end
+            if not done then
+                game.ai_task = self.world:DoTaskInTime(FRAMES or 1 / 30, Step)
+                return
+            end
+            x, y, fx, fy = tx, ty, sx, sy
+            game.ai_search = nil
+        else x, y = rules.ChooseMove(game.state) end
+        game.ai_token = nil
+        local ok
         if x == nil then
-            if rules.Pass ~= nil then rules.Pass(game.state) else self:Finish(game, "stopped"); return end
-        else rules.Play(game.state, x, y) end
+            if rules.Pass ~= nil then ok = rules.Pass(game.state) else self:Finish(game, "stopped"); return end
+        else ok = rules.Play(game.state, x, y, fx, fy) end
+        if not ok then self:Finish(game, "stopped"); return end
         self:ClearOffer(game)
         self:BotTalk(game, false, true)
         if game.state.status == "scoring" then self:AfterGo(game)
         elseif game.state.status ~= "playing" then self:Finish(game)
         else self:Touch(game); self:Publish(game) end
-    end)
+    end
+    game.ai_task = self.world:DoTaskInTime(.35, Step)
 end
 function Service:ClearOffer(game)
     Cancel(game.offer_task); game.offer_task, game.offer = nil, nil
 end
 function Service:AfterGo(game)
     self:ClearOffer(game); self:ClearBlackOffer(game); self:ClearUndo(game)
-    Cancel(game.ai_task); game.ai_task = nil
+    self:CancelAI(game)
     if game.state.status == "scoring" then
         for side, p in ipairs(game.participants) do
             if p.bot and not game.state.confirmed[side] then Catalog.Get(game.game).rules.Confirm(game.state, side) end
@@ -342,7 +379,7 @@ function Service:UndoRequest(player, game, action, data)
     local has_bot = first.bot or second.bot
     if has_bot or first.id == second.id then
         local plies = has_bot and math.min(2, #(game.state.history or {})) or 1
-        Cancel(game.ai_task); game.ai_task = nil
+        self:CancelAI(game)
         if not rules.Undo(game.state, plies) then self:Error(player, "undo_unavailable"); return end
         self:Touch(game); self:Publish(game); self:ScheduleAI(game)
         return
@@ -379,7 +416,9 @@ function Service:GoRequest(player, game, action, data)
         else self:ClearOffer(game); self:Publish(game) end
         return
     end
-    if game.game ~= "go" then self:Error(player, "forbidden"); return end
+    if game.game ~= "go" and not (game.game == "xiangqi" and action == "draw_offer") then
+        self:Error(player, "forbidden"); return
+    end
     if data.revision ~= s.revision then
         self:Emit(player.userid, "state", self:Snapshot(game, player.userid)); self:Error(player, "stale"); return
     end
@@ -410,7 +449,7 @@ function Service:GoRequest(player, game, action, data)
         ok, reason = rules.Confirm(s, side)
     end
     if not ok then self:Error(player, reason or "forbidden"); return end
-    Cancel(game.ai_task); game.ai_task = nil
+    self:CancelAI(game)
     self:AfterGo(game)
 end
 function Service:Request(player, action, data, friend)
@@ -508,7 +547,7 @@ function Service:Request(player, action, data, friend)
             self:GoRequest(player, game, action, data); return
         end
         if action == "black" then
-            if game.participants[1].id == player.userid then self:Error(player, "already_black") return end
+            if game.participants[1].id == player.userid then self:Error(player, Catalog.Get(game.game).already_first or "already_black") return end
             if (game.state.count or 0) > 2 then self:Error(player, "black_unavailable"); return end
             if game.black_offer ~= nil then self:Error(player, "black_pending") return end
             if game.participants[1].bot then self:MakeBlack(game, player.userid); return end
@@ -539,7 +578,7 @@ function Service:Request(player, action, data, friend)
             self:Error(player, "stale"); return
         end
         if game.participants[game.state.turn].id ~= player.userid then self:Error(player, "wrong_turn") return end
-        local ok, reason = Catalog.Get(game.game).rules.Play(game.state, data.x, data.y)
+        local ok, reason = Catalog.Get(game.game).rules.Play(game.state, data.x, data.y, data.from_x, data.from_y)
         if not ok then self:Error(player, reason) return end
         self:ClearOffer(game)
         self:ClearUndo(game)

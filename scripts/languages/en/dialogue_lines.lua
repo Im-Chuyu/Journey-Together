@@ -1015,5 +1015,8 @@ M.lines.follow_reunion = {
     {"Hi, we meet again."}, -- fn693
     {"Long time no see. Are you having fun?"}, -- fn694
     {"Don't forget to bring me along next time!"}, -- fn695
-}
+}-- Dynamic body-interface text uses one fixed template and no voice slot.
+M.replies.ai_dynamic = {"{1}"}
+
+
 return M

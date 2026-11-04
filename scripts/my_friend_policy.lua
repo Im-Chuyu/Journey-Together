@@ -147,7 +147,11 @@ function M.GuardAction(inst, action, radius)
         if act._my_friend_rescue_target == nil and M.GetLeader(inst) ~= leader then return false end
         local target = act.target
         local point = act.GetActionPoint ~= nil and act:GetActionPoint() or nil
-        if act._my_friend_wormhole ~= nil then
+        if act._my_friend_body_action ~= nil then
+            local body = require("my_friend_body_api")
+            if target ~= nil and not body.InTravelRange(inst, act, target:GetPosition())
+                or point ~= nil and not body.InTravelRange(inst, act, point) then return false end
+        elseif act._my_friend_wormhole ~= nil then
             local wormhole = require("my_friend_wormhole")
             if target ~= nil and not wormhole.InTravelRange(inst, act, target:GetPosition()) then return false end
             if point ~= nil and not wormhole.InTravelRange(inst, act, point) then return false end

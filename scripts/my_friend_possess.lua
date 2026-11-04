@@ -25,18 +25,14 @@ end
 local function PlayerOwnsCharacter(player, prefab)
     if player == nil or type(prefab) ~= "string" then return false end
     if player.prefab == prefab or not Characters.IsPaid(prefab) then return true end
-    local reported = _G.MyFriendOwnedCharacters ~= nil
-        and _G.MyFriendOwnedCharacters[player.userid] or nil
-    return reported ~= nil and reported[prefab] == true
+    return require("my_friend_skins").Owns(player, prefab .. "_none")
 end
 
 local function SafeSkinForPlayer(player, prefab, skin)
     local default = DefaultSkin(prefab)
     if type(skin) ~= "string" or skin == "" or skin == prefab
         or skin == prefab .. "_none" then return default end
-    local owned = _G.MyFriendSkinNames ~= nil
-        and _G.MyFriendSkinNames[player.userid] or nil
-    return owned ~= nil and owned[skin] == true and skin or default
+    return require("my_friend_skins").Owns(player, skin) and skin or default
 end
 
 -- Skin data captured from an entity has already passed the server-side
@@ -533,6 +529,7 @@ function M.CaptureMigration(player, friend)
     local sess = SessionFor(player)
     if sess == nil or sess.phase ~= nil or sess.temporary_companion ~= friend then return end
     CaptureActiveSession(sess, player)
+    if friend._my_friend_body ~= nil then require("my_friend_body_api").Close(friend, "entity_migration") end
     CaptureTemporary(sess)
     local saved = deepcopy(CopySession(sess))
     Sessions()[player.userid] = nil
@@ -1039,6 +1036,7 @@ function M.Release(player)
         or not CanStartSwap(player, temporary.prefab) then
         return false
     end
+    if temporary._my_friend_body ~= nil then require("my_friend_body_api").Close(temporary, "entity_swap") end
     CaptureTemporary(sess)
     local x, _, z = player.Transform:GetWorldPosition()
     sess.companion_skill_data = SaveSkillTree(player)

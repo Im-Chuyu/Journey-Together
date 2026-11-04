@@ -644,6 +644,7 @@ function M.OnColdDamage(inst)
 end
 
 function M.OnEnvironmentalDamage(inst, data)
+    if require("my_friend_health").IsAgeDisplayDelta(inst,data) then return end
     if not IsAlive(inst) or inst:HasTag("playerghost") or data == nil
         or (data.amount or 0) >= 0 then return end
     if data.cause == "cold" or data.cause == "freezing" then
@@ -1160,7 +1161,7 @@ function M.EstimateFight(friendhealth, enemyhealth, outgoing, incoming,
     return win_time <= survival_time * 1.2
 end
 
-function M.CanCounterAttack(inst, target)
+function M.CanCounterAttack(inst, target, instructed)
     if not require("my_friend_combat_rules").CanAttack(target, inst)
         or not IsAlive(target) or not IsAlive(inst)
         or inst.components.inventory == nil or inst.components.combat == nil then
@@ -1248,7 +1249,9 @@ function M.CanCounterAttack(inst, target)
     -- Assistance is deliberately more decisive than self-defence. Once the
     -- companion has a working weapon and armour, it helps the leader instead
     -- of waiting for the conservative damage/survival estimate to pass.
-    if assisting or self_defending or priority then
+    -- Explicit commands can initiate a neutral target after a usable weapon
+    -- has been selected. All earlier equipment/retreat guards still apply.
+    if assisting or self_defending or priority or instructed == true then
         return priority or is_wanda or health == nil or health.GetPercent == nil
             or health:GetPercent() >= .15
     end
@@ -1268,7 +1271,7 @@ end
 
 -- Frame-level dodge monitoring needs a cheap combat eligibility check. Keep
 -- weapon/armour scoring out of that loop; ownership and disarm still update now.
-function M.CanContinueCombat(inst, target)
+function M.CanContinueCombat(inst, target, instructed)
     if not IsAlive(inst) or not IsAlive(target)
         or not require("my_friend_combat_rules").CanAttack(target, inst)
         or inst.components.inventory == nil or inst.components.combat == nil
@@ -1282,11 +1285,11 @@ function M.CanContinueCombat(inst, target)
     local low_health = inst.components.health.GetPercent ~= nil and inst.components.health:GetPercent() < .15
     local cached = inst._my_friend_combat_check
     if cached ~= nil and cached.target == target and cached.hand == hand
-        and cached.leader == leader and cached.low_health == low_health
+        and cached.leader == leader and cached.low_health == low_health and cached.instructed == (instructed == true)
         and not IsWeaponBroken(hand) and now < cached.until_time then return cached.allowed end
-    local allowed = M.CanCounterAttack(inst, target)
+    local allowed = M.CanCounterAttack(inst, target, instructed)
     inst._my_friend_combat_check = {target = target, hand = inventory:GetEquippedItem(EQUIPSLOTS.HANDS),
-        leader = leader, low_health = low_health, allowed = allowed, until_time = now + .25}
+        leader = leader, low_health = low_health, instructed = instructed == true, allowed = allowed, until_time = now + .25}
     return allowed
 end
 

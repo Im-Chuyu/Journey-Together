@@ -51,6 +51,9 @@ function M.Capture(inst)
 end
 
 function M.SaveAndClear(inst)
+    -- Return unstarted body-interface cooking inputs before capturing the only
+    -- inventory copy used by a body exchange. Ordinary Capture/OnSave stays read-only.
+    if inst ~= nil and inst._my_friend_body ~= nil then require("my_friend_body_api").Close(inst, "inventory_transfer") end
     local data = M.Capture(inst)
     if data ~= nil then M.Clear(inst) end
     return data

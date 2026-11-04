@@ -91,6 +91,7 @@ end
 
 function M.PlayLine(inst, key, index)
     if not CanPlayLine(inst) then return end
+    if GetTime() < (inst._my_friend_body_speaking or 0) then return end
     local event, number = VoiceIndex(key, index)
     if event == nil then return end
     Durations = Durations or require("my_friend_voice_durations")
@@ -105,6 +106,10 @@ function M.PlayLine(inst, key, index)
         and duration < math.huge and duration + LINE_END_PADDING or UNKNOWN_LINE_DURATION
     state.queue[#state.queue + 1] = {event = event, duration = duration}
     if state.task == nil then PumpLines(inst, state) end
+end
+function M.StopCustom(inst)
+    M.Stop(inst, true)
+    ClearLines(inst)
 end
 
 -- Stop only the native talk loop. Bubble completion and a new ontalk event

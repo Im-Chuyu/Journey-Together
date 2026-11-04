@@ -102,7 +102,7 @@ local function Test(name,fn)
     if ok then passed=passed+1; print("PASS "..name) else failed=failed+1; print("FAIL "..name..": "..tostring(message)) end
 end
 local commandSource=Read("scripts/my_friend_commands.lua")
-local a=assert(commandSource:find("function M.Clear(friend)",1,true))
+local a=assert(commandSource:find("function M.Clear(",1,true))
 local b=assert(commandSource:find("function M.Register(",a,true))
 local commandEnv=setmetatable({M={}},{__index=_G})
 local clearChunk=assert(loadstring(commandSource:sub(a,b-1).."\nreturn M.Clear")); setfenv(clearChunk,commandEnv)

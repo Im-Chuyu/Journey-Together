@@ -134,9 +134,6 @@ end
 function FriendSkinScreen:Apply()
     local skins = self.loadout.selected_skins
     if self.friend ~= nil and self.friend:IsValid() and self.friend.prefab == self.character then
-        -- Refresh immediately before applying: another report may have replaced
-        -- the server's list while this screen was open.
-        require("my_friend_skins").Report(self.character)
         SendModRPCToServer(GetModRPC("MyFriends", "SetSkins"),
             self.friend, skins.base or (self.character .. "_none"),
             skins.body or "", skins.hand or "", skins.legs or "", skins.feet or "")

@@ -3,9 +3,10 @@ local BaseAI = require("my_friend_base_ai")
 local Policy = require("my_friend_policy")
 local Dodge = require("my_friend_dodge")
 
-local MyFriendCombat = Class(BehaviourNode, function(self, inst)
+local MyFriendCombat = Class(BehaviourNode, function(self, inst, targetfn)
     BehaviourNode._ctor(self, "MyFriendCombat")
     self.inst = inst
+    self.targetfn = targetfn
     self.target = nil
     self.dodge_started_at = nil
     self.commit_attack_until = nil
@@ -17,7 +18,7 @@ local function IsBusy(inst)
     return inst.sg ~= nil and inst.sg:HasStateTag("busy")
 end
 
-local function IsValidThreat(inst, target)
+local function IsValidThreat(inst, target, requested)
     if inst == nil or not inst:IsValid() or inst:HasTag("playerghost")
         or inst.components.health == nil or inst.components.health:IsDead()
         or target == nil or not target:IsValid() or target.Transform == nil
@@ -36,9 +37,10 @@ local function IsValidThreat(inst, target)
         and (player_attack_target or pending_player_attack)
     local self_defending = BehaviourAI.IsThreat(inst, target)
         or BehaviourAI.IsPriorityEngaged(inst, target)
-    local engaged = assisting or self_defending
+    local instructed = requested ~= nil and requested == target
+    local engaged = instructed or assisting or self_defending
     return require("my_friend_combat_rules").CanAttack(target, inst)
-        and (self_defending or player_attack_target
+        and (instructed or self_defending or player_attack_target
             or pending_player_attack)
         and (engaged or Policy.InRange(inst, target, 7))
         and (not engaged or DistanceSq(inst, target) <= BehaviourAI.ASSIST_RANGE
@@ -67,8 +69,10 @@ local function InterruptAttackForDodge(inst)
 end
 
 function MyFriendCombat:Visit()
+    self.failure_reason = nil
     local combat = self.inst.components.combat
     if not self.inst:IsValid() or combat == nil or self.inst.components.locomotor == nil then
+        self.failure_reason = "body_unavailable"
         self.status = FAILED
         return
     end
@@ -85,13 +89,20 @@ function MyFriendCombat:Visit()
         return
     end
 
-    if not IsValidThreat(self.inst, self.target) then
+    self.requested_target = self.targetfn ~= nil and self.targetfn(self.inst) or nil
+    if self.targetfn ~= nil then
+        if self.target ~= self.requested_target then
+            self.dodge_started_at, self.commit_attack_until = nil, nil
+        end
+        self.target = self.requested_target
+    elseif not IsValidThreat(self.inst, self.target) then
         self.target = BehaviourAI.FindThreat(self.inst) or self.inst._my_friend_assist_target
         self.dodge_started_at = nil
         self.commit_attack_until = nil
     end
-    if not IsValidThreat(self.inst, self.target)
-        or not BehaviourAI.CanContinueCombat(self.inst, self.target) then
+    if not IsValidThreat(self.inst, self.target, self.requested_target)
+        or not BehaviourAI.CanContinueCombat(self.inst, self.target, self.requested_target ~= nil) then
+        self.failure_reason = self.target == nil and "target_lost" or "cannot_continue_combat"
         if self.target ~= nil and BehaviourAI.ShouldRetreatUnequipped(self.inst, self.target) then
             BehaviourAI.RememberUnequippedRetreat(self.inst, self.target)
             InterruptAttackForDodge(self.inst)
@@ -120,7 +131,8 @@ function MyFriendCombat:Visit()
     -- combat.target nil. CalcAttackRangeSq() then indexes that nil and takes
     -- the server down. Nothing below can work on a target combat rejected, so
     -- hand the tick back instead.
-    if combat.target ~= self.target or not IsValidThreat(self.inst, self.target) then
+    if combat.target ~= self.target or not IsValidThreat(self.inst, self.target, self.requested_target) then
+        self.failure_reason = "target_not_attackable"
         self.target = nil
         self.status = FAILED
         Stop(self.inst)
@@ -135,7 +147,7 @@ function MyFriendCombat:Visit()
     local assisting = self.target == self.inst._my_friend_assist_target
     local self_defending = BehaviourAI.IsThreat(self.inst, self.target)
         or BehaviourAI.IsPriorityEngaged(self.inst, self.target)
-    if not assisting and not self_defending
+    if self.requested_target ~= self.target and not assisting and not self_defending
         and not Policy.InRange(self.inst, self.inst, 7) then
         local leader = Policy.GetLeader(self.inst)
         combat:SetTarget(nil)
@@ -244,7 +256,7 @@ function MyFriendCombat:Visit()
         local target = self.target
         local previous = special.validfn
         special.validfn = function(act)
-            return self.target == target and IsValidThreat(self.inst, target)
+            return self.target == target and IsValidThreat(self.inst, target, self.requested_target)
                 and not BehaviourAI.IsHazardousPath(self.inst, self.inst:GetPosition(), target:GetPosition())
                 and (previous == nil or previous(act))
         end
@@ -278,7 +290,7 @@ function MyFriendCombat:Visit()
             -- Validate the target this action was created for. self.target may
             -- already refer to a different enemy when the SG runs the action.
             return self.target == target and combat.target == target
-                and IsValidThreat(self.inst, target)
+                and IsValidThreat(self.inst, target, self.requested_target)
                 and not BehaviourAI.IsHazardRetreatActive(self.inst)
                 and (DistanceSq(self.inst, target) <= combat:CalcAttackRangeSq(target)
                     or not BehaviourAI.IsHazardousPath(self.inst, self.inst:GetPosition(), target:GetPosition()))
@@ -293,15 +305,16 @@ function MyFriendCombat:OnStop()
     self.inst._my_friend_combat_check = nil
     self.dodge_point, self.dodge_move_after = nil, nil
     if not self.inst:IsValid() then
-        self.target, self.announced_target = nil, nil
+        self.target, self.announced_target, self.requested_target = nil, nil, nil
         self.dodge_started_at, self.commit_attack_until = nil, nil
         return
     end
     Stop(self.inst)
-    if self.target == nil or not IsValidThreat(self.inst, self.target) then
+    if self.target == nil or not IsValidThreat(self.inst, self.target, self.requested_target) then
         if self.inst.components.combat ~= nil then self.inst.components.combat:SetTarget(nil) end
     end
     self.target = nil
+    self.requested_target = nil
     self.dodge_started_at = nil
     self.commit_attack_until = nil
     self.announced_target = nil

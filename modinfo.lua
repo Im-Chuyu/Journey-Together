@@ -11,7 +11,7 @@ description = simplified_chinese and "在这片永恒大陆，我会与你并肩
     or russian and "На этом вечном континенте я буду путешествовать вместе с тобой."
     or "On this eternal continent, I will travel with you."
 author = "阮秀"
-version = "2.4.2"
+version = "3.0.2"
 forumthread = ""
 api_version = 10
 
@@ -40,6 +40,16 @@ local function UIButtonOptions()
 end
 
 configuration_options = {
+    {
+        name = "model_enabled",
+        label = simplified_chinese and "AI大模型模式" or traditional_chinese and "AI大模型模式"
+            or russian and "Режим ИИ" or "AI Model Mode",
+        hover = simplified_chinese and "启用模型接口及自动连接，无需先跟随。公屏带伙伴名字即可聊天；跟随时只接受领队安排工作。重试间隔递增5秒，连续30次失败停止。"
+            or traditional_chinese and "啟用模型介面及自動連線，無需先跟隨。公頻帶夥伴名字即可聊天；跟隨時只接受領隊安排工作。重試間隔遞增5秒，連續30次失敗停止。"
+            or russian and "Автоподключение без следования. В чате называйте спутника по имени; при следовании работу задаёт только лидер. Интервал +5 секунд, до 30 ошибок."
+            or "Connects automatically without following. Address the companion by name in chat; while following, only the leader can assign work. Retry delay +5 seconds, up to 30 failures.",
+        options = UIButtonOptions(), default = false,
+    },
     {
         name = "command_wheel_extra_key",
         label = simplified_chinese and "指令轮盘额外快捷键" or traditional_chinese and "指令輪盤額外快捷鍵"
@@ -148,3 +158,17 @@ configuration_options = {
         default = "r",
     },
 }
+-- Standard DST mod configuration has no free-form text field; six digit
+-- selectors allow an arbitrary code without adding a custom configuration UI.
+for i = 1, 6 do
+    local digits = {}
+    for digit = 0, 9 do digits[#digits + 1] = {description = "" .. digit, data = "" .. digit} end
+    configuration_options[#configuration_options + 1] = {
+        name = "model_pair_digit_" .. i,
+        label = simplified_chinese and ("模型配对码第" .. i .. "位") or traditional_chinese and ("模型配對碼第" .. i .. "位")
+            or russian and ("Цифра кода ИИ " .. i) or ("Model Pairing Code Digit " .. i),
+        hover = simplified_chinese and "六位组合须与助手设置一致，默认321151。" or traditional_chinese and "六位組合須與助手設定一致，預設321151。"
+            or russian and "Совпадает с кодом помощника; по умолчанию 321151." or "Must match the assistant code; default 321151.",
+        options = digits, default = ("321151"):sub(i, i),
+    }
+end

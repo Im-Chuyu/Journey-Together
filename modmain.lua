@@ -16,6 +16,36 @@ local panel_extra_key = GetModConfigData("companion_panel_extra_key") or "DISABL
 local panel_ui_button = GetModConfigData("companion_panel_ui_button") == true
 local wheel_ui_button = GetModConfigData("command_wheel_ui_button") == true
 local Text = Language.Text
+local model_enabled = GetModConfigData("model_enabled") == true
+local model_pair_code = ""
+for i = 1, 6 do
+    local digit = tostring(GetModConfigData("model_pair_digit_" .. i) or ("321151"):sub(i, i))
+    model_pair_code = model_pair_code .. (digit:match("^%d$") and digit or ("321151"):sub(i, i))
+end
+
+require("my_friend_body_bridge").Install({
+    AddModRPCHandler = AddModRPCHandler, AddClientModRPCHandler = AddClientModRPCHandler,
+    SendModRPCToClient = SendModRPCToClient, GetClientModRPC = GetClientModRPC,
+    SendModRPCToServer = SendModRPCToServer, GetModRPC = GetModRPC,
+    AddShardModRPCHandler = AddShardModRPCHandler, SendModRPCToShard = SendModRPCToShard,
+    GetShardModRPC = GetShardModRPC,
+}, model_enabled)
+-- The local host connects directly; remote clients use authenticated RPC.
+_G.c_myfriend_ai = function(operation, code)
+    if not model_enabled then _G.print("[MyFriends] AI model mode is disabled."); return false end
+    return require("my_friend_body_bridge").Control(operation, code)
+end
+_G.c_myfriend_body = function(skill, arguments)
+    if not model_enabled then return {status = "failed", reason = "model_disabled"} end
+    if _G.TheWorld ~= nil and _G.TheWorld.ismastersim then
+        local friend = _G.TheWorld._my_friend
+        local player = friend ~= nil and require("my_friend_policy").GetLeader(friend) or nil
+        local result = require("my_friend_body_api").Call(friend, player, "console:" .. tostring(_G.GetTime()) .. ":" .. tostring({}), skill, arguments or {})
+        _G.print(require("json").encode(result)); return result
+    end
+    SendModRPCToServer(GetModRPC("MyFriends", "BodyControl"), "call",
+        require("json").encode({skill = skill, arguments = arguments or {}}))
+end
 
 local function IsActualCompanion(inst, allow_ghost)
     return inst ~= nil and inst:IsValid()
@@ -195,6 +225,12 @@ end
 local FriendBuildAction = AddAction("MY_FRIEND_BUILD", Text("制作", "Build"), function(act)
     return _G.ACTIONS.BUILD.fn(act)
 end)
+local FriendBodyAction = AddAction("MY_FRIEND_BODY", Text("操作", "Interact"),
+    function(act) return require("my_friend_body_actions").Operate(act) end)
+FriendBodyAction.rmb = true
+FriendBodyAction.distance = 2.2
+AddStategraphActionHandler("wilson", _G.ActionHandler(FriendBodyAction, "doshortaction"))
+AddStategraphActionHandler("wilson_client", _G.ActionHandler(FriendBodyAction, "doshortaction"))
 FriendBuildAction.mount_valid = true
 AddStategraphActionHandler("wilson",
     _G.ActionHandler(FriendBuildAction, "dolongaction"))
@@ -539,8 +575,6 @@ AddPrefabPostInit("skeleton_player", function(inst)
 end)
 
 -- Server side: which skins each client says it owns, checked by SetSkins.
-_G.MyFriendSkinNames = {}
-_G.MyFriendOwnedCharacters = {}
 
 -- SGwilson normally uses its running states for point movement even when the
 -- locomotor is moving at walk speed.  These extra states are entered only by
@@ -722,6 +756,7 @@ local function ConfigureFriend(inst)
     -- the other, unconditional path in Follower itself.
     inst.components.follower.keepleaderonattacked = true
     inst.components.follower.noleashing = true
+    inst._my_friend_model_enabled = model_enabled
     inst:SetBrain(FollowBrain)
     inst.entity:SetCanSleep(false)
     inst.persists = true
@@ -808,6 +843,7 @@ local function ConfigureFriend(inst)
     inst._my_friend_panel_task = inst:DoPeriodicTask(.5, PushPanelData)
     inst._my_friend_greeting_task = inst:DoPeriodicTask(CoreAI.GREETING_INTERVAL, CoreAI.UpdateGreetings)
     Dialogue.Configure(inst)
+    if model_enabled then require("my_friend_body_api").Configure(inst) end
     require("my_friend_contextual_events").ConfigureFriend(inst)
     require("my_friend_survival_ai").ConfigureShelter(inst)
     require("my_friend_offscreen").Configure(inst)
@@ -892,6 +928,7 @@ local function ConfigureFriend(inst)
     end)
     inst:ListenForEvent("healthdelta", function(_, data)
         if data == nil or (data.amount or 0) >= 0 then return end
+        if require("my_friend_health").IsAgeDisplayDelta(inst,data) then return end
         require("my_friend_equipment").Hurt(inst)
         -- Ambient survival damage remains separate from local area hazards.
         if data.cause == "fire" then
@@ -917,10 +954,14 @@ end
 
 local function FindFriend()
     local actual
-    for _, e in pairs(_G.Ents) do
-        if e:IsValid() and not e._my_friend_possess_parked then
-            if Characters.IsCharacter(e.prefab)
-                and (e._my_friend_is_companion or e:HasTag("my_friend")) then
+    for _, e in pairs(_G.Ents or {}) do
+        if type(e)=="table" and Characters.IsCharacter(_G.rawget(e,"prefab")) then
+            local ok,valid=_G.pcall(function()
+                return type(e.IsValid)=="function" and type(e.HasTag)=="function" and type(e.Remove)=="function"
+                    and e:IsValid() and not e._my_friend_possess_parked
+                    and (e._my_friend_is_companion or e:HasTag("my_friend"))
+            end)
+            if ok and valid then
                 if actual == nil then actual = ConfigureFriend(e) else e:Remove() end
             end
         end
@@ -934,6 +975,7 @@ end
 Possess.ConfigureCompanion = ConfigureFriend
 
 AddPlayerPostInit(function(inst)
+    if model_enabled then require("my_friend_body_bridge").AttachAuto(inst, true, model_pair_code) end
     require("my_friend_emotes").ConfigurePlayer(inst)
     inst._my_friend_affinity_net = _G.net_float(inst.GUID,
         "my_friends.affinity", "my_friends_affinity_dirty")
@@ -1082,19 +1124,20 @@ local function SpawnFriend(player, announce)
 end
 
 local function CanManage(player, friend, ignore_distance, public_command, allow_ghost)
-    if player == nil or not player:IsValid() or friend == nil or not friend:IsValid()
+    local world = _G.TheWorld
+    if world == nil or not world.ismastersim or friend == nil or friend ~= world._my_friend
         or not IsActualCompanion(friend, allow_ghost)
-        or friend.components == nil or friend.components.inventory == nil
+        or friend.components == nil or friend.components.inventory == nil or friend.components.my_friend_affinity == nil
         or not require("my_friend_policy").IsLocalPlayer(player) then return false end
-    local fx, _, fz = friend.Transform:GetWorldPosition()
-    local px, _, pz = player.Transform:GetWorldPosition()
-    if not ignore_distance and (fx - px)^2 + (fz - pz)^2 > 100 then return false end
+    if not ignore_distance and require("my_friend_policy").DistanceSq(player, friend) > 100 then return false end
     local leader = friend.components.follower ~= nil and friend.components.follower:GetLeader() or nil
     return public_command or leader == nil or leader == player
 end
 
 local function CanPossess(player, friend)
-    return IsActualCompanion(friend) and Possess.CanPossess(player, friend)
+    local world = _G.TheWorld
+    return world ~= nil and friend ~= nil and friend == world._my_friend
+        and IsActualCompanion(friend) and Possess.CanPossess(player, friend)
 end
 
 AddModRPCHandler("MyFriends", "Rename", function(player, friend, name)
@@ -1105,6 +1148,7 @@ AddModRPCHandler("MyFriends", "Rename", function(player, friend, name)
 end)
 
 AddModRPCHandler("MyFriends", "PanelLocked", function(player, friend, kind)
+    if kind ~= "rename" and kind ~= "skin" and kind ~= "switch" then return end
     if not CanManage(player, friend, kind == "rename", kind == "rename")
         or friend.components.my_friend_affinity == nil then return end
     if kind == "switch" then
@@ -1145,21 +1189,9 @@ AddModRPCHandler("MyFriends", "SwitchCharacter", function(player, friend, charac
     PushPanelData(friend)
 end)
 
-AddModRPCHandler("MyFriends", "OwnedSkins", function(player, payload)
-    if type(payload) ~= "string" then return end
-    local owned = {}
-    for skin in payload:gmatch("[^,]+") do owned[skin] = true end
-    _G.MyFriendSkinNames[player.userid] = owned
-end)
-
-AddModRPCHandler("MyFriends", "OwnedCharacters", function(player, payload)
-    if player == nil or player.userid == nil or type(payload) ~= "string" then return end
-    local owned = {}
-    for prefab in payload:gmatch("[^,]+") do
-        if Characters.IsCharacter(prefab) then owned[prefab] = true end
-    end
-    _G.MyFriendOwnedCharacters[player.userid] = owned
-end)
+-- Retire client-reported ownership while preserving the RPC registration order.
+AddModRPCHandler("MyFriends", "OwnedSkins", function() end)
+AddModRPCHandler("MyFriends", "OwnedCharacters", function() end)
 
 AddModRPCHandler("MyFriends", "SetSkins", function(player, friend, base, body, hand, legs, feet)
     if not CanManage(player, friend) then return end
@@ -1168,9 +1200,8 @@ AddModRPCHandler("MyFriends", "SetSkins", function(player, friend, base, body, h
         Dialogue.Reply(friend, "affinity_skin")
         return
     end
-    local owned = _G.MyFriendSkinNames[player.userid] or {}
     local clothing = { body = body, hand = hand, legs = legs, feet = feet }
-    local applied, changed = FriendReplication.ApplyWardrobe(friend, player, base, clothing, owned)
+    local applied, changed = FriendReplication.ApplyWardrobe(friend, player, base, clothing)
     if applied then
         PushPanelData(friend)
         if changed then Dialogue.Say(friend, "skin_changed", player) end
@@ -1220,7 +1251,6 @@ end
 
 local function HandleFriendStorageSlot(player, friend, storage, slot, maxslots, stack_mod)
     local inv = player.components.inventory
-    slot = math.floor(slot)
     if inv == nil or storage == nil or slot < 1 or slot > maxslots then return end
     local active, target = inv:GetActiveItem(), storage:GetItemInSlot(slot)
     local can_take = friend.components.my_friend_affinity:CanTakeItems(player)
@@ -1304,29 +1334,28 @@ local function HandleFriendStorageSlot(player, friend, storage, slot, maxslots, 
 end
 
 AddModRPCHandler("MyFriends", "ClickSlot", function(player, friend, slot, stack_mod)
-    if not CanManage(player, friend) or type(slot) ~= "number" then return end
+    if type(slot) ~= "number" or slot % 1 ~= 0 or not CanManage(player, friend) then return end
     local storage, maxslots = GetFriendStorage(friend, false)
     HandleFriendStorageSlot(player, friend, storage, slot, maxslots, stack_mod == true)
 end)
 
 AddModRPCHandler("MyFriends", "ClickBackpackSlot", function(player, friend, slot, stack_mod)
-    if not CanManage(player, friend) or type(slot) ~= "number" then return end
+    if type(slot) ~= "number" or slot % 1 ~= 0 or not CanManage(player, friend) then return end
     local storage, maxslots = GetFriendStorage(friend, true)
     HandleFriendStorageSlot(player, friend, storage, slot, maxslots, stack_mod == true)
 end)
 
 AddModRPCHandler("MyFriends", "QuickMoveFriendSlot", function(player, friend, slot, isbackpack, stack_mod)
-    if not CanManage(player, friend) or type(slot) ~= "number" then return end
+    if type(slot) ~= "number" or slot % 1 ~= 0 or not CanManage(player, friend) then return end
     if not friend.components.my_friend_affinity:CanTakeItems(player) then return end
     local storage, maxslots = GetFriendStorage(friend, isbackpack == true)
-    slot = math.floor(slot)
     if storage == nil or slot < 1 or slot > maxslots then return end
     local item = storage:GetItemInSlot(slot)
     local inv = player.components.inventory
     if item == nil or inv == nil then return end
     local stackable = item.components.stackable
     local stacksize = stackable ~= nil and stackable:StackSize() or 1
-    local count = stack_mod and math.max(math.floor(stacksize / 2), 1) or stacksize
+    local count = stack_mod == true and math.max(math.floor(stacksize / 2), 1) or stacksize
     if item.components.inventoryitem ~= nil and item.components.inventoryitem.islockedinslot then
         count = math.min(count, stacksize - 1)
     end
@@ -1361,16 +1390,17 @@ AddModRPCHandler("MyFriends", "PanelOpen", function(player, friend)
 end)
 
 AddModRPCHandler("MyFriends", "WheelCommand", function(player, friend, command_id)
-    if player ~= nil and player:HasTag("my_friend_possessing") then
+    if type(command_id) ~= "string" or not require("my_friend_policy").IsLocalPlayer(player) then return end
+    if player:HasTag("my_friend_possessing") then
         local target = Possess.GetCommandTarget(player)
-        if target ~= nil and target:IsValid() and type(command_id) == "string" then
+        if target ~= nil and target:IsValid() then
             require("my_friend_commands").DispatchWheel(target, player, command_id)
         end
         return
     end
     -- Dispatch owns command-specific permissions. In particular, a follow
     -- request must reach affinity even when someone else is the leader.
-    if type(command_id) ~= "string" or not CanManage(player, friend, true, true, true) then return end
+    if not CanManage(player, friend, true, true, true) then return end
     require("my_friend_commands").DispatchWheel(friend, player, command_id)
 end)
 
@@ -1380,13 +1410,13 @@ AddModRPCHandler("MyFriends", "PossessFriend", function(player, friend)
 end)
 
 AddModRPCHandler("MyFriends", "ReleaseFriend", function(player)
-    if player == nil or not player:IsValid()
+    if not require("my_friend_policy").IsLocalPlayer(player)
         or not player:HasTag("my_friend_possessing") then return end
     Possess.Release(player)
 end)
 
 AddModRPCHandler("MyFriends", "PanelClose", function(player)
-    player._my_friend_panel_target = nil
+    if player ~= nil then player._my_friend_panel_target = nil end
 end)
 
 AddComponentPostInit("inventory", function(self)
@@ -1694,9 +1724,6 @@ AddClassPostConstruct("widgets/controls", function(self)
         if self._my_friend_wheel_key_handler ~= nil then self._my_friend_wheel_key_handler:Remove() end
         if self._my_friend_wheel_key_up_handler ~= nil then self._my_friend_wheel_key_up_handler:Remove() end
     end)
-    local Skins = require("my_friend_skins")
-    self.owner:DoTaskInTime(2, function() Skins.Report() end)
-    self.owner:DoTaskInTime(8, function() Skins.Report() end)
     -- The panel is added after the vanilla cursor item and hover text layers.
     -- Restore their original front-to-back order above the panel.
     if self.mousefollow ~= nil then self.mousefollow:MoveToFront() end
@@ -1792,6 +1819,8 @@ local function ConfigureFriendWorld(world)
         self._my_friend_known_shards = data ~= nil and data.my_friend_known_shards or {}
         self._my_friend_home_pending = data ~= nil and data.my_friend_home_pending or nil
         self._my_friend_home_received = data ~= nil and data.my_friend_home_received or {}
+        -- Model administrator grants were retired; old save data is ignored.
+        self._my_friend_model_permissions = nil
         -- Generated worlds have no elapsed clock save; an existing world's
         -- clock distinguishes a mid-game mod installation even on day one.
         local clock = data ~= nil and data.clock or nil
@@ -1894,6 +1923,7 @@ local function ConfigureFriendWorld(world)
         local friend = world._my_friend
         if friend ~= nil and friend:IsValid() and friend.components.my_friend_affinity ~= nil then
             friend.components.my_friend_affinity:UpdateLeader()
+            if model_enabled then require("my_friend_body_bridge").TryDedicated(friend, model_pair_code) end
         end
     end)
 end

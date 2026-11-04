@@ -112,7 +112,8 @@ end
 
 -- Retry a stale destination only after lack of progress. Measure progress in
 -- platform coordinates so a moving boat cannot disguise a stuck companion.
-function M.Run(inst, target)
+function M.Run(inst, target, run)
+    run = run ~= false
     local now, old = GetTime(), inst._my_friend_last_move
     local locomotor = inst.components.locomotor
     local stalled = false
@@ -127,12 +128,12 @@ function M.Run(inst, target)
         end
         old.untiltime = now + .5
     end
-    if old == nil or not old.run or due and locomotor.dest == nil or stalled
+    if old == nil or old.run ~= run or due and locomotor.dest == nil or stalled
         or due and (old.point.x - target.x)^2 + (old.point.z - target.z)^2 > .25^2
         or (old.point.x - target.x)^2 + (old.point.z - target.z)^2 > 1 then
         if stalled then locomotor:ResetPath(); locomotor.lastdesttile = nil end
-        locomotor:GoToPoint(target, nil, true)
-        inst._my_friend_last_move = {point = target, run = true, untiltime = now + .5,
+        locomotor:GoToPoint(target, nil, run)
+        inst._my_friend_last_move = {point = target, run = run, untiltime = now + .5,
             mark = Capture(inst:GetPosition(), inst:GetCurrentPlatform()), progress = now}
     end
 end

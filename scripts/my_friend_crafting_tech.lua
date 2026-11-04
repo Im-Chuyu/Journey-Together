@@ -4,6 +4,15 @@ local M = {}
 
 function M.CanBuild(inst, recipe)
     local builder = inst.components.builder
+    if builder ~= nil and recipe.manufactured then
+        local station = builder.current_prototyper
+        local proto = station ~= nil and station:IsValid() and station.components.prototyper or nil
+        if proto == nil or not proto:CanUsePrototyper(inst)
+            or not (CanPrototypeRecipe(recipe.level, proto.trees)
+                or station.components.craftingstation ~= nil and station.components.craftingstation:KnowsRecipe(recipe.name)) then
+            return false
+        end
+    end
     return builder ~= nil and (builder:KnowsRecipe(recipe)
         or builder:CanLearn(recipe.name)
             and CanPrototypeRecipe(recipe.level, builder.accessible_tech_trees))
@@ -14,13 +23,19 @@ function M.StationCanTeach(inst, station, recipe)
     local proto = station:IsValid() and station.components.prototyper or nil
     if builder == nil or not builder:CanLearn(recipe.name) or proto == nil
         or station:HasTag("burnt")
+        or builder.exclude_tags ~= nil and station:HasOneOfTags(builder.exclude_tags)
         or proto.restrictedtag ~= nil and not inst:HasTag(proto.restrictedtag) then return false end
     local trees = proto:GetTechTrees()
+    if station.components.craftingstation ~= nil and station.components.craftingstation:KnowsRecipe(recipe.name) then
+        return true
+    end
+    if recipe.manufactured then return CanPrototypeRecipe(recipe.level, trees) end
     -- Match Builder:EvaluateTechTrees, including Wickerbottom's science bonus.
     for _, tech in ipairs(TechTree.BONUS_TECH) do
         local key = string.lower(tech)
-        trees[tech] = (trees[tech] or 0) + (builder[key .. "_bonus"] or 0)
-            + (builder[key .. "_tempbonus"] or 0)
+        local permanent = (TechTree.AVAILABLE_TECH_BONUS or {})[tech] or key .. "_bonus"
+        local temporary = (TechTree.AVAILABLE_TECH_TEMPBONUS or {})[tech] or key .. "_tempbonus"
+        trees[tech] = (trees[tech] or 0) + (builder[permanent] or 0) + (builder[temporary] or 0)
     end
     return CanPrototypeRecipe(recipe.level, trees)
 end

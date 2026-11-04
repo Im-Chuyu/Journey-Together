@@ -6,6 +6,8 @@ local M = {}
 
 M.WANDER_RADIUS = 32
 M.RETURN_DISTANCE = 30
+M.AUTO_BASE_STRUCTURE_RANGE = 34
+M.AUTO_BASE_RETURN_DISTANCE = 12
 M.LATE_JOIN_DAY = 200
 M.ASK_COOLDOWN = 150
 M.ASK_RANGE = 12
@@ -52,6 +54,30 @@ function M.IsPointInRange(inst, point)
     if home == nil or point == nil then return true end
     local limit = M.TravelLimit(inst)
     return (point.x - home.x)^2 + (point.z - home.z)^2 <= limit * limit
+end
+
+-- Read current-shard scalar memory only: observation must never create a home
+-- or invoke construction/discovery. Waiting and roaming circles are not bases.
+function M.Status(inst)
+    local point, mode = M.Get(inst), M.Mode(inst)
+    local base = inst._my_friend_base
+    local position = inst:GetPosition()
+    local home = {known=point~=nil}
+    if point~=nil then
+        local distance=math.sqrt((position.x-point.x)^2+(position.z-point.z)^2)
+        home={known=true,mode=mode,position={x=point.x,z=point.z},radius=M.WANDER_RADIUS,
+            distance=distance,within_range=distance<=M.WANDER_RADIUS,strict=M.IsStrict(inst)}
+    end
+    local manual = mode=="base" and point~=nil
+    local automatic = point==nil and base~=nil and type(base.x)=="number" and type(base.z)=="number"
+    if not manual and not automatic then return {known=false},home end
+    local centre=manual and point or base
+    local radius=manual and M.WANDER_RADIUS or M.AUTO_BASE_STRUCTURE_RANGE
+    local distance=math.sqrt((position.x-centre.x)^2+(position.z-centre.z)^2)
+    return {known=true,source=manual and "manual" or "automatic",position={x=centre.x,z=centre.z},
+        radius=radius,distance=distance,at_base=distance<=radius,
+        return_distance=point~=nil and M.RETURN_DISTANCE or M.AUTO_BASE_RETURN_DISTANCE,
+        phase=base~=nil and base.phase or nil,complete=base~=nil and base.complete==true},home
 end
 
 -- A manual home replaces the automatic site outright; the companion keeps

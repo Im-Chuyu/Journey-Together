@@ -20,7 +20,7 @@ local function FindSpicer(inst)
     local x, y, z = inst.Transform:GetWorldPosition()
     local best
     for _, entity in ipairs(TheSim:FindEntities(x, y, z, 20, {"spicer"}, {"INLIMBO", "burnt"})) do
-        if entity.components.container ~= nil and not entity.components.container:IsOpenedByOthers(inst)
+        if entity.components.container ~= nil and not entity.components.container.readonlycontainer and not entity.components.container:IsOpenedByOthers(inst)
             and not entity.components.container:IsRestricted(inst) then
             if best == nil or inst:GetDistanceSqToInst(entity) < inst:GetDistanceSqToInst(best) then best = entity end
         end
@@ -55,14 +55,10 @@ local function SpiceAction(inst, command)
         command.waiting = true
         return
     end
-    if not c:IsOpenedBy(inst) then
-        local action = BufferedAction(inst, station, ACTIONS.MY_FRIEND_OPEN)
-        action.arrivedist = Inventory.ContainerReach(inst, station)
-        return Policy.GuardAction(inst, action)
-    end
     if stewer ~= nil and stewer:IsDone() then
         local action = BufferedAction(inst, station, ACTIONS.HARVEST)
-        action.validfn = function() return stewer:IsDone() and c:IsOpenedBy(inst) end
+        action.arrivedist = Inventory.ContainerReach(inst, station)
+        action.validfn = function() return stewer:IsDone() and not c.readonlycontainer and not c:IsRestricted(inst) and not c:IsOpenedByOthers(inst) end
         action:AddSuccessAction(function()
             command.waiting = nil
             c:Close(inst)
@@ -73,10 +69,16 @@ local function SpiceAction(inst, command)
         end)
         return Policy.GuardAction(inst, action)
     end
+    if not c:IsOpenedBy(inst) then
+        local action = BufferedAction(inst, station, ACTIONS.MY_FRIEND_OPEN)
+        action.arrivedist = Inventory.ContainerReach(inst, station)
+        return Policy.GuardAction(inst, action)
+    end
     if c:GetItemInSlot(1) == nil then
         local food = FindFood(inst, command.food)
         if food == nil then return end
         local action = BufferedAction(inst, station, ACTIONS.MY_FRIEND_SPICE_ADD, food)
+        action.arrivedist = Inventory.ContainerReach(inst, station)
         action._my_friend_spice_slot = 1
         return Policy.GuardAction(inst, action)
     end
@@ -84,6 +86,7 @@ local function SpiceAction(inst, command)
         local spice = FindSpice(inst, command.spice)
         if spice == nil then return end
         local action = BufferedAction(inst, station, ACTIONS.MY_FRIEND_SPICE_ADD, spice)
+        action.arrivedist = Inventory.ContainerReach(inst, station)
         action._my_friend_spice_slot = 2
         return Policy.GuardAction(inst, action)
     end

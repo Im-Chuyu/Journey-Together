@@ -29,6 +29,7 @@ function M.HoldCompanion(player)
         or not friend:IsValid() or friend.components.follower == nil then return end
     local follower = friend.components.follower
     if follower:GetLeader() ~= player then return end
+    if friend._my_friend_body ~= nil then require("my_friend_body_api").Close(friend, "entity_migration") end
     require("my_friend_commands").Clear(friend)
     local root = friend.brain ~= nil and friend.brain.bt ~= nil and friend.brain.bt.root or nil
     if root ~= nil and root.CancelActive ~= nil then root:CancelActive() end

@@ -598,8 +598,7 @@ local function CanCraft(inst, recipe)
     return recipe ~= nil and inst.components.builder:HasIngredients(recipe)
 end
 
-local function IsFireSafePoint(inst, point, recipe)
-    if not TheWorld.Map:CanDeployRecipeAtPoint(point, recipe, 0, inst) then return false end
+function M.IsFireClearPoint(inst, point)
     local nearby = TheSim:FindEntities(point.x, point.y, point.z,
         M.FIRE_CLEARANCE, nil, { "INLIMBO", "FX" })
     for _, entity in ipairs(nearby) do
@@ -609,6 +608,9 @@ local function IsFireSafePoint(inst, point, recipe)
     return true
 end
 
+local function IsFireSafePoint(inst, point, recipe)
+    return TheWorld.Map:CanDeployRecipeAtPoint(point,recipe,0,inst) and M.IsFireClearPoint(inst,point)
+end
 M.IsFireSafePoint = IsFireSafePoint
 
 function M.FindSafeFirePoint(inst, recipe)

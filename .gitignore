@@ -7,6 +7,9 @@ client_log.txt
 
 # Workspace-local temporary validation scripts and fixtures
 tests/.local/
+tools/companion_bridge/.local/
+AssistantAPI.json
+AssistantAPI.json.*
 
 # Editor and OS files
 .vscode/

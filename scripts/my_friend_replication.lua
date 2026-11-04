@@ -265,18 +265,19 @@ function M.ApplySkinMode(inst, ghost)
     end
 end
 
-function M.ApplyWardrobe(inst, player, base, clothing, owned)
+function M.ApplyWardrobe(inst, player, base, clothing)
     local skinner = inst.components.skinner
     if skinner == nil or type(base) ~= "string" then return false end
+    local skins = require("my_friend_skins")
     if base == "" or base == inst.prefab then base = inst.prefab .. "_none" end
     if not BelongsToCharacter(base, inst.prefab)
-        or base ~= inst.prefab .. "_none" and not (owned or {})[base] then return false end
+        or base ~= inst.prefab .. "_none" and not skins.Owns(player, base) then return false end
     for _, part in ipairs({"body", "hand", "legs", "feet"}) do
         local skin = clothing[part]
         local entry = type(CLOTHING) == "table" and CLOTHING[skin] or nil
         if type(skin) ~= "string" or skin ~= "" and (type(IsValidClothing) ~= "function"
             or not IsValidClothing(skin) or type(entry) ~= "table"
-            or entry.type ~= part) then return false end
+            or entry.type ~= part or not skins.Owns(player, skin)) then return false end
     end
     local before = skinner:GetClothing()
     -- Like dressing a vanilla mannequin, the skin owner is the player who

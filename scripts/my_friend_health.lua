@@ -1,5 +1,9 @@
 -- Shared eligibility for ordinary healing, independent of character prefab.
 local M = {}
+function M.IsAgeDisplayDelta(inst,data)
+    return data~=nil and data.cause=="oldager_component" and inst~=nil and inst.components~=nil
+        and inst.components.oldager~=nil
+end
 
 function M.CanReceiveHealing(inst)
     local components = inst ~= nil and inst.components or nil

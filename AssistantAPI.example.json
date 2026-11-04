@@ -1,0 +1,11 @@
+{
+  "provider": "auto",
+  "api_key": "",
+  "model": "deepseek-flash",
+  "thinking": true,
+  "reasoning_effort": "low",
+  "max_tokens": 8192,
+  "timeout_seconds": 120,
+  "retries": 1,
+  "ambient_enabled": false
+}

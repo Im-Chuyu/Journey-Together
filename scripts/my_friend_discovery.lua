@@ -62,6 +62,7 @@ local function Matches(entity, kind)
         or kind == "garden" and (entity.prefab == "grass" or entity.prefab == "sapling")
         or kind == "drying" and (c.dryer ~= nil or c.dryingrack ~= nil)
 end
+M.Matches = Matches
 
 local function ResourceKeys(entity)
     local c, keys = entity.components, {}

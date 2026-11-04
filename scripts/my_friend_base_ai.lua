@@ -19,8 +19,8 @@ local Discovery = require("my_friend_discovery")
 
 local M = {}
 
-M.BASE_STRUCTURE_RANGE = 34
-M.BASE_RETURN_DISTANCE = 12
+M.BASE_STRUCTURE_RANGE = Home.AUTO_BASE_STRUCTURE_RANGE
+M.BASE_RETURN_DISTANCE = Home.AUTO_BASE_RETURN_DISTANCE
 M.BASE_WANDER_RADIUS = 10
 -- How far the companion strays from the spot where its leader died.
 M.VIGIL_RADIUS = 20

@@ -31,9 +31,9 @@ end
 
 function M.IsBigMeat(name) return BIG_MEAT[name] == true end
 
-function M.CanUseIngredient(item)
+function M.CanUseIngredient(item, explicit)
     return item ~= nil and not M.IsProtected(item)
-        and (item.prefab ~= "meat_dried" or M.IsStale(item))
+        and (item.prefab ~= "meat_dried" or explicit == true or M.IsStale(item))
 end
 
 function M.AllowsMix(prefabs, stale_meat)
@@ -65,9 +65,10 @@ function M.CookAction(act, original)
         local target = act.target
         local c = target ~= nil and target.components ~= nil and target.components.container or nil
         if c ~= nil and target.components.stewer ~= nil then
+            local explicit = require("my_friend_body_cooking").IsExplicitAction(act)
             local items, prefabs = c:GetAllItems(), {}
             for _, item in pairs(items) do
-                if not M.CanUseIngredient(item) then return false end
+                if not M.CanUseIngredient(item, explicit) then return false end
                 local stack = item.components.stackable
                 for _ = 1, stack ~= nil and stack:StackSize() or 1 do
                     prefabs[#prefabs + 1] = item.prefab

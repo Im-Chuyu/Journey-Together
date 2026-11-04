@@ -6,13 +6,18 @@ local BUSY_PERIOD = .15
 local WORK_CHECK_PERIOD = 1.5
 local SNAPSHOT_PERIOD = .6
 local COMBAT_PERIOD = .1
+local function IsCombatEntry(entry, inst)
+    local state = inst._my_friend_body
+    return entry ~= nil and (entry.id == "combat" or entry.id == "assist"
+        or entry.id == "body" and state ~= nil and state.active ~= nil and state.active.skill == "engage")
+end
 
 local function ActivePeriod(entry, inst)
-    if entry ~= nil and (entry.id == "combat" or entry.id == "assist")
+    if IsCombatEntry(entry, inst)
         and (inst._my_friend_dodge ~= nil
                 and (inst._my_friend_dodge.monitoring or inst._my_friend_dodge.row ~= nil)
             or inst.sg ~= nil and inst.sg:HasStateTag("abouttoattack")) then return 1 / 30 end
-    return entry ~= nil and (entry.id == "combat" or entry.id == "assist")
+    return IsCombatEntry(entry, inst)
         and COMBAT_PERIOD or DECISION_PERIOD
 end
 
@@ -38,9 +43,11 @@ end
 function Utility:RepeatWork(previous)
     local entry = self.active
     local node = entry ~= nil and entry.node or nil
+    local body = entry ~= nil and entry.id == "body"
+    if body then node = node.route end
     local inst = self.inst
     if previous == nil or node == nil or node.action ~= previous or node.pendingstatus ~= SUCCESS
-        or inst._my_friend_replan_requested or Policy.IsFollowGatheringPaused(inst)
+        or inst._my_friend_replan_requested or not body and Policy.IsFollowGatheringPaused(inst)
         or self.leader ~= Policy.GetLeader(inst) then return end
     -- Refresh survival decisions between swings without forcing an idle cycle.
     -- A stale greeting snapshot must not suppress every subsequent work swing.
@@ -49,14 +56,19 @@ function Utility:RepeatWork(previous)
         self.work_check_at = GetTime() + WORK_CHECK_PERIOD
     end
     if self.context == nil or self.context.ghost or self.context.threat ~= nil
-        or self.context.dark or self.context.thermal
+        or self.context.dark or self.context.thermal and not (body and self.context.thermal_shade)
         or (self.context.hunger or 1) < .4 or self.context.hurt or self.context.hurt_evade then return end
     local buffered = inst:GetBufferedAction()
     if buffered ~= nil and buffered ~= previous then return end
     -- A successful BufferedAction has consumed its callbacks. Never adopt a
     -- requeued old swing: the last hit must still run work/loot cleanup.
     if buffered == previous then inst.bufferedaction = nil end
-    local action = BaseAI.GetRepeatWorkAction(inst, previous.target, previous.action)
+    local action
+    if body then
+        action = require("my_friend_body_actions").RepeatWork(inst, previous)
+    else
+        action = BaseAI.GetRepeatWorkAction(inst, previous.target, previous.action)
+    end
     if action == nil or not action:IsValid() then return end
     action.options.no_predict_fastforward = true
     Progress.Track(inst, action)
@@ -167,7 +179,7 @@ function Utility:Visit()
     self.context = context
     -- Between combat decision ticks, visit only the active combat node. Attack
     -- frame checks can run at 30 Hz without reranking every survival/work task.
-    if self.active ~= nil and (self.active.id == "combat" or self.active.id == "assist")
+    if IsCombatEntry(self.active, self.inst)
         and self.leader == context.leader and now < (self.combat_decision_at or 0) then
         self.active.node:Visit()
         if self.active.node.status == RUNNING then

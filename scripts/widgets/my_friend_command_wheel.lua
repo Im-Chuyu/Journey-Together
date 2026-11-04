@@ -313,34 +313,37 @@ function MyFriendCommandWheel:FindFriend(ai_only)
         and self.owner:HasTag("my_friend_possessing") then
         return self.owner
     end
-    local function IsCompanion(entity)
-        return entity ~= nil and entity:IsValid()
-            and entity.isplayer == true
-            and entity:HasTag("my_friend")
-            and entity.prefab ~= "abigail"
+    local function CompanionPosition(entity)
+        -- Native player_common sets isplayer directly on the EntityScript table.
+        -- Reject foreign Ents values before indexing/calling engine methods.
+        if type(entity) ~= "table" or rawget(entity,"isplayer") ~= true then return end
+        local ok,x,z=pcall(function()
+            if type(entity.IsValid)~="function" or type(entity.HasTag)~="function"
+                or not entity:IsValid() or not entity:HasTag("my_friend") or entity.prefab=="abigail" then return end
+            local transform=entity.Transform
+            if type(transform)~="table" and type(transform)~="userdata" then return end
+            if type(transform.GetWorldPosition)~="function" then return end
+            local px,_,pz=transform:GetWorldPosition()
+            if type(px)=="number" and type(pz)=="number" and px==px and pz==pz
+                and math.abs(px)<math.huge and math.abs(pz)<math.huge then return px,pz end
+        end)
+        if ok then return x,z end
     end
     local controls = self.owner ~= nil and self.owner.HUD ~= nil and self.owner.HUD.controls or nil
     local panel = controls ~= nil and controls.my_friend_panel or nil
-    if panel ~= nil and panel.friend ~= nil and panel.friend:IsValid()
-        and IsCompanion(panel.friend) then return panel.friend end
+    if panel ~= nil and CompanionPosition(panel.friend) ~= nil then return panel.friend end
     local target = TheInput ~= nil and TheInput:GetWorldEntityUnderMouse() or nil
-    if IsCompanion(target) then return target end
+    if CompanionPosition(target) ~= nil then return target end
     if self.owner == nil or not self.owner:IsValid() then return nil end
     local px, py, pz = self.owner.Transform:GetWorldPosition()
     -- Selecting a target is a client convenience only.  The server still
     -- decides whether the selected command is valid for the companion.
     -- Search all currently replicated companions so the wheel can open and
     -- target one even when it is farther away than the normal command range.
-    local entities = {}
-    for _, entity in pairs(Ents or {}) do
-        if IsCompanion(entity) then
-            entities[#entities + 1] = entity
-        end
-    end
     local best, best_dist
-    for _, entity in ipairs(entities) do
-        if entity:IsValid() then
-            local ex, ey, ez = entity.Transform:GetWorldPosition()
+    for _, entity in pairs(Ents or {}) do
+        local ex,ez=CompanionPosition(entity)
+        if ex ~= nil then
             local dist = (ex - px) ^ 2 + (ez - pz) ^ 2
             if best_dist == nil or dist < best_dist then best, best_dist = entity, dist end
         end

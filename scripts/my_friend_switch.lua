@@ -11,6 +11,7 @@ local Characters = require("my_friend_characters")
 local M = {}
 
 local function StopActions(friend)
+    if friend._my_friend_body ~= nil then require("my_friend_body_api").Close(friend, "character_switch") end
     require("my_friend_commands").Clear(friend)
     local root = friend.brain ~= nil and friend.brain.bt ~= nil and friend.brain.bt.root or nil
     if root ~= nil and root.CancelActive ~= nil then root:CancelActive() end

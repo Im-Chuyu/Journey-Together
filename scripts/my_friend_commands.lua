@@ -127,18 +127,28 @@ end
 
 function M.Get(friend)
     local command = friend ~= nil and friend._my_friend_command or nil
+    local body = friend ~= nil and friend._my_friend_body or nil
+    local model_job=body~=nil and body.active or nil
+    while model_job~=nil and model_job.child~=nil do model_job=model_job.child end
+    local model_command = command ~= nil and model_job~=nil and model_job.command == command
+        and require("my_friend_body_api").Authorize(friend, command.player)
     if command ~= nil and (not Policy.IsLocalPlayer(command.player)
         or GetTime() >= (command.deadline or 0)
         or command.id ~= "touch_tower" and command.id ~= "squeeze_heart"
-            and not SpecialCommands.IsPublic(command) and Policy.GetLeader(friend) ~= command.player) then
+            and not SpecialCommands.IsPublic(command) and not model_command and Policy.GetLeader(friend) ~= command.player) then
         M.Clear(friend)
         return
     end
     return command
 end
 
-function M.Clear(friend)
+function M.Clear(friend, preserving_session, player_request)
     if friend == nil then return end
+    -- Only a newly accepted player command replaces model intent. Ordinary
+    -- task completion/cleanup must not invalidate an unrelated conversation.
+    if player_request and friend._my_friend_body ~= nil and friend._my_friend_body ~= preserving_session then
+        require("my_friend_body_api").ManualTakeover(friend)
+    end
     require("my_friend_carry_backpack").Cancel(friend)
     local old = friend._my_friend_command
     if old ~= nil and old.id == "touch_tower" then require("my_friend_command_tower").Cancel(friend, old) end
@@ -177,6 +187,18 @@ end
 function M.Register(command, handler)
     assert(type(command) == "string" and type(handler) == "function")
     handlers[command:lower():match("^%s*(.-)%s*$")] = handler
+end
+
+function M.Catalogue(friend)
+    local out,seen={},{}
+    for _,command in ipairs(COMMANDS)do
+        if not seen[command.id] and (command.character==nil or friend~=nil and command.character==friend.prefab)then
+            seen[command.id]=true
+            out[#out+1]={id=command.id,character=command.character}
+        end
+    end
+    table.sort(out,function(a,b)return a.id<b.id end)
+    return out
 end
 
 local WORK = {chop = true, plant_trees = true, mine = true, harvest = true, hoe = true, water = true, tidy = true,
@@ -253,6 +275,8 @@ local function AddressedMessage(friend, message)
         return prefix .. suffix
     end
 end
+
+M.AddressedMessage = AddressedMessage
 
 local function FindCommand(friend, text)
     local id, length = nil, 0
@@ -346,6 +370,7 @@ function M.Dispatch(friend, player, message, from_wheel)
     end
     if id == "wait_for_me" then
         if friend:HasTag("playerghost") or affinity == nil or affinity:Get(player) < 20 then return false end
+        if friend._my_friend_body ~= nil then require("my_friend_body_api").ManualTakeover(friend) end
         -- Temporary pause: preserve the current work command and resume it
         -- after five seconds. Emergency behaviours take priority in the brain.
         friend._my_friend_wait_until = GetTime() + 5
@@ -364,7 +389,7 @@ function M.Dispatch(friend, player, message, from_wheel)
         if not from_wheel and id == nil and MaybeRefuseChinese(friend, addressed_message, "special") then return true end
         if friend:HasTag("playerghost")
             or not SpecialCommands.IsPublic(special) and Policy.GetLeader(friend) ~= player then return false end
-        M.Clear(friend)
+        M.Clear(friend, nil, true)
         if special.special == "wendy_recall" then
             require("my_friend_abigail").Recall(friend, 480)
             Dialogue.Reply(friend, "special_recall")
@@ -386,7 +411,7 @@ function M.Dispatch(friend, player, message, from_wheel)
     if id == "wendy_enrage" or id == "wendy_calm" then
         if friend.prefab ~= "wendy" or friend:HasTag("playerghost")
             or Policy.GetLeader(friend) ~= player then return false end
-        M.Clear(friend)
+        M.Clear(friend, nil, true)
         local aggressive = id == "wendy_enrage"
         local ok = require("my_friend_wendy").Request(friend, aggressive)
         if ok then
@@ -401,7 +426,7 @@ function M.Dispatch(friend, player, message, from_wheel)
     -- following and independent modes.
     if id == "touch_tower" then
         if friend:HasTag("playerghost") then return false end
-        M.Clear(friend)
+        M.Clear(friend, nil, true)
         friend._my_friend_command = {
             id = "touch_tower", player = player, started = GetTime(),
             origin = friend:GetPosition(), deadline = GetTime() + 180,
@@ -420,20 +445,9 @@ function M.Dispatch(friend, player, message, from_wheel)
         return false
     end
     if id == "follow" then
-        if not affinity:RequestFollow(player) then Reply(friend, "follow_unfamiliar") return false end
-        if Policy.GetLeader(friend) == player then
-            friend._my_friend_pending_recipe = nil
-            require("my_friend_contextual_events").RecordFollowStarted(friend, player)
-            require("my_friend_combat_rules").DisengageForFollow(friend, player)
-            require("my_friend_ghost_commands").Cancel(friend)
-            M.Clear(friend)
-            Riding.AllowAutoRide(friend)
-            friend._my_friend_greeting_pause_until = nil
-            friend._my_friend_follow_requested_until = GetTime() + 30
-            friend._my_friend_follow_route_reset = true
-            Reply(friend, "follow_ok")
-        else Reply(friend, "follow_busy") end
-        return true
+        local accepted, reply = require("my_friend_follow_request").Apply(friend, player, function(target) M.Clear(target, nil, true) end)
+        Reply(friend, reply)
+        return accepted
     end
     if id == "ride" then
         if Policy.GetLeader(friend) ~= player then
@@ -449,13 +463,13 @@ function M.Dispatch(friend, player, message, from_wheel)
             Reply(friend, "ride_not_following")
             return false
         end
-        M.Clear(friend)
+        M.Clear(friend, nil, true)
         Reply(friend, "ride_ok")
         return true
     end
     if id == "stop_ride" then
         if Policy.GetLeader(friend) ~= player then return false end
-        M.Clear(friend)
+        M.Clear(friend, nil, true)
         Riding.StopRide(friend)
         Reply(friend, "ride_stop_ok")
         return true
@@ -481,7 +495,7 @@ function M.Dispatch(friend, player, message, from_wheel)
     if id == "hold_position" and Policy.GetLeader(friend) ~= player then
         if Policy.GetLeader(friend) ~= nil
             or friend:GetDistanceSqToInst(player) > 12^2 then return false end
-        M.Clear(friend)
+        M.Clear(friend, nil, true)
         Home.Set(friend, friend:GetPosition(), "hold")
         Reply(friend, "describe_hold")
         Dialogue.Say(friend, "hold_position", player)
@@ -499,7 +513,7 @@ function M.Dispatch(friend, player, message, from_wheel)
         Reply(friend, "affinity_items")
         return false
     end
-    M.Clear(friend)
+    M.Clear(friend, nil, true)
     if id == "stop_sit" then
         require("my_friend_sitting").StopSitting(friend)
         Reply(friend, "sit_stop_ok")

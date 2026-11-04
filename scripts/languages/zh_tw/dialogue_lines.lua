@@ -1017,6 +1017,9 @@ M.lines.follow_reunion = {
     {"下次別忘了帶上我呀！"}, -- fn695
 }
 -- 語音映射（保留原登記順序與固定編號）
+-- Dynamic body-interface text uses one fixed template and no voice slot.
+M.replies.ai_dynamic = {"{1}"}
+
 M.voice_order = {
     -- fs1: fn1–fn70
     {"pet_feed", 1, 1}, {"pet_feed", 2, 2}, {"pet_feed", 3, 3},

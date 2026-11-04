@@ -219,4 +219,22 @@ function M.Parse(friend, text, has_general_command)
     end
 end
 
+-- Structured model access uses the same reviewed role recipe lists as chat.
+function M.ModelRecipes(character)
+    local out = {}
+    local function Add(list) for _, entry in ipairs(list) do out[#out + 1] = entry.recipe end end
+    if character == "wendy" then out = {"sisturn"}
+    elseif character == "wanda" then out = {"pocketwatch_weapon", "pocketwatch_heal", "pocketwatch_revive"}
+    elseif character == "wickerbottom" then Add(BOOKS); out[#out + 1] = "bookstation"
+    elseif character == "warly" then Add(DEVICES); Add(SPICES)
+    elseif character == "wathgrithr" then out = {"spear_wathgrithr_lightning"} end
+    return out
+end
+function M.ModelBooks()
+    local out = {}; for _, entry in ipairs(BOOKS) do out[#out + 1] = entry.recipe end; return out
+end
+function M.ModelSpices()
+    local out = {}; for _, entry in ipairs(SPICES) do out[#out + 1] = entry.spice end; return out
+end
+
 return M

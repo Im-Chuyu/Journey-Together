@@ -479,6 +479,7 @@ function MyFriendBrain:OnStart()
     local entries = {}
     local function Add(id, score, node)
         local function ScopedScore(c)
+            if inst._my_friend_body ~= nil and not require("my_friend_body_api").AllowLocal(inst, id, c) then return 0 end
             if c.hazard_retreat and id ~= "hurt" and id ~= "hurt_wait"
                 and id ~= "farewell" and not c.ghost then return 0 end
             if Policy.IsRoaming(inst) and (id == "follow" or id == "catch_up"
@@ -555,6 +556,10 @@ function MyFriendBrain:OnStart()
     end
     local function Alive(score)
         return function(c) return not c.ghost and (type(score) == "function" and score(c) or score) or 0 end
+    end
+    if inst._my_friend_model_enabled then
+        Add("body", Alive(function(c) return require("my_friend_body_api").Score(inst, c) end),
+            require("behaviours/my_friend_body")(inst))
     end
     local function CanWaitForPlayer(c)
         return c.wait_for_me and not c.leaderdead and c.threat == nil
@@ -933,8 +938,12 @@ function MyFriendBrain:OnStart()
                 and not require("my_friend_inventory").CanReachContainer(inst, inst._my_friend_container_target)
             or inst._my_friend_meal ~= nil and GetTime() > inst._my_friend_meal.deadline
             or dark) then ContainerAI.Cancel(inst) end
+        local body_state = inst._my_friend_body
+        local body_target = body_state ~= nil and body_state.active ~= nil
+            and body_state.active.skill == "engage" and body_state.active.target or nil
         if inst.components.combat.target ~= nil and threat == nil
-            and inst._my_friend_assist_target == nil then inst.components.combat:SetTarget(nil) end
+            and inst._my_friend_assist_target == nil
+            and inst.components.combat.target.GUID ~= body_target then inst.components.combat:SetTarget(nil) end
         if not ghost then
             if not Policy.IsBusy(inst) or dark then
                 BaseAI.RefreshWorkTarget(inst)
@@ -942,7 +951,8 @@ function MyFriendBrain:OnStart()
             -- Lighting is checked independently of the slower loadout pass so
             -- a carried AI light can be stored after entering a lit area.
             LightAI.UpdateEquipment(inst)
-            if not dark and not Policy.IsBusy(inst) then
+            if not dark and not Policy.IsBusy(inst) and (body_state == nil or body_state.active == nil
+                and not require("my_friend_body_api").PlanActive(inst)) then
                 require("my_friend_equipment").UpdateLoadout(inst)
             end
         end

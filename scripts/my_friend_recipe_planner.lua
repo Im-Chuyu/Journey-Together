@@ -14,10 +14,10 @@ function M.Size(item)
         and (item.components.stackable ~= nil and item.components.stackable:StackSize() or 1) or 0
 end
 
-function M.Available(inst, item)
+function M.Available(inst, item, explicit)
     local inv = item ~= nil and item:IsValid() and item.components.inventoryitem or nil
     if inv == nil or inv.islockedinslot or Storage.IsReserved(inst, item)
-        or not Rules.CanUseIngredient(item)
+        or not Rules.CanUseIngredient(item, explicit)
         or inst.prefab ~= "warly" and (item.prefab == "lightninggoathorn" or item.prefab == "boneshard")
         or item:HasAnyTag("spoiled", "irreplaceable") then return false end
     local owner = inv.owner

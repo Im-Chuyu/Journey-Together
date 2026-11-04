@@ -349,9 +349,6 @@ end
 
 function MyFriendPanel:OpenSkinScreen()
     if self.friend == nil or not self.friend:IsValid() then return end
-    -- The owned-skin list the server validates against is per character, so
-    -- refresh it here in case the companion was switched since login.
-    require("my_friend_skins").Report(self.friend.prefab)
     local Screen = require "screens/my_friend_skin_screen"
     local friend = self.friend
     self:HideFriend()

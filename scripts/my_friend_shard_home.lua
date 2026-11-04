@@ -79,7 +79,9 @@ function M.SendPending()
 end
 
 function M.ReceiveChunk(source, token, index, total, chunk)
-    if TheWorld.prefab ~= "forest" or type(token) ~= "string" or #token > 256
+    if TheWorld == nil or not TheWorld.ismastersim or TheWorld.prefab ~= "forest"
+        or tostring(source) == tostring(SHARDID.MASTER) or not Shard_IsWorldAvailable(tostring(source))
+        or type(token) ~= "string" or #token == 0 or #token > 256
         or type(index) ~= "number" or type(total) ~= "number"
         or total < 1 or total > 4096 or total % 1 ~= 0 or index % 1 ~= 0
         or index < 1 or index > total or type(chunk) ~= "string" or #chunk > CHUNK_SIZE then return end
@@ -143,7 +145,7 @@ function M.ReceiveChunk(source, token, index, total, chunk)
 end
 
 function M.ReceiveAck(source, token)
-    local pending = TheWorld._my_friend_home_pending
+    local pending = TheWorld ~= nil and TheWorld.prefab == "cave" and TheWorld._my_friend_home_pending or nil
     if tostring(source) == tostring(SHARDID.MASTER) and pending ~= nil and pending.token == token then
         TheWorld._my_friend_home_pending = nil
         TheWorld._my_friend_home_payload = nil
@@ -151,6 +153,8 @@ function M.ReceiveAck(source, token)
 end
 
 function M.ReceiveProbe(source, token)
+    if TheWorld == nil or not TheWorld.ismastersim or type(token) ~= "string" or #token == 0 or #token > 256
+        or not Shard_IsWorldAvailable(tostring(source)) then return end
     -- Reply outside the incoming RPC dispatch frame.
     TheWorld:DoTaskInTime(0, function()
         Send("Presence", source, token, HasCompanion())
@@ -158,8 +162,8 @@ function M.ReceiveProbe(source, token)
 end
 
 function M.ReceivePresence(source, token, present)
-    local probe = TheWorld._my_friend_presence_probe
-    if probe ~= nil and probe.token == token and probe.waiting[tostring(source)] ~= nil then
+    local probe = TheWorld ~= nil and TheWorld._my_friend_presence_probe or nil
+    if probe ~= nil and probe.token == token and probe.waiting[tostring(source)] == true and type(present) == "boolean" then
         probe.waiting[tostring(source)] = false
         probe.present = probe.present or present == true
     end

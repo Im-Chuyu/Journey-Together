@@ -1016,6 +1016,9 @@ M.lines.follow_reunion = {
     {"好久不见，玩得开心吗？"}, -- fn694
     {"下次别忘了带上我呀！"}, -- fn695
 }
+-- Dynamic body-interface text uses one fixed template and no voice slot.
+M.replies.ai_dynamic = {"{1}"}
+
 -- 语音映射（保持原登记顺序与固定编号）
 M.voice_order = {
     -- fs1: fn1–fn70

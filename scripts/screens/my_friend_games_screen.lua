@@ -192,7 +192,7 @@ function GameScreen:BuildBoard()
     self.black_button = UI.Button(self.root, L.Get("request_black"), -305, 0, 210, 36, function()
         if self.client.match ~= nil then self.client.Send("black", {id = self.client.match.id}) end
     end)
-    self.black_prompt = UI.Text(self.root, L.Get("black_question"), -305, 50, 18)
+    self.black_prompt = UI.Text(self.root, L.Get(def.first_question or "black_question"), -305, 50, 18)
     self.black_prompt:SetRegionSize(238, 65)
     local function BlackReply(accept)
         local match = self.client.match
@@ -267,6 +267,10 @@ function GameScreen:RefreshAvatar(index, participant)
     local ok = pcall(avatar.Set, avatar, prefab, {1, 1, 1, 1}, false, 0, skin)
     if not ok then avatar:Set("", {1, 1, 1, 1}, false, 0) end
 end
+function GameScreen:SeatLabel(side)
+    local sides = Catalog.Get(self.client.game).sides or {"black", "white"}
+    return L.Get(sides[side])
+end
 function GameScreen:RefreshBoard()
     local match = self.client.match
     local playing = match ~= nil and match.status == "playing"
@@ -278,17 +282,17 @@ function GameScreen:RefreshBoard()
     end
     self.board:Refresh(match)
     if match ~= nil then
-        self.black_name:SetTruncatedString(L.Get("black") .. ": " .. match.participants[1].name, 190, nil, true)
-        self.white_name:SetTruncatedString(L.Get("white") .. ": " .. match.participants[2].name, 190, nil, true)
-        local status = playing and L.Format("turn", L.Get(match.turn == 1 and "black" or "white"))
+        self.black_name:SetTruncatedString(self:SeatLabel(1) .. ": " .. match.participants[1].name, 190, nil, true)
+        self.white_name:SetTruncatedString(self:SeatLabel(2) .. ": " .. match.participants[2].name, 190, nil, true)
+        local status = playing and L.Format("turn", self:SeatLabel(match.turn))
             or scoring and L.Get("scoring")
             or match.status == "draw" and L.Get("draw")
-            or match.winner ~= nil and L.Format("won", L.Get(match.winner == 1 and "black" or "white")) or L.Get("ended")
+            or match.winner ~= nil and L.Format("won", self:SeatLabel(match.winner)) or L.Get("ended")
         self.status:SetTruncatedString(status, 240, nil, true)
-        self.turn_hint:SetTruncatedString(scoring and L.Get("mark_dead") or playing and L.Get(ownturn and "your_turn" or "waiting")
+        self.turn_hint:SetTruncatedString(playing and match.game == "xiangqi" and match.check and L.Get("xiangqi_check") or scoring and L.Get("mark_dead") or playing and L.Get(ownturn and "your_turn" or "waiting")
             or match.reason ~= nil and L.Get(match.reason) or "", 240, nil, true)
     else
-        self.black_name:SetString(L.Get("black")); self.white_name:SetString(L.Get("white"))
+        self.black_name:SetString(self:SeatLabel(1)); self.white_name:SetString(self:SeatLabel(2))
         self.status:SetString(L.Get("empty")); self.turn_hint:SetString("")
     end
     for i = 1, 2 do self:RefreshAvatar(i, match ~= nil and match.participants[i] or nil) end
@@ -302,13 +306,14 @@ function GameScreen:RefreshBoard()
         elseif playing and stones <= 2 then
             self.black_button:Show()
             if match.side == 2 and offer == nil then self.black_button:Enable() else self.black_button:Disable() end
-            self.black_button.label:SetString(L.Get(offer ~= nil and "black_pending" or "request_black"))
+            local def = Catalog.Get(self.client.game)
+            self.black_button.label:SetString(L.Get(offer ~= nil and (def.first_pending or "black_pending") or (def.request_first or "request_black")))
         end
     else self.bot_button:Show(); self.bot_button:Enable(); self.player_button:Show(); self.player_button:Enable() end
     self:RefreshGo(match, playing, scoring)
     if match ~= nil then
         self.exit_button:Show()
-        self.exit_button:SetPosition(-305, match.game == "go" and -140 or -105)
+        self.exit_button:SetPosition(-305, (match.game == "go" or match.game == "xiangqi") and -140 or -105)
     else self.exit_button:Hide() end
     self:RefreshUndo(match, playing)
     self.confirm_leave = nil; self.exit_button.label:SetString(L.Get("leave"))
@@ -318,14 +323,14 @@ function GameScreen:RefreshUndo(match, playing)
     if match == nil or not playing then return end
     local has_stone = false
     for _, value in ipairs(match.board or {}) do if value ~= 0 then has_stone = true; break end end
-    if not has_stone and match.undo_offer == nil then return end
-    local y = match.game == "go" and -105 or -43
+    if (not has_stone or match.game == "xiangqi" and (match.count or 0) == 0) and match.undo_offer == nil then return end
+    local y = (match.game == "go" or match.game == "xiangqi") and -105 or -43
     if match.undo_offer == nil then
         self.undo_button:SetPosition(-305, y); self.undo_button:Show()
         return
     end
     local offer = match.undo_offer
-    self.undo_prompt:SetPosition(-305, match.game == "go" and -72 or -43)
+    self.undo_prompt:SetPosition(-305, (match.game == "go" or match.game == "xiangqi") and -72 or -43)
     self.undo_prompt:Show()
     if offer.to == ThePlayer.userid then
         self.undo_prompt:SetString(L.Format("undo_question", offer.name))
@@ -341,14 +346,16 @@ function GameScreen:RefreshGo(match, playing, scoring)
     self.confirm_resign = nil; self.go_resign.label:SetString(L.Get("resign"))
     local def = Catalog.Get(self.client.game)
     self.rules:SetString(L.Get(def.rules_text))
-    if match == nil or match.game ~= "go" then return end
+    if match == nil or match.game ~= "go" and match.game ~= "xiangqi" then return end
     if match.score ~= nil then
         self.rules:SetString(L.Format("go_score", tostring(match.score[1]), tostring(match.score[2]))
             .. (scoring and ("\n" .. L.Get("score_help")) or ""))
     end
     if not playing and not scoring then return end
     self.go_buttons.draw_offer:Show(); self.go_resign:Show()
-    if playing then
+    if playing and match.game == "xiangqi" then
+        self.black_button:SetPosition(-305, -66)
+    elseif playing then
         self.black_button:SetPosition(-305, -66)
         self.go_buttons.pass:Show(); self.go_buttons.count:Show()
         if match.side == 0 or match.side == match.turn then self.go_buttons.pass:Enable() else self.go_buttons.pass:Disable() end

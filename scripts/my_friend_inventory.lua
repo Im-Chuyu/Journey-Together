@@ -133,9 +133,9 @@ function M.StorePlan(inst, target, plan)
     return moved_any
 end
 
-function M.CanWithdrawFrom(inst, target)
+function M.CanWithdrawFrom(inst, target, allow_closed)
     local c = target ~= nil and target:IsValid() and target.components.container or nil
-    if c == nil or not M.StorageReady(inst, target) or not c.canbeopened
+    if c == nil or not M.StorageReady(inst, target) or not c.canbeopened and not allow_closed
         or c.readonlycontainer or c:IsRestricted(inst) then return false end
     local leader = require("my_friend_policy").GetLeader(inst)
     return not c:IsOpenedByOthers(inst) or leader ~= nil and c:IsOpenedBy(leader)

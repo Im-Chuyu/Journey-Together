@@ -173,8 +173,12 @@ function M.Resume(s)
     s.revision = s.revision + 1
     return true
 end
+function M.BeginSearch(s)
+    return require("my_friend_go_ai").BeginSearch(s, neighbors, Trial)
+end
 function M.ChooseMove(s)
-    if s.status ~= "playing" or s.passes > 0 then return end
-    return require("my_friend_go_ai").ChooseMove(s, neighbors, Trial)
+    if s.status ~= "playing" then return end
+    local search = M.BeginSearch(s)
+    while true do local done, x, y = search:Step(); if done then return x, y end end
 end
 return M

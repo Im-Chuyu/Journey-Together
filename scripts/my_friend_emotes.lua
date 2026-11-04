@@ -16,6 +16,27 @@ local function Copy(value)
     return result
 end
 
+local BODY_EMOTES = {sit=true, squat=true, wave=true, happy=true, cry=true, dance=true, angry=true, no=true, joy=true, pose=true}
+function M.BodyData(id)
+    local definition = BODY_EMOTES[id] and GetCommonEmotes ~= nil and GetCommonEmotes()[id] or nil
+    local data = definition ~= nil and definition.data or nil
+    if data == nil or data.requires_validation then return end
+    local result = Copy(data)
+    result.zoom, result.loop = nil, nil
+    return result
+end
+
+function M.PlayBody(inst, data)
+    if data == nil or inst.sg == nil or Policy.IsBusy(inst)
+        or inst.sg:HasAnyStateTag("sleeping", "floating", "nopredict")
+        or inst.components.inventory:IsHeavyLifting() then return false end
+    local riding = inst.components.rider ~= nil and inst.components.rider:IsRiding()
+    if (riding and not data.mounted) or (not riding and data.mountonly) then return false end
+    inst.components.locomotor:Clear()
+    inst.sg:GoToState("emote", data)
+    return inst.sg.currentstate.name == "emote"
+end
+
 function M.Available(inst)
     local leader = Policy.GetLeader(inst)
     return inst:IsValid() and leader ~= nil and Policy.IsLocalPlayer(leader)

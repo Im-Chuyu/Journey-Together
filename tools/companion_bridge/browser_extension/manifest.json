@@ -1,0 +1,36 @@
+{
+    "manifest_version": 3,
+    "name": "一路同行 · 模型网页桥接",
+    "version": "1.0.0",
+    "description": "DeepSeek 与豆包可见网页桥接，支持自动新建对话。",
+    "permissions": [
+        "storage",
+        "activeTab",
+        "alarms"
+    ],
+    "host_permissions": [
+        "http://127.0.0.1:18766/*",
+        "https://chat.deepseek.com/*",
+        "https://www.doubao.com/*",
+        "https://doubao.com/*"
+    ],
+    "background": {
+        "service_worker": "background.js"
+    },
+    "action": {
+        "default_popup": "popup.html"
+    },
+    "content_scripts": [
+        {
+            "matches": [
+                "https://chat.deepseek.com/*",
+                "https://www.doubao.com/*",
+                "https://doubao.com/*"
+            ],
+            "js": [
+                "sites.js",
+                "content.js"
+            ]
+        }
+    ]
+}

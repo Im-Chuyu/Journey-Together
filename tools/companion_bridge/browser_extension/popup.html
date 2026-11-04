@@ -1,0 +1,9 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>连接伙伴</title>
+<body style="width:310px;font:14px sans-serif;padding:12px">
+<p>先启动模组目录中的语音助手，再打开并登录 DeepSeek 或豆包 的专用聊天页。</p>
+<label>助手窗口中的网页连接码：<input id="token" type="password" style="width:95%"></label>
+<p><button id="connect">连接当前标签页</button> <button id="stop">断开</button></p>
+<label><input id="autoNew" type="checkbox" checked>自动新建对话（仅会话达到上限时）</label>
+<p id="status">本扩展一次只处理一个选定的聊天标签页；不读取登录凭据。</p>
+<p>首次连接后会记住连接码。重新打开网页或助手会自动重连；原标签页仍在时优先使用原页，关闭后可自动绑定新打开的同站点聊天页。多页不明确时先切到要用的页。请保持已登录。</p>
+<script src="sites.js"></script><script src="popup.js"></script></body></html>
