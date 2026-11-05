@@ -2,10 +2,69 @@
 local Observation = require("my_friend_body_observation")
 local M = {}
 local function Finite(n) return type(n) == "number" and n == n and math.abs(n) < 1000000 end
+function M.IsDeployAction(action)
+    return action == "DEPLOY" or action == "DEPLOY_TILEARRIVE" or action == "DEPLOY_FLOATING"
+end
 function M.Valid(inst, recipe, point)
     return TheWorld.Map ~= nil and TheWorld.Map.CanDeployRecipeAtPoint ~= nil
         and TheWorld.Map:CanDeployRecipeAtPoint(point, recipe, 0, inst) == true
 end
+
+function M.Snap(item, point)
+    local map = TheWorld.Map
+    if item ~= nil and item:HasTag("tile_deploy") and map.GetTileCenterPoint ~= nil then
+        local x, y, z = map:GetTileCenterPoint(point:Get())
+        if x ~= nil then return Vector3(x, y, z) end
+    end
+    return point
+end
+
+function M.Spacing(recipe, item)
+    return recipe ~= nil and (recipe.min_spacing or 3.2)
+        or item ~= nil and item.components.farmtiller ~= nil and GetFarmTillSpacing ~= nil and GetFarmTillSpacing()
+        or item ~= nil and item.components.deployable ~= nil and item.components.deployable.DeploySpacingRadius ~= nil
+            and item.components.deployable:DeploySpacingRadius() or 1
+end
+
+function M.Details(inst, state, point, spacing)
+    local map = TheWorld.Map
+    local surface = require("my_friend_platforms").Surface(point)
+    local radius = math.min(12, math.max(4, spacing + 2, DEPLOY_EXTRA_SPACING or 0))
+    local result = {position = {x=point.x,z=point.z}, surface=surface, minimum_spacing=spacing,
+        nearby_obstacles={}, obstacles_radius=radius, obstacles_matched=0, obstacles_limited=false}
+    if map.GetTileAtPoint ~= nil then
+        local id = map:GetTileAtPoint(point.x,0,point.z)
+        result.tile = {id=id}
+        for name, value in pairs(WORLD_TILES or {}) do if id == value then result.tile.name=name;break end end
+    end
+    if map.IsPassableAtPoint ~= nil then result.passable = map:IsPassableAtPoint(point.x,0,point.z) == true end
+    if map.CanPlantAtPoint ~= nil then result.plantable = map:CanPlantAtPoint(point.x,0,point.z) == true end
+    if map.IsGroundTargetBlocked ~= nil then result.ground_target_blocked = map:IsGroundTargetBlocked(point) == true end
+    local entities = TheSim:FindEntities(point.x, 0, point.z, radius, nil,
+        {"NOBLOCK", "player", "FX", "INLIMBO", "DECOR", "walkableplatform", "walkableperipheral", "isdead"})
+    local distances = {}
+    for _, entity in ipairs(entities) do distances[entity] = Observation.Distance(point, entity:GetPosition()) end
+    table.sort(entities, function(a, b)
+        return distances[a] == distances[b] and a.GUID < b.GUID or distances[a] < distances[b]
+    end)
+    for _, entity in ipairs(entities) do
+        if entity ~= inst and entity.components.placer == nil
+            and (entity.entity == nil or entity.entity:IsVisible()
+                and (entity.entity:GetParent() == nil or entity:HasTag("childdeployblocker"))) then
+            result.obstacles_matched = result.obstacles_matched + 1
+            if #result.nearby_obstacles < 4 then
+                result.nearby_obstacles[#result.nearby_obstacles+1] = {handle=Observation.Handle(state,entity),
+                    prefab=entity.prefab, name=entity:GetDisplayName(), distance=distances[entity],
+                    position={x=entity:GetPosition().x,z=entity:GetPosition().z},
+                    deploy_radius=entity.deploy_smart_radius or entity.deploy_extra_spacing,
+                    physics_radius=entity.GetPhysicsRadius ~= nil and entity:GetPhysicsRadius(0) or nil}
+            end
+        end
+    end
+    result.obstacles_limited = result.obstacles_matched > #result.nearby_obstacles
+    return result
+end
+
 function M.Query(inst, state, args)
     local origin = inst:GetPosition()
     local p, radius = args.position or {x = origin.x, z = origin.z}, args.radius or 12
@@ -23,10 +82,11 @@ function M.Query(inst, state, args)
             or item.components.inventoryitem:GetGrandOwner() ~= inst then return nil, "item_not_deployable" end
     else return nil, "recipe_or_item_required" end
     local sites, checked, seen = {}, 0, {}
-    local spacing = recipe ~= nil and (recipe.min_spacing or 3.2)
-        or item.components.farmtiller ~= nil and GetFarmTillSpacing~=nil and GetFarmTillSpacing()
-        or item.components.deployable ~= nil and item.components.deployable.DeploySpacingRadius~=nil and item.components.deployable:DeploySpacingRadius() or 1
+    local spacing = M.Spacing(recipe, item)
     local layout=args.layout
+    if args.exact ~= nil and type(args.exact) ~= "boolean" or args.exact == true and (args.position == nil or layout ~= nil) then
+        return nil, "invalid_exact_site"
+    end
     if layout ~= nil and type(layout) ~= "table" then return nil, "invalid_layout" end
     local ring = layout ~= nil and layout.ring or nil
     if layout ~= nil then
@@ -43,8 +103,9 @@ function M.Query(inst, state, args)
     end
     local function Valid(point)
         if recipe~=nil then return M.Valid(inst,recipe,point) end
-        if item.components.deployable~=nil and args.action==nil then
-            return item.components.deployable:CanDeploy(point,nil,inst)==true
+        if item.components.deployable~=nil and (args.action==nil or M.IsDeployAction(args.action)) then
+            if not item.components.deployable:CanDeploy(point,nil,inst,0) then return false end
+            if args.action==nil then return true end
         end
         local result=require("my_friend_body_native").Query(inst,state,{item=args.item,position={x=point.x,z=point.z}})
         for _,action in ipairs(result~=nil and result.actions or {}) do
@@ -86,18 +147,30 @@ function M.Query(inst, state, args)
             center=p,checked=#cells,limited=false,observed_at=GetTime(),
             partial=#sites<#cells,note="Blocked positions are retained. Recheck during execution."}
     end
-    -- Prefer useful open space over the actor's feet. Keep a small, fixed budget.
+    local requested
+    if args.position ~= nil then
+        local point = M.Snap(item, Vector3(p.x,0,p.z))
+        local in_range = (point.x-origin.x)^2+(point.z-origin.z)^2 <= 32^2
+        local valid = in_range and Valid(point)
+        requested = M.Details(inst,state,point,spacing)
+        requested.valid = valid
+        if not valid then requested.reason = in_range and "placement_blocked" or "position_out_of_range" end
+        if valid then sites[1] = {position=requested.position} end
+        checked, seen[tostring(point.x)..":"..tostring(point.z)] = 1, true
+        if args.exact then
+            return {sites=sites, requested_site=requested, checked=checked, minimum_spacing=spacing,
+                observed_at=GetTime(), limited=false, reason=requested.reason}
+        end
+    end
+    -- Without an explicit point prefer space around the companion's feet.
     for ring = 1, 4 do
         for n = 0, 15 do
             local angle = n * math.pi / 8
             local point = Vector3(p.x + radius * ring / 4 * math.cos(angle), 0,
                 p.z + radius * ring / 4 * math.sin(angle))
-            if item ~= nil and item:HasTag("tile_deploy") and TheWorld.Map.GetTileCenterPoint ~= nil then
-                local x, y, z = TheWorld.Map:GetTileCenterPoint(point:Get())
-                if x ~= nil then point = Vector3(x, y, z) end
-            end
+            point = M.Snap(item, point)
             local key = tostring(point.x)..":"..tostring(point.z)
-            if not seen[key] and (point.x-origin.x)^2+(point.z-origin.z)^2 <= 32^2
+            if checked < 64 and not seen[key] and (point.x-origin.x)^2+(point.z-origin.z)^2 <= 32^2
                 and (point.x-p.x)^2+(point.z-p.z)^2 <= radius^2 + .00001 then
                 seen[key], checked = true, checked + 1
                 local valid = Valid(point)
@@ -118,7 +191,7 @@ function M.Query(inst, state, args)
         end
         if #sites >= 8 then break end
     end
-    return {sites=sites, checked=checked, radius=radius, observed_at=GetTime(),
+    return {sites=sites, requested_site=requested, checked=checked, radius=radius, observed_at=GetTime(),
         limited=true, minimum_spacing=spacing,reason=#sites==0 and "no_valid_site_in_sample" or nil,
         note="Native validity only; choose for player intent, access and surroundings. Rechecked at execution; not reserved or guaranteed reachable."}
 end

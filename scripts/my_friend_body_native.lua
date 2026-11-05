@@ -55,6 +55,9 @@ local function Context(inst, state, args)
     if args.position ~= nil then
         if not Position(args.position) then return nil,"invalid_position" end
         point=Vector3(args.position.x,0,args.position.z)
+        if item ~= nil and item.components.deployable ~= nil and require("my_friend_body_sites").IsDeployAction(args.action) then
+            point = require("my_friend_body_sites").Snap(item, point)
+        end
         local p=inst:GetPosition()
         if (point.x-p.x)^2+(point.z-p.z)^2>64^2 then return nil,"position_out_of_range" end
     end
@@ -145,6 +148,12 @@ function M.Prepare(inst,state,job)
     if type(job.args.action)~="string" then return false,"query_actions_first" end
     local actions,reason,c=M.Actions(inst,state,job.args)
     if actions==nil then return false,reason end
+    local sites = require("my_friend_body_sites")
+    local deployment = c.point ~= nil and c.item ~= nil and c.item.components.deployable ~= nil
+        and (job.args.mode == nil or job.args.mode == "POINT") and sites.IsDeployAction(job.args.action)
+    if deployment and not c.item.components.deployable:CanDeploy(c.point,nil,inst,0) then
+        return false, "placement_blocked", sites.Details(inst,state,c.point,sites.Spacing(nil,c.item))
+    end
     for _,entry in ipairs(actions) do
         if entry.action.id==job.args.action then
             job.native,job.native_mode,job.native_action=true,entry.mode,entry.action
@@ -152,6 +161,7 @@ function M.Prepare(inst,state,job)
             job.target=c.target~=nil and entry.mode~="POINT" and entry.mode~="INVENTORY" and c.target.GUID or nil
             job.native_hint_target=c.target~=nil and c.target.GUID or nil
             job.point,job.right=c.point,c.right
+            job.native_deployment = deployment and entry.mode == "POINT"
             return true
         end
     end
@@ -161,6 +171,11 @@ function M.Valid(inst,state,job)
     local item=job.item~=nil and (Ents or {})[job.item] or nil
     local target=job.native_hint_target~=nil and (Ents or {})[job.native_hint_target] or nil
     if job.item~=nil and not Owned(inst,item) or job.native_hint_target~=nil and (target==nil or not target:IsValid()) then return false end
+    if job.native_deployment and (item.components.deployable == nil
+        or not item.components.deployable:CanDeploy(job.point,nil,inst,0)) then
+        job.operation_error = "placement_blocked"
+        return false
+    end
     if item~=nil and item.prefab=="yellowstaff" and job.point~=nil
         and not require("my_friend_survival_ai").IsFireClearPoint(inst,job.point) then return false end
     local ok,actions=pcall(Collect,inst,{item=item,target=target,point=job.point,right=job.right},job.native_mode)

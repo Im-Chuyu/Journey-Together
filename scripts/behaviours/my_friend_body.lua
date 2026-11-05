@@ -37,8 +37,9 @@ function Body:Visit()
     if self.route == nil then
         local action = API.GetAction(self.inst)
         if action == nil then self:Sleep(.3); return end
-        self.route = RouteAction(self.inst, function() return API.GetAction(self.inst) end,
-            "MyFriendBodyRoute", job.gait ~= "walk", 120, action._my_friend_cast_in_place ~= true and action._my_friend_native_range ~= true)
+        self.route = RouteAction(self.inst, function() return action end,
+            "MyFriendBodyRoute", job.gait ~= "walk", 120, not (action._my_friend_cast_in_place
+                or action._my_friend_native_range or action._my_friend_surface_ready))
     end
     self.route:Visit()
     if self.route.status == SUCCESS or self.route.status == FAILED then self.route:Stop(); self.route = nil end

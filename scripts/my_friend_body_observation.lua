@@ -1,18 +1,18 @@
 -- Bounded, server-side observations. Handles are session-local and never saved.
 local Discovery = require("my_friend_discovery")
 local Inventory = require("my_friend_inventory")
+local Platforms = require("my_friend_platforms")
 local M = {}
 local MAX_HANDLES = 2048
 function M.Handle(state, entity)
     if entity == nil or not entity:IsValid() or entity.GUID == nil then return end
     local previous = state.by_guid[entity.GUID]
     if previous ~= nil and state.handles[previous] ~= nil then
-        state.handles[previous].expires = GetTime() + 90
         return previous
     end
     state.handle_serial = state.handle_serial + 1
     local id = "e" .. tostring(state.handle_serial)
-    state.handles[id] = {guid = entity.GUID, expires = GetTime() + 90}
+    state.handles[id] = {guid = entity.GUID}
     state.by_guid[entity.GUID] = id
     -- A read batch can describe hundreds of entities before trimming output.
     -- Keep the working set bounded without evicting its first page mid-batch.
@@ -27,8 +27,11 @@ function M.Handle(state, entity)
     return id
 end
 function M.Resolve(state, handle)
-    local record = type(handle) == "string" and state.handles[handle] or nil
-    local entity = record ~= nil and record.expires >= GetTime() and (Ents or {})[record.guid] or nil
+    if type(handle) ~= "string" then return end
+    local record = state.handles[handle]
+    local pins = state.active ~= nil and state.active.pins or nil
+    local guid = record ~= nil and record.guid or pins ~= nil and pins[handle] or nil
+    local entity = guid ~= nil and (Ents or {})[guid] or nil
     return entity ~= nil and entity:IsValid() and entity or nil
 end
 function M.Size(item)
@@ -45,6 +48,12 @@ function M.Items(inst)
     end
     return items
 end
+function M.Distance(a, b)
+    if a ~= nil and b ~= nil then
+        return math.floor(math.sqrt((a.x - b.x)^2 + (a.z - b.z)^2) * 10 + .5) / 10
+    end
+end
+
 function M.Describe(inst, state, entity, opening)
     local c = entity.components or {}
     local location = opening or entity
@@ -86,6 +95,15 @@ function M.Describe(inst, state, entity, opening)
         if record.equipped then record.location = "equipped" end
     end
     if c.finiteuses ~= nil then record.durability = c.finiteuses:GetPercent() end
+    if c.tool ~= nil then
+        record.tool_actions = {}
+        for action in pairs(c.tool.actions or {}) do
+            if type(action) == "table" and type(action.id) == "string" then
+                record.tool_actions[#record.tool_actions + 1] = action.id
+            end
+        end
+        table.sort(record.tool_actions)
+    end
     if c.fillable~=nil then
         record.fillable=true
         if c.finiteuses~=nil then
@@ -127,8 +145,12 @@ function M.Describe(inst, state, entity, opening)
         record.accessible = storage.Accessible(inst, entity)
         record.shared_storage = c.container_proxy ~= nil or nil
     end
-    local platform = location.GetCurrentPlatform ~= nil and location:GetCurrentPlatform() or nil
-    if platform ~= nil then record.platform = M.Handle(state, platform) end
+    if p ~= nil and entity ~= inst and (item == nil or item.owner == nil) then
+        local surface, platform = Platforms.Surface(p, location)
+        record.distance, record.surface, record.platform = M.Distance(inst:GetPosition(), p), surface, M.Handle(state, platform)
+    elseif location.GetCurrentPlatform ~= nil then
+        record.platform = M.Handle(state, location:GetCurrentPlatform())
+    end
     if c.walkableplatform ~= nil then record.boat = true end
     if c.stewer ~= nil then
         record.cooking = {running = c.stewer:IsCooking(), ready = c.stewer:IsDone(), product = c.stewer.product,
@@ -165,7 +187,9 @@ function M.Describe(inst, state, entity, opening)
     if c.workable ~= nil and c.workable:CanBeWorked() then
         local action = c.workable:GetWorkAction()
         record.work = action ~= nil and action.id or nil
+        record.work_left = c.workable.workleft
     end
+    if entity:HasTag("tree") then record.tree = true end
     return record
 end
 function M.Snapshot(inst, state)
@@ -207,12 +231,12 @@ function M.Snapshot(inst, state)
     out.handle = M.Handle(state,inst)
     out.base,out.home = require("my_friend_home").Status(inst)
     out.location = require("my_friend_body_terrain").Location(inst)
-    local platform = inst.GetCurrentPlatform ~= nil and inst:GetCurrentPlatform() or nil
+    local surface, platform = Platforms.Surface(p, inst)
     local riding = c.rider ~= nil and c.rider:IsRiding()
     out.mobility = {
         riding = riding == true,
         mount = riding and c.rider.GetMount ~= nil and M.Handle(state, c.rider:GetMount()) or nil,
-        surface = platform ~= nil and "boat" or require("my_friend_navigation").IsLand(p) and "land" or "unknown",
+        surface = surface,
         platform = platform ~= nil and M.Handle(state, platform) or nil,
     }
     if c.builder ~= nil then
@@ -337,15 +361,36 @@ end
 
 local SCOPES = {nearby = true, inventory = true, all = true, structures = true, creatures = true,
     players = true, containers = true, items = true, terrain = true, interactions = true, boats = true}
+local WORK = {CHOP=true, MINE=true, DIG=true, HAMMER=true, PICK=true, HARVEST=true}
+
+function M.ValidWork(action, target_type)
+    return (action == nil or WORK[action] == true) and (target_type == nil or target_type == "tree")
+end
+
+function M.MatchesWork(entity, action, target_type)
+    if target_type == "tree" and not entity:HasTag("tree") then return false end
+    if action == nil then return true end
+    local c = entity.components
+    if action == "PICK" then return c.pickable ~= nil and c.pickable:CanBePicked() end
+    if c.workable ~= nil and c.workable:CanBeWorked() and c.workable:GetWorkAction() == ACTIONS[action] then return true end
+    return action == "HARVEST" and (c.harvestable ~= nil or c.crop ~= nil or c.grower ~= nil)
+end
+
 local function Offset(value)
     return value == nil or type(value) == "number" and value >= 0 and value <= 10000 and value % 1 == 0
 end
 
 function M.ValidScan(args)
     return (args.scope == nil or SCOPES[args.scope] == true)
+        and M.ValidWork(args.action, args.target_type)
+        and (args.action == nil and args.target_type == nil or args.target == nil and args.container == nil
+            and (args.scope == nil or args.scope == "nearby" or args.scope == "all"))
         and (args.filter == nil or type(args.filter) == "string" and #args.filter <= 120)
         and (args.radius == nil or type(args.radius) == "number" and args.radius >= 1 and args.radius <= 32)
         and Offset(args.offset) and Offset(args.contents_offset)
+        and (args.target == nil or type(args.target) == "string" and #args.target <= 32
+            and args.scope == nil and args.container == nil and args.contents == nil
+            and args.filter == nil and args.offset == nil)
         and (args.container == nil or args.scope == "containers" and type(args.container) == "string" and #args.container <= 32)
         and (args.contents_offset == nil or args.container ~= nil and args.contents == true)
 end
@@ -353,11 +398,17 @@ end
 function M.Scan(inst, state, args, cache)
     local storage = require("my_friend_body_storage")
     local scope, filter = args.scope or "nearby", (args.filter or ""):lower()
-    local radius = math.min(32, math.max(1, args.radius or 20))
+    local targeted_work = args.action ~= nil or args.target_type ~= nil
+    local radius = math.min(32, math.max(1, args.radius or 32))
     local entities, seen, found = {}, {}, {}
     local offset=args.offset or 0
     local target = args.container ~= nil and M.Resolve(state, args.container) or nil
     if args.container ~= nil and storage.Resolve(target) == nil then return nil, "unknown_handle:container" end
+    if args.target ~= nil then
+        target = M.Resolve(state, args.target)
+        if target == nil then return nil, "unknown_handle:target" end
+        if not Visible(inst, target, radius^2) then return nil, "target_out_of_view" end
+    end
     local function Add(e)
         if e:IsValid() and not seen[e.GUID] then
             entities[#entities + 1], seen[e.GUID] = e, true
@@ -370,14 +421,16 @@ function M.Scan(inst, state, args, cache)
         if Visible(inst, target, radius^2) then Add(target) end
     elseif scope ~= "inventory" then
         for _, e in ipairs(M.Nearby(inst, radius, cache)) do
-            if InScope(e, scope) then Add(e) end
+            if targeted_work and M.MatchesWork(e, args.action, args.target_type)
+                or not targeted_work and InScope(e, scope) then Add(e) end
         end
     end
     if scope == "inventory" or scope == "all" then SortNearby(inst, entities) end
     local content_count,matched,contents_limited = 0,0,false
     for _, e in ipairs(entities) do
         local name = tostring(e.GetDisplayName ~= nil and e:GetDisplayName() or "")
-        if e ~= inst and (scope ~= "items" or e.components.inventoryitem ~= nil and e.components.inventoryitem.owner == nil)
+        if e ~= inst and (not targeted_work or M.MatchesWork(e, args.action, args.target_type))
+            and (scope ~= "items" or e.components.inventoryitem ~= nil and e.components.inventoryitem.owner == nil)
             and ((e.prefab or ""):lower():find(filter, 1, true) or name:lower():find(filter, 1, true)) then
             matched=matched+1
             if matched>offset and #found<40 then
@@ -401,7 +454,8 @@ function M.Scan(inst, state, args, cache)
         end
     end
     local more=matched>offset+#found
-    return {entities=found,scope=scope,filter=args.filter,position={x=p.x,z=p.z},radius=radius,observed_at=GetTime(),
+    return {entities=found,scope=scope,filter=args.filter,action=args.action,target_type=args.target_type,
+        position={x=p.x,z=p.z},radius=radius,observed_at=GetTime(),
         offset=offset,matched=matched,returned=#found,next_offset=more and offset+#found or nil,
         entities_limited=more,contents_limited=contents_limited,limited=more or contents_limited}
 end

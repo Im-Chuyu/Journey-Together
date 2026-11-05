@@ -63,7 +63,10 @@ function M.Craft(inst, recipe, count)
     local ingredients=Costs(inst,recipe,needed)
     local materials_ready=true
     for _,ingredient in ipairs(ingredients)do if ingredient.missing>0 then materials_ready=false end end
-    local buffered = recipe.placer ~= nil and builder.IsBuildBuffered ~= nil and builder:IsBuildBuffered(recipe.name)
+    local permanently_unlocked = false
+    for _, name in ipairs(builder.recipes or {}) do
+        if name == recipe.name then permanently_unlocked = true; break end
+    end
     local out={kind = "craft", recipe = recipe.name, product = recipe.product or recipe.name, name = Name(recipe.product or recipe.name),
         operations = count, new_operations = needed, produced = count * (recipe.numtogive or 1), ingredients = ingredients, materials_ready=materials_ready,
         character_costs = costs, technology_costs = tech_costs, technology = tech, builder_tag = recipe.builder_tag,
@@ -77,7 +80,9 @@ function M.Craft(inst, recipe, count)
         can_learn = builder.CanLearn ~= nil and builder:CanLearn(recipe.name) == true, freebuild = builder.freebuildmode == true}
     out.expected_output=out.produced
     out.technology_status={required=tech,available={},known=builder.KnowsRecipe~=nil and builder:KnowsRecipe(recipe) or false,
-        can_learn=out.can_learn,satisfied=out.can_build_technology,station_tag=recipe.station_tag}
+        can_learn=out.can_learn,satisfied=out.can_build_technology,station_tag=recipe.station_tag,
+        permanently_unlocked=permanently_unlocked,allows_permanent_unlock=not recipe.nounlock,
+        manufactured=recipe.manufactured == true}
     for key in pairs(tech)do out.technology_status.available[key]=(builder.accessible_tech_trees or {})[key] or 0 end
     out.builder_tag_met=recipe.builder_tag==nil or inst:HasTag(recipe.builder_tag)
     out.character_resources_ready=true

@@ -99,6 +99,14 @@ end
 function M.Finish(inst, job, status, result, reason)
     local state = inst._my_friend_body
     if state == nil or TERMINAL[job.status] then return end
+    if status == "failed" and reason == "placement_blocked" and job.point ~= nil
+        and (result == nil or result.nearby_obstacles == nil) then
+        local sites = require("my_friend_body_sites")
+        local recipe = job.recipe ~= nil and GetValidRecipe(job.recipe) or nil
+        local item = job.item ~= nil and (Ents or {})[job.item] or nil
+        result = result or {}
+        result.placement = sites.Details(inst, state, job.point, sites.Spacing(recipe, item))
+    end
     if job.parent ~= nil then
         if job.parent.skill=="execute_sequence"then return require("my_friend_body_composition").FinishChild(inst,job,status,result,reason)end
         return require("my_friend_body_batch").FinishChild(inst, job, status, result, reason)
@@ -215,8 +223,8 @@ local function StartPending(inst, state)
         Wake(inst)
         return
     end
-    local ok, reason = require("my_friend_body_actions").Prepare(inst, state, job)
-    if not ok then M.Finish(inst, job, "failed", nil, reason)
+    local ok, reason, details = require("my_friend_body_actions").Prepare(inst, state, job)
+    if not ok then M.Finish(inst, job, "failed", details, reason)
     else state.active = job; job.stage = job.stage or "ready"; M.Emit(inst, M.Result(job)); Wake(inst) end
 end
 function M.Tick(inst)
@@ -444,10 +452,25 @@ function M.GetAction(inst)
     local job = state ~= nil and state.active or nil
     if job == nil or Policy.IsBusy(inst) then return end
     if job.status == "accepted" then job.status = "running"; M.Emit(inst, M.Result(job)) end
-    if job.action ~= nil then return job.action end
-    if job.skill=="execute_sequence"then return require("my_friend_body_composition").GetAction(inst,state,job)end
-    if job.skill == "pickup_many" or job.skill == "work_many" then return require("my_friend_body_batch").GetAction(inst, state, job) end
-    return require("my_friend_body_actions").GetAction(inst, state, job)
+    local action = job.action
+    if action == nil then
+        if job.skill == "execute_sequence" then
+            action = require("my_friend_body_composition").GetAction(inst, state, job)
+        elseif job.skill == "pickup_many" or job.skill == "work_many" then
+            action = require("my_friend_body_batch").GetAction(inst, state, job)
+        else
+            action = require("my_friend_body_actions").GetAction(inst, state, job)
+        end
+    end
+    if action == nil or action._body_job == nil or action._body_job.heavy_carry then return action end
+    local ready, reason, surface, point = require("my_friend_body_travel").ApproachAction(inst, action)
+    if reason ~= nil then
+        local step, current = action._body_job, inst:GetPosition()
+        M.Finish(inst, step, "failed", {progress = step.progress or 0, stage = step.stage,
+            target_surface = surface, distance = Observation.Distance(current, point),
+            position = {x = current.x, z = current.z}}, reason)
+    end
+    return ready
 end
 function M.Configure(inst)
     if inst._my_friend_body_configured then return end

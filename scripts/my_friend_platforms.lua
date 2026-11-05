@@ -1,5 +1,50 @@
 local M = {}
 
+function M.Surface(point, entity)
+    local platform = entity ~= nil and entity.components.walkableplatform ~= nil and entity
+        or entity ~= nil and entity.GetCurrentPlatform ~= nil and entity:GetCurrentPlatform() or nil
+    if platform ~= nil then return "boat", platform end
+    local map = TheWorld ~= nil and TheWorld.Map or nil
+    if point == nil or map == nil then return "unknown" end
+    if entity == nil and map.GetPlatformAtPoint ~= nil then
+        platform = map:GetPlatformAtPoint(point.x, point.z)
+        if platform ~= nil then return "boat", platform end
+    end
+    if map.IsVisualGroundAtPoint ~= nil and map:IsVisualGroundAtPoint(point.x, 0, point.z)
+        or map.IsVisualGroundAtPoint == nil and require("my_friend_navigation").IsLand(point) then return "land" end
+    if map.IsOceanTileAtPoint ~= nil and map:IsOceanTileAtPoint(point.x, 0, point.z) then return "water" end
+    return "unknown"
+end
+
+-- A companion can remain in a boat's follower list after a native hop even
+-- though it is standing on land outside every deck. Clear that membership
+-- through the vanilla platform API once the landing animation has finished.
+function M.ConfirmLanding(inst, platform)
+    if platform == nil or not platform:IsValid() or inst.platform ~= platform or inst.components.locomotor.hopping
+        or inst.sg ~= nil and inst.sg:HasStateTag("jumping")
+        or M.Surface(inst:GetPosition()) ~= "land" then return platform end
+    local walkable = platform.components.walkableplatform
+    if walkable ~= nil then walkable:RemoveObject(inst) end
+    if inst.platform == platform then platform:RemovePlatformFollower(inst) end
+    return inst:GetCurrentPlatform()
+end
+
+function M.ConfirmBoarding(inst, expected)
+    local current = inst:GetCurrentPlatform()
+    if current == expected or not expected:IsValid() or inst.components.locomotor.hopping
+        or inst.sg ~= nil and inst.sg:HasStateTag("jumping") then return current end
+    local _, deck = M.Surface(inst:GetPosition())
+    if deck == expected then
+        if current ~= nil and inst.platform == current then
+            local old = current.components.walkableplatform
+            if old ~= nil then old:RemoveObject(inst) end
+        end
+        deck.components.walkableplatform:AddEntityToPlatform(inst)
+        return inst:GetCurrentPlatform()
+    end
+    return current
+end
+
 local function Capture(point, platform)
     if platform ~= nil and platform:IsValid() then
         local x, y, z = platform.entity:WorldToLocalSpace(point:Get())
@@ -112,7 +157,7 @@ end
 
 -- Retry a stale destination only after lack of progress. Measure progress in
 -- platform coordinates so a moving boat cannot disguise a stuck companion.
-function M.Run(inst, target, run)
+function M.Run(inst, target, run, direct)
     run = run ~= false
     local now, old = GetTime(), inst._my_friend_last_move
     local locomotor = inst.components.locomotor
@@ -128,12 +173,16 @@ function M.Run(inst, target, run)
         end
         old.untiltime = now + .5
     end
-    if old == nil or old.run ~= run or due and locomotor.dest == nil or stalled
+    if old == nil or old.run ~= run or old.direct ~= direct or due and locomotor.dest == nil or stalled
         or due and (old.point.x - target.x)^2 + (old.point.z - target.z)^2 > .25^2
         or (old.point.x - target.x)^2 + (old.point.z - target.z)^2 > 1 then
         if stalled then locomotor:ResetPath(); locomotor.lastdesttile = nil end
-        locomotor:GoToPoint(target, nil, run)
-        inst._my_friend_last_move = {point = target, run = run, untiltime = now + .5,
+        if direct then
+            require("my_friend_navigation").MoveToPoint(inst, target, run, true)
+        else
+            locomotor:GoToPoint(target, nil, run)
+        end
+        inst._my_friend_last_move = {point = target, run = run, direct = direct, untiltime = now + .5,
             mark = Capture(inst:GetPosition(), inst:GetCurrentPlatform()), progress = now}
     end
 end

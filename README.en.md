@@ -133,27 +133,34 @@ Choose Simplified Chinese, Traditional Chinese, English or Russian in the mod se
 
 Simplified and Traditional Chinese support custom companion voices; English and Russian use the character's native voice. Disabling Companion Voice also skips registering the custom FMOD banks, which reduces audio memory pressure alongside large audio mods.
 
-## Local voice and body interface (foundation)
+## Model integration and local assistant
 
-For direct DeepSeek API access, fill `api_key` in the mod-root `AssistantAPI.json` and double-click `StartVoice.vbs`. The file is generated on first launch, or copy `AssistantAPI.example.json` and rename it. With the default `provider=auto`, a configured key selects API mode without a browser or extension. Default model: `deepseek-flash`; proactive API chat is off by default. Enable AI Model Mode in game and match the pairing code. Restart after editing. Uses the Python standard library; API usage is billed to the key owner. The Workshop exporter generates blank configurations instead of copying local credentials. Mocked API tests pass; a real paid API and in-game end-to-end run have not been performed. See [assistant settings](tools/companion_bridge/README.md).
+AI Model Mode is an optional experimental feature. The model plans work from companion state, tool schemas and actual action receipts. The game continues to check permissions, tools, ownership and survival conditions. Reliable completion of complex model tasks still requires in-game verification.
 
-Double-click `StartVoice.cmd` in the mod root on your own Windows PC. With no API key configured, it uses the web bridge for DeepSeek and Doubao: load the bundled `browser_extension` in Chrome/Edge, sign in yourself, and pair its dedicated chat tab using the assistant's web connection code. A player verified basic inventory chat through real Chrome on 2026-11-02, including the in-game reply; complex automated actions and long-running background stability still need verification. `--provider demo` selects the separate offline demonstration; web mode never silently falls back to it.
+### Connection options
 
-Enable AI Model Mode in mod configuration (off by default). The six-digit code defaults to 321151; customize its six digit selectors and match the assistant's Settings. Neither following nor initial proximity is required to connect. Failed attempts wait 5,10,15… seconds and stop after 30 failures; entering a new world resets the budget. Disabling this mode disables model interfaces, behaviour nodes and connection tasks; enabling it always connects automatically. Pairing preferences persist across assistant restarts, and the extension automatically reconnects reopened DeepSeek pages using the saved code, retaining the original tab while it remains available. Manual console pairing remains available; stop disables retries for the current world.
+Enable AI Model Mode in the mod settings and match the six-digit pairing code in the game and assistant; the default is `321151`. The server and all clients need the mod.
 
-While connected, all players can address the companion by name in public game chat; server relays also support surface/cave messages. One room assistant is enough. Assistant text and voice address the companion directly and do not require the name. Everyone can chat; while following, only the leader can assign work; while independent, anyone can assign basic work. Bystander chat queues behind an active model plan. Disconnection restores the original chat handling. Cross-shard speakers have no local entity handle: following, delivering to them and role commands requiring a local player need the same shard.
+- **Windows API assistant**: launch `StartVoice.vbs`, enter your DeepSeek API key in Model settings, save and restart. Alternatively, copy `AssistantAPI.example.json` to `AssistantAPI.json` and edit it. The default model is `deepseek-flash`; proactive API chat is disabled by default. API usage is billed to the key owner.
+- **Windows browser assistant**: without an API key, use the DeepSeek or Doubao web bridge. Load `tools/companion_bridge/browser_extension` in Chrome/Edge, sign in yourself and pair the model tab using the assistant's web connection code. Website changes, login state and background throttling can affect the connection.
+- **Linux dedicated API assistant**: configure `AssistantAPI.json` and run `sh ./StartAssistantLinux.sh` with Python 3.10 or newer. The companion's shard pairs automatically when the companion and an online player are present.
+- **Dedicated server admin client**: select Dedicated Server AI Connection → Admin Client. An administrator on the companion's shard can connect a local assistant using the pairing code. Relay access checks administrator status; public-chat work permissions still use the actual speaker's identity.
 
-`pickup_many` and `work_many` complete a bounded batch locally before returning an aggregate result. `craft(count)` already finishes the entire requested number of operations in the game.
+The Windows launcher checks for Python/Tk and installs it if needed. Assistant settings provide local Whisper setup and TTS voice, rate and volume controls. Hold the voice hotkey to speak and release it to recognize speech; the default is `F9`. Text input is also available.
 
-Game commands and new model requests can replace each other at safe animation boundaries, preserving emergency priorities and the connection. Character-specific voice guidance follows the actual character. Random 60–120 second environment updates may invite a short proactive chat while idle; these turns cannot issue physical commands. The speech hotkey defaults to F9 and can be changed to F1–F12 in Settings. An explicit continuous-listening button keeps the microphone active until stopped. Real remote-client and background-site stability still need multiplayer/browser verification.
+While connected, players can address the companion by name in public chat. One assistant can handle room messages, including surface/cave chat relays. Only the leader can assign work while the companion follows; other players can assign basic work while it is independent. Assistant text and voice do not require the companion's name. Delivery, following and other entity interactions remain subject to shard boundaries.
 
-Python and models are not bundled. On 64-bit Windows, StartVoice.vbs reuses Python 3.10+ with Tkinter or downloads and installs it on first launch. Offline speech is prepared separately in assistant settings; Windows speech requires an installed recognizer. New runtime files and settings live in tools/companion_bridge/.local. `model_instructions.md` teaches the model the 35 skills and actual-feedback planning. Follow uses the original background mode; work needs no follow cancellation, and idle life resumes normally. `interact` supports advertised sitting, switch and activation components, not arbitrary custom mod actions. Background page heartbeats have a 120-second grace period; bounded diagnostics omit transcripts and pairing secrets. Reload server/client Lua, the assistant, and the browser extension after updating. See [BODY_API.md](BODY_API.md) for details (Chinese).
+### Tasks and limitations
 
-The model also supports world saves, rollback counts, server pause/resume and admin grants/revocation. Saving is available to connected users; rollback and pause require server admin status or an admin grant. Only admins can grant access. Grants persist by userid in world snapshots; the master shard authorizes cave requests.
+Tools support observation, collection, carrying, resource work, crafting, cooking, planting and native item interactions. Character abilities depend on the live capability query. Independent queries can be batched, and decided steps can run as a local sequence that stops on failure and reports actual progress. Examples include uprooting a plant, collecting its actual drop, checking a location and planting it, or chopping a specified number of trees.
 
-For combat, engage directly targets an observed creature and continuously tracks, approaches and attacks it; no preliminary move_to is required. Dodge, survival, equipment and follow-distance rules still apply.
+Explicit entity observations default to a 32-unit radius and support work filters and pagination. The low-frequency environment summary covers only selected objects within 20 units. Placement uses native validity checks, can validate an exact point and report nearby obstacles, and is checked again before execution. Handles have no fixed time expiry within a connection, but removal, stack merging, cache eviction and reconnection can invalidate them.
 
-The model can query current recipe costs/deficits and role capabilities, harvest a ready pot and preserve inventory intent across multi-step tasks. Role calls bridge only the eight existing scripted characters; capabilities distinguish active commands from automatic/passive support. See BODY_API.md.
+Sequences can combine buffered building placement, fixed grids or rings, and starting two cooking pots before harvesting either. Materials, technology, space and reachability still determine whether a task can run. Travel supports land routes on the current shard, deck approaches and native hops within reach; it does not sail boats automatically. New model tasks and existing commands yield at safe action boundaries, preserving survival priorities.
+
+Saving, rollback, pausing/resuming, kicking and banning require an explicit player request followed by a separate reason-review reply from the same player. This review is independent of administrator access to a dedicated-server relay.
+
+See the [assistant guide](tools/companion_bridge/README.md) for setup, troubleshooting and data locations, and [BODY_API.md](BODY_API.md) for tool parameters, examples and verification limits. Re-enter the world after Lua updates and restart after assistant updates. Browser extension updates also require reloading the extension and refreshing the model page.
 
 ## Development and contributions
 
@@ -164,48 +171,8 @@ The model can query current recipe costs/deficits and role capabilities, harvest
 
 `main` is the release branch; `develop` integrates the next version. Start new features from `develop`; maintenance agents use `codex/<topic>` branches by default. Sync `main` back into `develop` after a release, and use English commit and merge messages. Translation contributions must preserve command IDs, dialogue keys and placeholders, without changing core code, sound assets or release settings.
 
-From the mod root, run Lua 5.1's `luac -p <file>` on the affected files and the relevant regression tests; small changes do not require the full suite. Section 18 of the developer guide describes the scope-based checks and the full commands. Changes affecting networking, saves or body swapping also need in-game verification beyond stub tests.
+From the mod root, run Lua 5.1's `luac -p <file>` on the affected files and the relevant regression tests; small changes do not require the full suite. Section 18 of the developer guide describes the scope-based checks and the full commands. Select in-game scenarios according to the actual behaviour risk; stub tests do not establish in-game correctness.
 
 When reporting a problem, include the mod version, server type, relevant character, reproduction steps and the complete Lua traceback from the client or server log.
 
-The web extension now supports DeepSeek and Doubao. Choose a site from the desktop’s Open Model Page menu and pair that tab. Optional automatic conversation renewal triggers only on a visible context-limit notice, never after a fixed number of messages; it resends the current pending request with its complete state and actual results. Reload the extension, allow the added Doubao hosts, refresh the chat page and restart the assistant after updating. Doubao live integration remains unverified; DOM tests cover its adapter and renewal workflow.
-
-Native query_actions/perform_action now bridge inventory/equipped, target/ground and scene interactions. Single-target work defaults to completion. Only public game chat requires the companion name. World save/rollback/pause and new kick/ban actions use mandatory two-message reason review by the model, replacing administrator grants.
-
-Generic query_batch and execute_sequence now combine independent observations and execute decided steps locally. First failure returns actual progress for standalone fallback without replaying completed actions. Native planting/deployment/terraforming remain subject to game rules; drop accepts a destination position. Restart the assistant and world to load this update.
-
-
-AI planning now combines carried deficits, ground and accessible-container supplies, suitable technology stations and building-site candidates in one recipe query. `query_sites` also supports carried deployable items. Buildings require explicit, distinct locations; failed sequences resume from unfinished work. Tool crafting and the location of its later use are separate decisions. Restart the assistant, reload the extension and refresh the model tab after updating. The new conversation and Doubao composer adapters still require live website and game validation.
-
-Model-driven container pickup and deposit now approach, open, transfer and close automatically within one request. Cancellation or disconnection closes only containers opened by that job; the leader’s existing openings are preserved. Re-enter the world to load the Lua changes.
-
-Model tools now expose terrain, soil and care targets, container capacity and fuel state, with fixed grid layouts and bounded repeated sequences. Cooking can return after starting; non-stacking storage reports actual progress. Instructions are shorter and cover abbreviations, ratios and recovery. Restart the assistant and re-enter the world; new complex workflows still require in-game validation.
-
-Recipe queries now distinguish owned supplies from native crafting availability and report deficits, technology and role conditions. Failure feedback preserves progress. World-operation reason requests and expired reviews end the current turn to prevent repeated submissions. Restart the assistant and re-enter the world after updating.
-
-Speech-only model replies now end the turn. A response containing both text and say is spoken once, preventing completion-message loops. Restart the assistant to apply this fix.
-
-Ambient prompts now explicitly request brief conversation based on current companion/world/surroundings data. Empty ambient replies no longer fill dialogue history. Restart the assistant; existing cooldown and safety rules remain.
-
-Use StartVoice.vbs for a windowless-console launch. Assistant settings now offer local Whisper recognition (initial dependency/model download required), installed TTS voice/rate/volume selection with preview. Windows recognition remains available. Exit the old assistant normally before using the new launcher.
-
-If Python needs to be installed, the launcher tries python.org, then the Alibaba Cloud and Huawei Cloud mirrors. It verifies the same pinned SHA-256 for every download before running the installer.
-
-Model pickup now delegates a selected heavy object to the existing carry controller and can compose movement and dropping. It preserves native backpack/mount handling and never silently substitutes another object. Capability queries report built-in command coverage; some persistent behaviors still require native commands. Re-enter the world and restart the assistant.
-
-Reply extraction now handles split request IDs and deeply nested message text, with clearer timeout diagnostics. Reload the extension, refresh the model page and restart the assistant. Old actions are not replayed.
-
-
-Model task planning now retains bounded per-task object bindings and remaining steps. Observations distinguish wearable bags from storable items and expose harvest products and ingredient tags. Cooking can validate and preserve an explicit four-slot mix with batch deficits. Restart the assistant and world, reload the browser extension, and refresh the model page. Live model task reliability still requires in-game testing.
-
-
-Use the assistant’s “大模型设置” (Model settings) button, also available inside Assistant settings, to edit the API model, thinking mode and effort (low/high/max), output limit, timeout, retries and proactive chat. Changes are validated and saved to AssistantAPI.json; restart the assistant to apply them.
-
-
-Model observations now include current-base membership, ground tiles and topology-backed region information. Large container queries retain object identities before contents and expose pagination for focused follow-up scans. Restart the assistant and re-enter the world to load the changes; live-world verification remains pending.
-
-The model also receives the companion's world type (surface or caves) and shard ID, independently of the speaker's location. Restart the assistant and game session after updating.
-
-The companion can prepare a building at a technology station and place it elsewhere, travel to a known base on the same shard, board a nearby boat or hop ashore, dismount to swap backpacks, sit on the ground, use shared shadow storage, and revive ghosts with a Telltale Heart. It can start two pots before harvesting either. See [BODY_API.md](BODY_API.md) for the tool parameters and examples.
-
-On a Linux dedicated server, configure the DeepSeek API key in `AssistantAPI.json` and run `sh ./StartAssistantLinux.sh` with Python 3.10 or newer. Enable AI Model Mode and match the six-digit pairing code. The companion's shard pairs automatically when the companion and an online player are present. A code mismatch stops automatic retries.
+Keep reusable regression tests in `tests/` alongside the code they cover. Temporary scripts, fixtures, Workshop exports and backups belong in `tests/.local/`; assistant runtime data belongs in `tools/companion_bridge/.local/`. Local artifacts, Python caches and personal `AssistantAPI.json` files are excluded from Git. Configuration examples must contain an empty API key.

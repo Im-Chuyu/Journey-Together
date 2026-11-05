@@ -114,9 +114,11 @@ function M.IsRescueActionValid(inst, action)
 end
 
 function M.InTravelRange(inst, action, point)
+    -- Navigation checks both Vector3 destinations and plain x/z search cells.
+    local origin = action._my_friend_rescue_origin
     return M.IsRescueActionValid(inst, action)
         and (action._my_friend_rescue_target == Policy.GetLeader(inst)
-            or (point - action._my_friend_rescue_origin):LengthSq() <= (M.RANGE + 8)^2)
+            or (point.x - origin.x)^2 + (point.z - origin.z)^2 <= (M.RANGE + 8)^2)
 end
 
 local function HasRevivalNearby(ghost)

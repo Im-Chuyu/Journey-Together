@@ -225,4 +225,60 @@ Test("location reports current ground and topology islands without guessing from
  TheWorld.Map=nil;assert(not terrain.Location(inst).known)
  ConvertTopologyIdToData=original
 end)
+Test("explicit observations default to 32 units and expose actual carried tool actions", function()
+    local inst,p,s=Setup()
+    local tree=F.entity("evergreen",28); tree.tags.tree=true
+    tree.components.workable={CanBeWorked=function()return true end,GetWorkAction=function()return ACTIONS.CHOP end,workleft=7}
+    local axe=F.item("multitool",inst); axe.components.tool={actions={[ACTIONS.CHOP]=1,[ACTIONS.DIG]=1}}
+    local results=F.call(inst,p,"query_batch",{queries={
+        {skill="observe",arguments={action="CHOP"}},
+        {skill="observe",arguments={target=O.Handle(s,tree)}},
+        {skill="observe",arguments={radius=20,action="CHOP"}},
+        {skill="observe",arguments={}},
+    }}).result.results
+    local result=results[1].result
+    assert(result.radius==32 and result.entities[1].distance==28 and result.entities[1].work_left==7)
+    assert(results[2].result.entities[1].handle==O.Handle(s,tree))
+    assert(#results[3].result.entities==0)
+    local found=false
+    for _,entity in ipairs(results[4].result.entities)do if entity.handle==O.Handle(s,tree)then found=true end end
+    assert(results[4].result.radius==32 and found)
+    local actions=O.Describe(inst,s,axe).tool_actions
+    assert(#actions==2 and actions[1]=="CHOP" and actions[2]=="DIG")
+    O.RefreshEnvironment(inst,s)
+    assert(s.environment.radius==20)
+end)
+Test("exact placement includes terrain and bounded obstacle context without relocating the point", function()
+    local inst,p,s=Setup()
+    p.tags.player=true
+    TheWorld.tags.NOBLOCK=true
+    TheWorld.Map.GetTileAtPoint=function()return 87654 end
+    WORLD_TILES={TEST_GROUND=87654}
+    TheWorld.Map.IsPassableAtPoint=function()return true end
+    TheWorld.Map.CanPlantAtPoint=function()return false end
+    TheWorld.Map.IsGroundTargetBlocked=function()return false end
+    for n=1,6 do local e=F.entity("test_obstacle",4+n/10);e.GetPhysicsRadius=function()return .5 end end
+    local result=F.call(inst,p,"query_sites",{recipe="cookpot",position={x=4,z=0},exact=true}).result
+    local site=result.requested_site
+    assert(result.checked==1 and #result.sites==1 and result.sites[1].position.x==4 and site.valid)
+    assert(site.tile.name=="TEST_GROUND" and site.passable and site.plantable==false and site.ground_target_blocked==false)
+    assert(site.obstacles_matched==6 and #site.nearby_obstacles==4 and site.obstacles_limited)
+    assert(site.nearby_obstacles[1].physics_radius==.5)
+end)
+Test("deployment rechecks native clearance after acceptance and preserves the item on blockage", function()
+    local inst,p,s=Setup(); local clear=true; local deployments=0
+    local item=F.item("dug_grass",inst)
+    item.components.deployable={CanDeploy=function()return clear end}
+    local previous=ACTIONS.DEPLOY
+    ACTIONS.DEPLOY={id="DEPLOY",fn=function()deployments=deployments+1;return true end}
+    item.CollectActions=function(_,mode,_,point,actions)if mode=="POINT"then actions[#actions+1]=ACTIONS.DEPLOY end end
+    local job=F.call(inst,p,"perform_action",{item=O.Handle(s,item),mode="POINT",action="DEPLOY",position={x=4,z=0}})
+    local action=assert(API.GetAction(inst))
+    clear=false
+    assert(not action:IsValid());action:Fail()
+    local result=s.jobs[job.action_id]
+    assert(result.status=="failed" and result.reason=="placement_blocked" and deployments==0 and item.owner==inst)
+    assert(result.result.placement.position.x==4 and result.result.placement.nearby_obstacles~=nil)
+    ACTIONS.DEPLOY=previous
+end)
 print(passed.." planning tests passed")

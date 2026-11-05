@@ -51,6 +51,22 @@ configuration_options = {
         options = UIButtonOptions(), default = false,
     },
     {
+        name = "model_dedicated_transport",
+        label = simplified_chinese and "专服模型连接方式" or traditional_chinese and "專服模型連線方式"
+            or russian and "Подключение ИИ на сервере" or "Dedicated Server AI Connection",
+        hover = simplified_chinese and "管理员客户端模式使用管理员电脑上的助手。管理员须与伙伴在同一分片，其他玩家仍可在公屏聊天。"
+            or traditional_chinese and "管理員用戶端模式使用管理員電腦上的助手。管理員須與夥伴在同一分片，其他玩家仍可在公屏聊天。"
+            or russian and "Ретранслятор использует помощник администратора на одном осколке со спутником. Остальные игроки могут общаться в чате."
+            or "Admin relay uses an administrator's local assistant on the companion's shard. Other players can still chat with the companion.",
+        options = {
+            {description = simplified_chinese and "常规配对" or traditional_chinese and "一般配對"
+                or russian and "Обычное подключение" or "Standard Pairing", data = "standard"},
+            {description = simplified_chinese and "管理员客户端" or traditional_chinese and "管理員用戶端"
+                or russian and "Клиент администратора" or "Admin Client", data = "admin_client"},
+        },
+        default = "standard",
+    },
+    {
         name = "command_wheel_extra_key",
         label = simplified_chinese and "指令轮盘额外快捷键" or traditional_chinese and "指令輪盤額外快捷鍵"
             or russian and "Доп. клавиша колеса команд" or "Additional Command Wheel Key",

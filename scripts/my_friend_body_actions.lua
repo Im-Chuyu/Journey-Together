@@ -54,6 +54,17 @@ local function BeginWork(inst, job, target)
     -- The batch parent reports totals and never exposes individual drop lists.
     if job.work_before ~= nil or job.parent ~= nil and job.parent.skill == "work_many" then return end
     job.work_before,job.ground_before,job.work_point = {},{},target:GetPosition()
+    if job.drop_prefab ~= nil then
+        local function OnDrop(_, data)
+            local action, loot = job.action, data ~= nil and data.loot or nil
+            if action ~= nil and inst.bufferedaction == action and action.target == target
+                and loot ~= nil and loot:IsValid() and loot.prefab == job.drop_prefab then
+                job.drop_guid = loot.GUID
+            end
+        end
+        inst:ListenForEvent("loot_prefab_spawned", OnDrop, target)
+        job.cleanup = function() inst:RemoveEventCallback("loot_prefab_spawned", OnDrop, target) end
+    end
     for _,item in ipairs(Observation.Items(inst)) do
         job.work_before[item.prefab]=(job.work_before[item.prefab] or 0)+Observation.Size(item)
     end
@@ -87,6 +98,20 @@ local function WorkResult(inst,state,job,details)
         end
     end
     return details
+end
+local function FinishWork(inst, state, job, details)
+    local result = WorkResult(inst, state, job, details)
+    if job.drop_prefab ~= nil then
+        local loot = job.drop_guid ~= nil and (Ents or {})[job.drop_guid] or nil
+        local item = loot ~= nil and loot:IsValid() and loot.components.inventoryitem or nil
+        if item == nil or item.owner ~= nil or loot:IsInLimbo() then
+            result.expected_drop = job.drop_prefab
+            Fail(inst, job, "expected_drop_missing", result)
+            return
+        end
+        result.drop = Observation.Describe(inst, state, loot)
+    end
+    Done(inst, job, result)
 end
 local function Current(inst, job)
     local state = API().Valid(inst)
@@ -180,7 +205,7 @@ end
 local function WorkSwing(inst, state, job, target, kind, tool, validate)
     return Make(inst, job, target, kind, tool, nil, function()
         job.progress = job.progress + 1
-        if job.progress >= job.count then Done(inst, job, WorkResult(inst,state,job,{work_units = job.progress})) end
+        if job.progress >= job.count then FinishWork(inst, state, job, {work_units = job.progress}) end
     end, validate)
 end
 
@@ -246,12 +271,12 @@ function M.Prepare(inst, state, job)
         end
     end
     if skill == "perform_action" or skill == "use_item" and a.action ~= nil and not LEGACY_USES[a.action] then
-        local ok,reason=require("my_friend_body_native").Prepare(inst,state,job)
+        local ok,reason,details=require("my_friend_body_native").Prepare(inst,state,job)
         if ok and a.action=="SITON" and job.native_mode=="SCENE" then
             job.native=nil;local original=job.skill;job.skill="interact"
             ok,reason=M.Prepare(inst,state,job);job.skill=original
         end
-        return ok,reason
+        return ok,reason,details
     end
     if skill == "character_skill" then return require("my_friend_body_characters").Prepare(inst, state, job)
     elseif skill == "dismount" then
@@ -266,14 +291,14 @@ function M.Prepare(inst, state, job)
     elseif skill == "move_to" then
         if a.gait ~= nil and a.gait ~= "walk" and a.gait ~= "run" then return false, "invalid_gait" end
         if a.target ~= nil and a.position ~= nil then return false, "choose_one_destination" end
+        local travel = require("my_friend_body_travel")
         if a.destination ~= nil then
-            local ok, reason = require("my_friend_body_travel").Prepare(inst, job)
+            local ok, reason = travel.Prepare(inst, job)
             if not ok then return false, reason end
         elseif job.target == nil then
             local p = a.position
             if type(p) ~= "table" or not Finite(p.x) or not Finite(p.z) then return false, "invalid_position" end
-            job.point = Vector3(p.x, 0, p.z)
-            if not require("my_friend_navigation").IsLand(job.point) then return false, "invalid_terrain" end
+            if not travel.SetPosition(job, Vector3(p.x, 0, p.z)) then return false, "invalid_terrain" end
         end
         if a.distance ~= nil and (not Finite(a.distance) or a.distance < .3 or a.distance > 12) then return false, "invalid_distance" end
         job.gait, job.distance = a.gait or "run", a.distance or (a.destination == "base" and 5 or job.target ~= nil and 3 or .5)
@@ -329,6 +354,12 @@ function M.Prepare(inst, state, job)
             local allowed = {CHOP = true, MINE = true, DIG = true, HAMMER = true, PICK = true, HARVEST = true}
             if not allowed[a.action] or ACTIONS[a.action] == nil then return false, "unsupported_work" end
             job.verb = a.action
+            if a.drop_prefab ~= nil then
+                if type(a.drop_prefab) ~= "string" or #a.drop_prefab > 80 or not a.drop_prefab:match("^[%w_]+$") then
+                    return false, "invalid_drop_prefab"
+                end
+                job.drop_prefab = a.drop_prefab
+            end
             if a.amount == nil and a.action ~= "PICK" and a.action ~= "HARVEST" then
                 job.until_finished,job.count=true,10000
             end
@@ -578,6 +609,10 @@ end
 function M.Operate(action)
     local inst, job = action.doer, action._body_job
     if job == nil or not Current(inst, job) then return false end
+    if action._my_friend_surface_ready and not require("my_friend_body_travel").CanOperate(inst, action) then
+        job.operation_error = "target_moved_out_of_reach"
+        return false
+    end
     if action.target ~= nil and inst:GetDistanceSqToInst(action.target) > ((action.arrivedist or 2.2) + .5)^2 then return false end
     local operation = action._body_operation
     if operation == "transfer" then return Transfer(inst, job, action)
@@ -899,19 +934,28 @@ function M.GetAction(inst, state, job)
     if skill == "move_to" then
         local target = Resolve(job, "target")
         if job.target ~= nil and target == nil then Fail(inst, job, "target_lost"); return end
-        local point = target ~= nil and target:GetPosition() or job.point
         local travel = require("my_friend_body_travel")
-        if travel.Needed(inst, job, target, point) then
-            if Riding(inst) and travel.Crossing(inst, target) then return Dismount(inst, job) end
+        local point = travel.Point(job, target)
+        if point == nil then Fail(inst, job, "target_lost"); return end
+        local surface, platform = require("my_friend_platforms").Surface(point, target)
+        if job.point_platform ~= nil then surface, platform = "boat", job.point_platform end
+        if travel.Needed(inst, job, surface, point) then
+            if Riding(inst) and (inst:GetCurrentPlatform() ~= platform or surface == "water"
+                or a.destination == "shore" and inst:GetCurrentPlatform() ~= nil) then return Dismount(inst, job) end
             if inst.sg ~= nil and inst.sg:HasStateTag("dismounting") then return end
-            local result, reason = travel.Step(inst, state, job, target, point)
+            local result, reason = travel.Step(inst, state, job, target, point, surface, platform)
             if result ~= nil then Done(inst, job, result)
-            elseif reason ~= nil then Fail(inst, job, reason) end
+            elseif reason ~= nil then
+                local current = inst:GetPosition()
+                Fail(inst, job, reason, {stage = job.stage, position = {x = current.x, z = current.z},
+                    target_surface = surface, distance = Observation.Distance(current, point)})
+            end
             return
         end
         local action = Make(inst, job, target, ACTIONS.WALKTO, nil, target == nil and point or nil, function()
             local p = inst:GetPosition()
-            Done(inst, job, {position = {x = p.x, z = p.z}, target = a.target, gait = job.gait})
+            Done(inst, job, {position = {x = p.x, z = p.z}, target = a.target, gait = job.gait,
+                surface = "land", target_surface = surface, distance = Observation.Distance(p, point)})
         end)
         action.arrivedist = job.distance
         return action
@@ -938,16 +982,21 @@ function M.GetAction(inst, state, job)
     if skill == "work" then
         local target, kind = Resolve(job, "target"), ACTIONS[job.verb]
         if target == nil then
-            if job.progress > 0 then Done(inst, job, WorkResult(inst,state,job,{work_units = job.progress, target_removed = true})) else Fail(inst, job, "target_lost") end
+            if job.progress > 0 then FinishWork(inst, state, job, {work_units = job.progress, target_removed = true})
+            else Fail(inst, job, "target_lost") end
             return
         end
         BeginWork(inst,job,target)
         local c = target.components
         local tool
         if c.workable ~= nil and job.verb ~= "PICK" and job.verb ~= "HARVEST" then
-            if not c.workable:CanBeWorked() then Done(inst, job, WorkResult(inst,state,job,{work_units = job.progress, finished = true})); return end
+            if not c.workable:CanBeWorked() then
+                if job.progress > 0 then FinishWork(inst, state, job, {work_units = job.progress, finished = true})
+                else Fail(inst, job, "target_not_workable") end
+                return
+            end
             if c.workable:GetWorkAction() ~= kind then
-                if (job.parent ~= nil or job.until_finished) and job.progress > 0 then Done(inst, job, WorkResult(inst,state,job,{work_units = job.progress, finished = true}))
+                if (job.parent ~= nil or job.until_finished) and job.progress > 0 then FinishWork(inst, state, job, {work_units = job.progress, finished = true})
                 else Fail(inst, job, "wrong_work_action") end
                 return
             end

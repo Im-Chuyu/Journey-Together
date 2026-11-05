@@ -41,14 +41,16 @@ Test("actual entry reserves RPC slots but leaves the model behavior off when dis
     assert(source:find('inst._my_friend_model_enabled = model_enabled', 1, true)
         < source:find('inst:SetBrain(FollowBrain)', 1, true))
 end)
-Test("a rejected pairing code ends the current auto-connect controller", function()
-    local control = Auto.New(Player(), "123456", function() return true end)
-    control.retry.fn()
-    local timeout = control.timeout
-    control:Result("disconnected", "pairing_code_mismatch", control.serial)
-    assert(timeout.cancelled and not control.enabled and control.retry == nil and not control.connected)
-    control:Result("disconnected", "network", control.serial)
-    assert(control.retry == nil)
+Test("wrong pairing code and denied admin relay end auto-connect retries", function()
+    for _, reason in ipairs({"pairing_code_mismatch", "relay_admin_required"}) do
+        local control = Auto.New(Player(), "123456", function() return true end)
+        control.retry.fn()
+        local timeout = control.timeout
+        control:Result("failed", reason, control.serial)
+        assert(timeout.cancelled and not control.enabled and control.retry == nil and not control.connected)
+        control:Result("disconnected", "network", control.serial)
+        assert(control.retry == nil)
+    end
 end)
 Test("exactly thirty failed attempts with 5,10,...145 second waits; then no retry", function()
     local calls = 0
@@ -85,6 +87,8 @@ Test("all four locales expose disabled-by-default model mode and customizable si
         local chunk = assert(loadfile("modinfo.lua")); setfenv(chunk, env); chunk()
         local found = {}; for _, option in ipairs(env.configuration_options) do found[option.name] = option end
         assert(found.model_enabled.default == false)
+        assert(found.model_dedicated_transport.default == "standard"
+            and found.model_dedicated_transport.options[2].data == "admin_client")
         local code = ""; for i = 1, 6 do
             local digit = assert(found["model_pair_digit_" .. i]); assert(#digit.options == 10)
             code = code .. digit.default

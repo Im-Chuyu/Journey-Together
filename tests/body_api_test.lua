@@ -190,6 +190,7 @@ local function Setup()
         currentstate = {name = "idle"}}
     Storage(inst)
     TheWorld = Entity("world"); TheWorld.ismastersim, TheWorld.ismastershard, TheWorld._my_friend = true, true, inst
+    TheWorld.Map = {}
     AllPlayers = {player}
     STRINGS = {CHARACTER_TITLES = {}}
     TheSim = {FindEntities = function(_, x, _, z, radius, must, cant)
@@ -499,6 +500,67 @@ Test("a ghost cannot receive inventory transfers but can request a native heart 
     Perform(inst)
     assert(state.jobs[result.action_id].result.revive_started and p.tags.reviving and not heart.valid)
     package.loaded.my_friend_rescue, ACTIONS.GIVETOPLAYER = old_rescue, old_give
+end)
+Test("refreshing a visible handle reports its live distance and surface without scanning neighbors", function()
+    local inst, p, state = Setup()
+    local item = Item("twigs", nil)
+    item.x = 7
+    local navigation = require("my_friend_navigation")
+    local land = navigation.IsLand
+    navigation.IsLand = function(point) return point.x < 5 end
+    TheWorld.Map.IsOceanTileAtPoint = function(_, x) return x >= 5 end
+    TheSim.FindEntities = function() error("a direct target refresh must not scan") end
+    local target = Handle(state, item)
+    local reply = Call(inst, p, "observe", {target = target})
+    assert(reply.status == "completed" and reply.result.entities[1].surface == "water"
+        and reply.result.entities[1].distance == 7)
+    item.x = 3.12
+    now = now + 1
+    reply = Call(inst, p, "observe", {target = target})
+    assert(reply.result.entities[1].surface == "land" and reply.result.entities[1].distance == 3.1)
+    item.x = 40
+    now = now + 1
+    assert(Call(inst, p, "observe", {target = target, radius = 32}).reason == "target_out_of_view")
+    navigation.IsLand = land
+end)
+Test("boat membership follows the actual surface once a native hop ends", function()
+    local inst = Setup()
+    local boat = Entity("boat", 0)
+    boat.components.walkableplatform = {RemoveObject = function(_, entity) boat:RemovePlatformFollower(entity) end}
+    function boat:RemovePlatformFollower(entity) assert(entity.platform == self); entity.platform = nil end
+    function inst:GetCurrentPlatform() return self.platform end
+    inst.platform = boat
+    inst.components.locomotor = {hopping = true}
+    TheWorld.Map.GetPlatformAtPoint = function(_, x) return x < 4 and boat or nil end
+    local platforms = require("my_friend_platforms")
+    inst.x = 5
+    assert(platforms.ConfirmLanding(inst, boat) == boat)
+    inst.components.locomotor.hopping = false
+    inst.x = 2
+    assert(platforms.ConfirmLanding(inst, boat) == boat)
+    inst.x = 5
+    assert(platforms.ConfirmLanding(inst, boat) == nil and inst.platform == nil)
+    boat.components.walkableplatform.AddEntityToPlatform = function(_, entity) entity.platform = boat end
+    assert(platforms.ConfirmBoarding(inst, boat) == nil)
+    inst.x, inst.components.locomotor.hopping = 2, true
+    assert(platforms.ConfirmBoarding(inst, boat) == nil)
+    inst.components.locomotor.hopping = false
+    assert(platforms.ConfirmBoarding(inst, boat) == boat and inst.platform == boat)
+end)
+Test("handles survive time while live identities and active sequence pins remain valid", function()
+    local inst, p, state = Setup()
+    local target = Entity("evergreen", 5)
+    local handle = Handle(state, target)
+    now = now + 3600
+    assert(API.Observation.Resolve(state, handle) == target and Handle(state, target) == handle)
+    local job = Call(inst, p, "execute_sequence", {steps={{id="go",skill="move_to",arguments={target=handle}}}})
+    for i = 1, 2100 do Handle(state, Entity("rocks", 2)) end
+    assert(state.handles[handle] == nil and API.Observation.Resolve(state, handle) == target)
+    Call(inst, p, "cancel", {action_id=job.action_id})
+    assert(API.Observation.Resolve(state, handle) == nil)
+    local replacement = Handle(state, target)
+    target.valid = false
+    assert(API.Observation.Resolve(state, replacement) == nil)
 end)
 Test("model task safely replaces legacy work; emergency priority and busy animations remain protected", function()
     local inst, p, state = Setup()

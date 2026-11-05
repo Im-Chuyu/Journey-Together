@@ -7,14 +7,25 @@ local serial = 0
 local rpc
 local pending = {}
 local automatic
+local dedicated_transport, dedicated_pair_code
 local stopped_worlds = setmetatable({}, {__mode = "k"})
 local function Dedicated()
     return TheNet ~= nil and TheNet.IsDedicated ~= nil and TheNet:IsDedicated()
+end
+local function AdminRelayMode()
+    return dedicated_transport == "admin_client" and Dedicated()
+end
+local function RelayAuthorized(inst, state)
+    if not state.admin_relay or require("my_friend_body_world").IsAdmin(state.owner) then return true end
+    API.Close(inst, "relay_admin_required")
+    return false
 end
 local function Log(message) print("[MyFriendsBody] " .. message) end
 local function Report(status, reason)
     local messages = {
         permission_denied = "无权连接：请开启AI大模型模式，并确认当前分片存在活动伙伴。",
+        relay_admin_required = "当前专服仅允许管理员连接本机助手。公屏仍可使用已连接的助手。",
+        relay_client_required = "当前专服使用管理员客户端中继。请由同分片管理员在游戏客户端连接助手。",
         companion_missing = "当前分片没有找到活动伙伴。",
         too_far_to_connect = "离伙伴太远，请靠近至20游戏单位内。",
         command_in_progress = "伙伴正在执行原有任务，请先结束任务再连接。",
@@ -109,6 +120,7 @@ local function Schedule(inst, state, delay)
     end)
 end
 Poll = function(inst, state)
+    if not RelayAuthorized(inst, state) then return end
     API.Tick(inst)
     if inst._my_friend_body ~= state then return end
     if GetTime() >= (state.next_context or math.huge) then
@@ -185,6 +197,12 @@ Poll = function(inst, state)
 end
 function M.Connect(inst, player, code, relay, attempt, dedicated)
     if type(code) ~= "string" or not code:match("^%d%d%d%d%d%d$") then return false, "invalid_pairing_code" end
+    local admin_relay = AdminRelayMode()
+    if admin_relay then
+        if not relay then return false, "relay_client_required" end
+        if not require("my_friend_body_world").IsAdmin(player) then return false, "relay_admin_required" end
+        if code ~= dedicated_pair_code then return false, "pairing_code_mismatch" end
+    end
     local existing = inst ~= nil and inst._my_friend_body or nil
     if existing ~= nil and existing.owner == player and API.CanConnect(inst, player) then
         existing.connection_attempt = attempt
@@ -203,6 +221,7 @@ function M.Connect(inst, player, code, relay, attempt, dedicated)
     if state == nil then return false, reason end
     state.connection_attempt = attempt
     state.relay_owner = relay and player or nil
+    state.admin_relay = admin_relay
     state.dedicated = dedicated == true
     local world = TheWorld
     state.cleanup = function(why)
@@ -251,7 +270,7 @@ end
 
 function M.TryDedicated(friend, code)
     local world = TheWorld
-    if not Dedicated() or world == nil or not world.ismastersim or stopped_worlds[world]
+    if not Dedicated() or AdminRelayMode() or world == nil or not world.ismastersim or stopped_worlds[world]
         or friend == nil or friend._my_friend_body ~= nil then return end
     local now = (GetStaticTime or GetTime)()
     if now < (world._my_friend_dedicated_pair_after or 0) then return end
@@ -317,7 +336,9 @@ function M.AttachAuto(player, enabled, code)
     player:ListenForEvent("playeractivated", activate, world)
     player:DoStaticTaskInTime(1, activate)
 end
-function M.Install(api, enabled)
+function M.Install(api, enabled, options)
+    dedicated_transport = options ~= nil and options.dedicated_transport or nil
+    dedicated_pair_code = options ~= nil and options.pair_code or "321151"
     rpc = enabled ~= false and api or nil
     if enabled == false then
         -- DST assigns numeric IDs by registration order. Keep disabled model
@@ -342,6 +363,7 @@ function M.Install(api, enabled)
         local record = pending[data.id]
         if record == nil or record.owner ~= player or not player:IsValid() or not record.inst:IsValid() then return end
         if not record.closing and (record.inst._my_friend_body ~= record.state or not API.CanConnect(record.inst, player)) then return end
+        if not record.closing and not RelayAuthorized(record.inst, record.state) then return end
         record.callback(type(data.reply) == "table" and data.reply or nil, data.reason)
     end)
     api.AddClientModRPCHandler("MyFriends", "BodyRelay", function(payload)

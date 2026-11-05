@@ -237,6 +237,8 @@ python -B -m tools.companion_bridge --adapter "D:\自己的配置\my_model.py"
 
 服务器和客户端均需更新模组。一台 Windows 电脑运行助手和网页即可为房间处理模型对话；公屏发言身份与运行助手的玩家分开。仍是一个逻辑伙伴、一个控制会话，身体任务一次执行一个；没有多伙伴或动态 3D 语音分发。无需开放公网端口。客户端转发已有定向模拟回归，真实远程客户端仍待实测。
 
+专服设置 `model_dedicated_transport="admin_client"` 后，通过同分片管理员客户端中继，使用服务端管理员标志和配对码校验。专服回环自动配对在此模式下暂停。管理员身份取消或玩家离开时，原连接失效，过期回执不会执行动作。公屏权限继续由真实发言者决定。配对步骤见[管理员网页助手](tools/companion_bridge/README.md#云服使用管理员电脑的网页助手)。
+
 工作区隔离专服已验证此前的 POST 配对、观察/真实移动/动态回执及手动抢占；另验证原跟随模式下实际拾取、走到指定木椅并坐稳、保持休息、再起身执行新拾取，领队关系保留。中文语音只做合成 WAV 识别回环，未录制麦克风。这些不等于 DeepSeek 理解或网页后台稳定性实测；真实麦克风/F9、远程客户端及所有角色/道具组合仍需验证。其余技能有定向桩回归。
 
 ## 原生右键与道具组合能力
@@ -258,7 +260,9 @@ execute_sequence(steps)一次连续执行至多64个展开步骤，步骤包含i
 
 ### 任务准备、选址和局部恢复（2026-11-03）
 
-`query_recipe(kind="craft", count=N)` 一次查询总需求/身上缺额、32 单位内地面优先的取料 `sources(item/count/source/container)`、剩余 `unavailable`、能教会该配方的 `stations`，建筑另带 `placement.sites`。箱子仍受原权限和同平台限制；`supplies_limited` 或容器 `contents_limited` 表示未覆盖所有来源，不能据此断言材料不存在。科技已满足时可以直接制作。需要科技时 `craft` 会自行靠近匹配站，也可明确传入 `station`。
+`query_recipe(kind="craft", count=N)` 一次查询总需求/身上缺额、32 单位内地面优先的取料 `sources(item/count/source/container)`、剩余 `unavailable`、适用的 `stations`，建筑另带 `placement.sites`。箱子仍受原权限和同平台限制；`supplies_limited` 或容器 `contents_limited` 表示未覆盖所有来源，不能据此断言材料不存在。默认省略 `craft.station`，科技已满足时直接制作，需要时自动靠近匹配站。只有需要指定某一站时才传 `station`。
+
+`technology_status.permanently_unlocked` 表示原版 Builder 已记录该配方的解锁，`allows_permanent_unlock` 表示原型制作能否记录解锁。当前角色、工作站或临时科技也可能让 `known` 或 `satisfied` 为真，执行时以实时条件为准。`manufactured=true` 的配方每次都要求可用的匹配工作站。
 
 新增 `query_sites(recipe或item, position?, radius?)`，既可直接查询，也可放入 `query_batch`/`execute_sequence`。搜索中心距伙伴不超过32，半径1～16（默认12）；最多采样64点，返回最多8个有间距的候选及周围建筑。建筑使用原版 `Map:CanDeployRecipeAtPoint`；携带的可部署物使用原版 `deployable:CanDeploy`，整地块部署物先对齐地块中心。不会生成测试实体、预占位置或修改地图。`no_valid_site_in_sample` 只表示本次采样未找到。候选不是布局建议或可达保证，模型须按玩家指定区域和用途选择，无法判断时先问玩家。
 
@@ -382,7 +386,7 @@ API参数纠错：被拒绝的工具不会交给游戏执行；同一模型决�
 
 每次伙伴状态快照的 `world` 提供 `kind`（`surface` 地表、`caves` 洞穴、`unknown` 其他世界）、原始 `prefab`（原版为 `forest` 或 `cave`）和可用时的 `shard_id` 字符串。字段取自伙伴所在分片的主模拟，天气字段沿用原结构；地表海洋和岛屿仍属 `surface`。发言者是否与伙伴同分片另看 `speaker.same_shard`。API 与网页模式共用这组数据。
 
-`observe` 普通实体查询以伙伴为中心，默认 20、最大 32 单位，每页最多 40 个实体。返回 `scope/filter/position/radius/observed_at`、`matched/returned/entities_limited` 及续页用的 `next_offset`。保持范围和过滤条件，传 `offset=next_offset` 续查。移动或世界变化可能改变后续页。查冰箱用 `scope=containers,filter=icebox,contents=true`，filter 匹配容器名或 prefab。内容另受每箱每页 20 条及每次查询总计 64 条限制。读取后续内容时，用 `scope=containers,contents=true,container=容器句柄,contents_offset=contents_next_offset`，服务端会重新检查可见距离和容器权限。
+`observe` 普通实体查询以伙伴为中心，默认和最大均为 32 单位（约 8 块地皮），可传较小半径，每页最多 40 个实体。返回 `scope/filter/position/radius/observed_at`、`matched/returned/entities_limited` 及续页用的 `next_offset`。保持范围和过滤条件，传 `offset=next_offset` 续查。移动或世界变化可能改变后续页。查冰箱用 `scope=containers,filter=icebox,contents=true`，filter 匹配容器名或 prefab。内容另受每箱每页 20 条及每次查询总计 64 条限制。读取后续内容时，用 `scope=containers,contents=true,container=容器句柄,contents_offset=contents_next_offset`，服务端会重新检查可见距离和容器权限。地形网格查询仍默认半径 8、最大 16。
 
 批查预算总计约 18 KB，独立 observe 也按 18 KB 裁剪。超预算时先精简详情，再缩减箱内物品并更新 `contents_next_offset`，优先保留容器身份和位置。仍放不下时缩短实体页并更新 `next_offset`。`details_limited/contents_limited/truncated/limited` 表示数据不完整。同一批请求的同半径实体查询与配方查询共享一次实时发现。配方查询先找缺额相关物资，再限制对外返回数量，普通展示页不会挡住后面的相关物资。
 
@@ -397,8 +401,23 @@ API参数纠错：被拒绝的工具不会交给游戏执行；同一模型决�
 ## 建造、赶路与接续任务
 
 - `craft(mode="prepare")` 用原版 Builder 预制作，扣一次材料并保留一份待放建筑。可带 `station` 指定查到的科技站。到目的地选址后用 `craft(mode="place", position=…)` 落地。已有明确近处坐标时默认 `auto` 连做两步。受阻时已准备的建筑可换点重试。快照 `prepared_builds` 和配方 `prepared` 显示余下待放项。选址 `layout={ring:N}` 在给定半径上校验一圈位置并保留被阻挡的格。
-- `snapshot.mobility` 显示骑乘、坐骑和船/陆地状态。长途 `move_to` 复用跟随的导航分段。上船和上岸沿用原版跳船，受船岸间距、地形和生存约束。到达后结束该次移动。
+- `snapshot.mobility` 和附近目标的 `surface` 区分 `land`（含可走的码头）、`boat`、`water`、`unknown`，`platform` 是当前船的句柄。目标的 `distance` 是采样时距伙伴的水平距离。用 `observe(target=句柄,radius=32)` 刷新单个目标，无需重新扫周围。目标超出范围或被收起时返回 `target_out_of_view`。
+- `move_to` 复用长途导航，可指定陆地/船面位置、目标或 `shore`。船面坐标随船移动。已知浮动物品直接 `pickup`，游戏按原版拾取距离选择可走岸边、码头或船面并尝试原版跳船。其他普通近身动作共享陆地/船面接近，原有权限、距离与原版动作条件照常校验。`no_surface_in_reach` 表示目标附近无可站立点，`no_boarding_point`/`boat_unreachable` 表示当前过不去。远海需要船或目标先移近，`move_to` 不负责划船。
 - 共享储物如恶液箱返回实体开口和实际内容。取物时传 `pickup.container`。无限堆叠按本次数量拆分，剩余物品留在原槽。
 - 玩家描述的 `ghost` 用于区分复活和物品交付。普通移交拒绝鬼魂，`revive` 使用游戏的告密之心复活动作和既有鬼魂就绪检查。
 - 空锅可分别调用 `cook(wait=false)` 开火，再用 `harvest(wait=true, recipe=…)` 等待并收取各锅。最新回执中的 `started`、`prepared`、`placed` 分别对应不同阶段。
 - 同一游戏连接中，助手按发言者保存有界的 `last_task`，包含上一任务的目标、剩余和精简回执，供明确追问或续做。活跃任务的 `task_plan` 可保留句柄，跨轮任务笔记不保存结构化句柄绑定。API 连续工具调用只追加变化的快照字段，网页每轮仍有完整快照。
+
+## 连续任务、定向感知与句柄（2026-11-05）
+
+已确定的多步任务默认交给 `execute_sequence`，游戏端逐步执行，只在整段完成、首个失败或中断时回传终态。步骤内可查询，并用 `$步骤ID.字段` 引用实际结果；无需为掉落句柄和选址各等一次模型。`work(drop_prefab="dug_grass")` 只绑定当前目标在伙伴本次原生劳动动作中发出的对应掉落，返回 `drop.handle`；缺失则报 `expected_drop_missing`，不会替拿附近旧物。监听在结束、失败和取消时清理。掉落被拿走、移除或合并后，原实体句柄可能失效，按实际库存/地面状态补查。
+
+移植普通草可一次提交：`work(DIG,drop_prefab=dug_grass)` → `pickup(target=$dig.drop.handle,count=1)` → `query_sites(item=$take.items.1.handle,position=指定点,exact=true)` → `perform_action(DEPLOY,POINT,item=$take.items.1.handle,position=$site.sites.1.position)`。步骤 ID 依次为 `dig/take/site/plant`。没有合法位点或取放数量不足会停在相应步骤，回传已完成项和实际缺额；下一轮只处理未完成部分。仍保留权限、工具、生存和 busy 边界。
+
+`observe(action="CHOP",target_type="tree")` 在分页之前筛选可砍的树；其他劳动可用 `MINE/DIG/HAMMER/PICK/HARVEST`，`target_type` 当前只支持 `tree`。实体补充 `distance/work_left/tree`，物品工具补充原生 `tool_actions`。寻找资源应使用实时定向观察，20 单位、每类 12 条的环境摘要不证明附近没有树。只要求砍两棵树且工具齐备时，可以直接 `work_many(action="CHOP",target_type="tree",count=2)`，默认在 32 单位内按距离选目标，完成两棵即停止，失败回传 `requested/targets/remaining`。省略 `count` 保留原尽力处理已发现目标的语义；不自动拾取掉落。
+
+`query_sites(exact=true,position=…)` 只检查指定点，地皮部署物仍按原生地块中心吸附；省略 `exact` 时会先检查指定中心，再搜索周围候选。`requested_site` 提供 `valid/reason`、地皮 `tile`、`surface/passable/plantable`（原版接口可用时）、`ground_target_blocked`、原生最小间距，以及最近四个 `nearby_obstacles` 的位置、距离、部署间距和物理半径。`obstacles_matched/obstacles_limited/obstacles_radius` 说明上下文边界；附近对象不一定是真正阻挡物，最终结论仍来自原版建筑/部署检查。执行前再次检查，`placement_blocked` 回执附现场信息；已拾取物和已预制作建筑保留供恢复。
+
+句柄取消原来的 90 秒时间期限，同一连接内实体仍有效且未被缓存淘汰时可持续使用。缓存仍最多 2048 条；已接受序列固定所引用的有效身份，即使普通缓存淘汰也能在该序列中解析。实体移除、堆叠合并或重新连接仍可能使旧句柄失效；移动、位置变化和权限变化由每次动作重新校验，不会把旧句柄改指向附近另一件物品。句柄、固定身份和序列引用不进入存档。
+
+定向桩覆盖完整移植及缺掉落中止、拥挤场景找树、定量劳动及目标变化、精确落点和执行时受阻、长时间句柄及缓存淘汰、助手参数接受与纠错。未启动游戏、未调用真实模型 API；游戏动画、拥挤存档中的体验及模型是否遵循组合策略仍需实测。更新后重启助手并重新进入世界。

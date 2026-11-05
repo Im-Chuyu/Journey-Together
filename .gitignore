@@ -11,6 +11,14 @@ tools/companion_bridge/.local/
 AssistantAPI.json
 AssistantAPI.json.*
 
+# Python bytecode, test caches and coverage output
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+
 # Editor and OS files
 .vscode/
 .idea/

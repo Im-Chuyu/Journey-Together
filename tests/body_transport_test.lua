@@ -244,6 +244,65 @@ Test("dedicated code mismatch stops retries until an explicit restart of pairing
     API.Close(inst, "done")
     TheNet, ThePlayer = net, local_player
 end)
+Test("dedicated admin relay uses local client HTTP and keeps guest chat identity", function()
+    local inst, admin, requests = Setup()
+    local net, local_player = TheNet, ThePlayer
+    local guest = fixture.entity("wilson")
+    guest.userid, guest.isplayer = "KU_relay_guest", true
+    AllPlayers = {admin, guest}
+    inst.components.follower.GetLeader = function() return guest end
+    TheWorld.IsValid = function() return true end
+    local is_admin = true
+    TheNet, ThePlayer = {
+        IsDedicated = function() return true end,
+        GetClientTableForUser = function(_, userid) return {admin = is_admin and userid == admin.userid} end,
+    }, nil
+    local server, client, wire, notices = {}, {}, {}, {}
+    Bridge.Install({
+        AddModRPCHandler = function(_, name, fn) server[name] = fn end,
+        AddClientModRPCHandler = function(_, name, fn) client[name] = fn end,
+        GetClientModRPC = function(_, name) return name end,
+        GetModRPC = function(_, name) return name end,
+        SendModRPCToClient = function(name, users, payload)
+            if name == "BodyRelay" then
+                assert(#users == 1 and users[1] == admin.userid)
+                wire[#wire + 1] = payload
+            else notices[#notices + 1] = json.decode(payload) end
+        end,
+        SendModRPCToServer = function(name, payload) server[name](admin, payload) end,
+    }, true, {dedicated_transport = "admin_client", pair_code = "481529"})
+    assert(not Bridge.TryDedicated(inst, "481529") and #requests == 0)
+    server.BodyControl(guest, "connect", json.encode({code = "481529"}))
+    assert(not inst._my_friend_body and notices[#notices].reason == "relay_admin_required")
+    server.BodyControl(admin, "connect", json.encode({code = "123456"}))
+    assert(not inst._my_friend_body and notices[#notices].reason == "pairing_code_mismatch")
+    server.BodyControl(admin, "connect", json.encode({code = "481529"}))
+    local state = assert(inst._my_friend_body)
+    assert(state.admin_relay and state.owner == admin and #wire == 1 and #requests == 0)
+    client.BodyRelay(wire[1])
+    assert(requests[1].url == "http://127.0.0.1:18766/v1/game/connect")
+    Reply(requests[1], {token = "admin-relay-token"})
+    client.BodyRelay(wire[2]); Reply(requests[2], {})
+    assert(state.ready and API.Input(inst, guest, inst:GetDisplayName() .. "，过来", nil, true))
+    state.poll.fn(); client.BodyRelay(wire[3])
+    local input
+    for _, event in ipairs(requests[3].data.events) do
+        if event.kind == "player_input" then input = event; break end
+    end
+    assert(input and input.speaker.userid == guest.userid and input.can_work == true)
+    Reply(requests[3], {commands = {{request_id = "guest-work", source = "user", turn_id = input.turn_id,
+        skill = "move_to", arguments = {position = {x = 3, z = 0}}}}})
+    assert(state.active.issuer == guest)
+    fixture.perform(inst)
+    assert(inst.x == 3 and state.requests["guest-work"].status == "completed")
+    state.poll.fn(); client.BodyRelay(wire[4])
+    is_admin = false
+    Reply(requests[4], {commands = {{request_id = "revoked", source = "user", turn_id = input.turn_id,
+        skill = "move_to", arguments = {position = {x = 9, z = 0}}}}})
+    assert(inst._my_friend_body == nil and not state.requests.revoked and inst.x == 3)
+    assert(notices[#notices].reason == "relay_admin_required")
+    TheNet, ThePlayer = net, local_player
+end)
 Test("opt-in local player auto-connect wiring receives success and reconnects after a real session loss", function()
     local inst, player, requests = Setup(); local previous = ThePlayer; ThePlayer = player
     Bridge.Install({AddModRPCHandler = function() end, AddClientModRPCHandler = function() end,

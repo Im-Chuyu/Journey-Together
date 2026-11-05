@@ -29,7 +29,7 @@ require("my_friend_body_bridge").Install({
     SendModRPCToServer = SendModRPCToServer, GetModRPC = GetModRPC,
     AddShardModRPCHandler = AddShardModRPCHandler, SendModRPCToShard = SendModRPCToShard,
     GetShardModRPC = GetShardModRPC,
-}, model_enabled)
+}, model_enabled, {dedicated_transport = GetModConfigData("model_dedicated_transport"), pair_code = model_pair_code})
 -- The local host connects directly; remote clients use authenticated RPC.
 _G.c_myfriend_ai = function(operation, code)
     if not model_enabled then _G.print("[MyFriends] AI model mode is disabled."); return false end

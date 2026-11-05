@@ -173,10 +173,17 @@ function M.IsStepClear(inst, a, b, caps, obstacles, allow_far)
     elseif not M.IsClear(a, b, caps) then
         return false
     end
+    return M.IsPhysicalStepClear(inst, a, b, obstacles)
+end
+
+-- Shared by land steering and deck movement after checking their own terrain.
+function M.IsPhysicalStepClear(inst, a, b, obstacles, ignored)
+    local dx, dz = b.x - a.x, b.z - a.z
+    local lengthsq = dx * dx + dz * dz
     local entities = obstacles or TheSim:FindEntities((a.x + b.x) / 2, 0,
         (a.z + b.z) / 2, math.sqrt(lengthsq) / 2 + 5, nil, {"INLIMBO", "FX"})
     for _, entity in ipairs(entities) do
-        if IsObstacle(inst, entity) then
+        if entity ~= ignored and IsObstacle(inst, entity) then
             local p = entity:GetPosition()
             -- Physics:GetRadius() is a bounding radius. For structures it is
             -- often a little wider than the actual collision shape, which
@@ -539,10 +546,10 @@ end
 
 -- Call only for a leg already checked by steering/Unstick. Preserve native
 -- locomotion and arrival, without asking its coarse grid to reroute the leg.
-function M.MoveToPoint(inst, point, run)
+function M.MoveToPoint(inst, point, run, direct)
     local locomotor = inst.components.locomotor
-    if inst:GetCurrentPlatform() ~= nil or inst:HasTag("playerghost")
-        or DistanceSq(inst:GetPosition(), point) > 32^2 then
+    if not direct and (inst:GetCurrentPlatform() ~= nil or inst:HasTag("playerghost")
+        or DistanceSq(inst:GetPosition(), point) > 32^2) then
         locomotor:GoToPoint(point, nil, run)
         return
     end

@@ -120,6 +120,27 @@ Test("localized recipe lookup and failed craft return current native counts, mod
     inst.components.builder.ingredientmod = .5
     assert(Call(inst, p, "query_recipe", {query = "researchlab"}).result.ingredients[3].required == 4)
 end)
+Test("recipe technology distinguishes current access, saved unlocks and station manufacturing", function()
+    local inst, p = Setup()
+    local builder = inst.components.builder
+    local recipe = AllRecipes.researchlab
+    builder.KnowsRecipe = function() return true end
+    builder.recipes = {}
+    local function Status()
+        return Call(inst, p, "query_recipe", {query = recipe.name}).result.technology_status
+    end
+    local technology = Status()
+    assert(technology.known and technology.satisfied and technology.permanently_unlocked == false)
+    assert(technology.allows_permanent_unlock and technology.manufactured == false)
+    builder.recipes[1] = recipe.name
+    assert(Status().permanently_unlocked == true)
+    builder.recipes = {}
+    recipe.nounlock = true
+    technology = Status()
+    assert(technology.allows_permanent_unlock == false and technology.permanently_unlocked == false)
+    recipe.manufactured = true
+    assert(Status().manufactured == true)
+end)
 Test("closed cooking and ready pots stay usable, preserve permissions and return product handles", function()
     local inst, p, state = Setup(); local pot = fixture.entity("cookpot", 3); local c = fixture.storage(pot, true)
     pot.components.stewer = {IsCooking = function() return pot.cooking end, IsDone = function() return pot.done end}

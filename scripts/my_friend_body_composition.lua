@@ -18,10 +18,10 @@ local function LimitScan(out,budget)
     local fields={handle=true,prefab=true,name=true,position=true,kind=true,count=true,
         accessible=true,capacity=true,cooking=true,pickable=true,carried=true,equipped=true,slot=true,can_store=true,
         container=true,location=true,backpack=true,delivery=true,cooking_tags=true,durability=true,
-        can_pick=true,pick_product=true,pick_count=true,work=true,prototyper=true,interactions=true,
+        can_pick=true,pick_product=true,pick_count=true,work=true,work_left=true,tree=true,tool_actions=true,prototyper=true,interactions=true,
         soil=true,plantable=true,deployable=true,terraformer=true,tendable=true,watersource=true,
         burning=true,burnable=true,building=true,boss=true,alive=true,health=true,ghost=true,
-        platform=true,boat=true,shared_storage=true,reviver=true,
+        distance=true,surface=true,platform=true,boat=true,shared_storage=true,reviver=true,
         contents=true,contents_limited=true,contents_matched=true,contents_offset=true,contents_next_offset=true,details_limited=true}
     for _,entity in ipairs(out.entities)do
         entity.details_limited=true
@@ -225,6 +225,8 @@ end
 function M.FinishChild(inst,child,status,result,reason)
     local parent=child.parent
     local step=parent.steps[parent.index]
+    if status == "completed" and result ~= nil and result.partial and type(result.remaining) == "number"
+        and result.remaining > 0 then status, reason = "failed", "quantity_incomplete" end
     parent.records[#parent.records+1]={id=step.id,skill=child.skill,status=status,result=result,reason=reason,arguments=Copy(child.args)}
     parent.by_id[step.id]=parent.records[#parent.records]
     local function Pin(value)
@@ -254,26 +256,22 @@ function M.GetAction(inst,state,job)
     local args,reason=Resolve(job,step.arguments or {})
     job.stage="step:"..step.id
     if args==nil then
-        job.child={id=job.id,parent=job,skill=step.skill,status="running"}
+        job.child={id=job.id,parent=job,skill=step.skill,args=step.arguments,status="running"}
         M.FinishChild(inst,job.child,"failed",nil,reason);return
-    end
-    -- Pins were validated when accepting the sequence; refresh their leases,
-    -- never resurrect a lost entity or a handle expired before acceptance.
-    for handle,guid in pairs(job.pins)do
-        local e=(Ents or {})[guid];local record=state.handles[handle]
-        if e~=nil and e:IsValid() and record~=nil and record.guid==guid then record.expires=GetTime()+90 end
     end
     local child={id=job.id,request_id=job.request_id,parent=job,skill=step.skill,args=args,status="running",
         origin=inst:GetPosition(),deadline=job.deadline,issuer=job.issuer}
     job.child=child
     if READ[step.skill]then
         local ok,result,why=pcall(Read,inst,state,step.skill,args)
-        M.FinishChild(inst,child,ok and result~=nil and "completed" or "failed",ok and result or nil,not ok and "query_failed" or why)
+        local no_site = ok and result ~= nil and step.skill == "query_sites" and #result.sites == 0
+        M.FinishChild(inst,child,ok and result~=nil and not no_site and "completed" or "failed",ok and result or nil,
+            not ok and "query_failed" or no_site and (result.reason or "no_valid_site_in_sample") or why)
         if state.active==job then return M.GetAction(inst,state,job)end
         return
     end
-    local ok,prepared,why=pcall(require("my_friend_body_actions").Prepare,inst,state,child)
-    if not ok or not prepared then M.FinishChild(inst,child,"failed",nil,ok and why or "step_prepare_failed");return end
+    local ok,prepared,why,details=pcall(require("my_friend_body_actions").Prepare,inst,state,child)
+    if not ok or not prepared then M.FinishChild(inst,child,"failed",ok and details or nil,ok and why or "step_prepare_failed");return end
     if child.delegated~=nil then M.FinishChild(inst,child,"failed",nil,"requires_standalone_action");return end
     return M.GetAction(inst,state,job)
 end

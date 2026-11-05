@@ -21,7 +21,7 @@ function M.New(player, code, connect, on_retry)
     function self:Result(status, reason, attempt)
         if not self.enabled or not self:Valid() then return end
         if attempt ~= nil and attempt ~= self.serial then return end
-        if reason == "pairing_code_mismatch" then
+        if reason == "pairing_code_mismatch" or reason == "relay_admin_required" then
             self:Stop()
         elseif status == "connected" then
             Cancel(self.retry); Cancel(self.timeout)

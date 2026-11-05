@@ -156,7 +156,7 @@ end)
 Test("a container moving into range without an event is visible on the next query",function()
  local inst,p,state=F.setup()
  local fridge=F.entity("icebox",24);F.storage(fridge,true)
- local args={scope="containers",filter="icebox"}
+ local args={scope="containers",filter="icebox",radius=20}
  assert(API.Observation.Scan(inst,state,args).matched==0)
  fridge.x=18
  local result=API.Observation.Scan(inst,state,args)
@@ -171,7 +171,7 @@ Test("large container contents continue by exact handle and respect current perm
  for n=1,25 do F.item("stack_"..n,box) end
  local handle=API.Observation.Handle(state,box)
  TheSim.FindEntities=function()error("known container must not rescan nearby entities")end
- local args={scope="containers",container=handle,contents=true}
+ local args={scope="containers",container=handle,contents=true,radius=20}
  local first=F.call(inst,p,"observe",args).result.entities[1]
  assert(first.handle==handle and #first.contents==20 and first.contents_next_offset==20)
  args.contents_offset=first.contents_next_offset
@@ -197,5 +197,109 @@ Test("later pages in a large read batch do not invalidate the first visible hand
  local result=F.call(inst,p,"query_batch",{queries=queries}).result
  local first=result.results[1].result.entities[1]
  assert(state.handle_serial>=240 and API.Observation.Resolve(state,first.handle)~=nil)
+end)
+Test("work-filtered scans find trees behind a crowded generic entity page",function()
+    local inst,p,state=F.setup()
+    for i=1,60 do F.item("twigs",nil).x=1 end
+    local a,b=F.entity("evergreen",14),F.entity("deciduoustree",16)
+    for _,tree in ipairs({a,b})do
+        tree.tags.tree=true
+        tree.components.workable={workleft=10,CanBeWorked=function()return true end,GetWorkAction=function()return ACTIONS.CHOP end}
+    end
+    local result=F.call(inst,p,"query_batch",{queries={
+        {id="wide",skill="observe",arguments={scope="all"}},
+        {id="trees",skill="observe",arguments={action="CHOP",target_type="tree"}},
+    }}).result
+    assert(result.results[1].result.entities_limited)
+    local trees=result.results[2].result
+    assert(trees.radius==32 and trees.matched==2 and #trees.entities==2)
+    assert(trees.entities[1].tree and trees.entities[1].work=="CHOP" and trees.entities[1].distance==14)
+end)
+Test("uproot, bind the actual drop, pick up, check a precise point and replant run in one sequence",function()
+    local inst,p,state=F.setup()
+    local plant=F.entity("grass",2)
+    plant.components.workable={CanBeWorked=function()return true end,GetWorkAction=function()return ACTIONS.DIG end}
+    local shovel=F.item("shovel",inst);F.armor(shovel,"hands");shovel.equipped="hands";shovel.tool_action=ACTIONS.DIG
+    local dig,deploy=ACTIONS.DIG.fn,ACTIONS.DEPLOY
+    local output,planted
+    ACTIONS.DEPLOY={id="DEPLOY",fn=function(action)
+        assert(action.invobject==output and action.point.x==8 and action.point.z==4)
+        output.valid=false;planted=F.entity("grass",8);planted.z=4;return true
+    end}
+    ACTIONS.DIG.fn=function(action)
+        F.item("cutgrass",nil).x=2
+        output=F.item("dug_grass",nil);output.x=2
+        output.components.deployable={CanDeploy=function(_,point)return point.x==8 and point.z==4 end}
+        output.CollectActions=function(_,mode,_,point,actions)
+            if mode=="POINT" and output.components.deployable:CanDeploy(point)then actions[#actions+1]=ACTIONS.DEPLOY end
+        end
+        inst.bufferedaction=action
+        plant:PushEvent("loot_prefab_spawned",{loot=output})
+        inst.bufferedaction=nil
+        plant.valid=false
+        return true
+    end
+    local job=F.call(inst,p,"execute_sequence",{steps={
+        {id="dig",skill="work",arguments={target=H(state,plant),action="DIG",drop_prefab="dug_grass"}},
+        {id="take",skill="pickup",arguments={target="$dig.drop.handle",count=1}},
+        {id="site",skill="query_sites",arguments={item="$take.items.1.handle",position={x=8,z=4},exact=true}},
+        {id="plant",skill="perform_action",arguments={item="$take.items.1.handle",action="DEPLOY",mode="POINT",position="$site.sites.1.position"}},
+    }})
+    Drain(inst)
+    local result=state.jobs[job.action_id]
+    assert(result.status=="completed" and result.result.completed==4 and planted~=nil)
+    assert(result.result.steps[1].result.drop.prefab=="dug_grass" and Terminals(state,job.action_id)==1)
+    assert(#(plant.events.loot_prefab_spawned or {})==0)
+    ACTIONS.DIG.fn,ACTIONS.DEPLOY=dig,deploy
+end)
+Test("a blocked exact placement stops at its check and leaves the acquired plant available",function()
+    local inst,p,state=F.setup()
+    local plant=F.item("dug_sapling",nil)
+    plant.components.deployable={CanDeploy=function()return false end}
+    local obstacle=F.entity("boulder",8);obstacle.tags.boulder=true
+    local job=F.call(inst,p,"execute_sequence",{steps={
+        {id="take",skill="pickup",arguments={target=H(state,plant),count=1}},
+        {id="site",skill="query_sites",arguments={item="$take.items.1.handle",position={x=8,z=0},exact=true}},
+        {id="drop",skill="drop",arguments={item="$take.items.1.handle"}},
+    }})
+    Drain(inst)
+    local result=state.jobs[job.action_id].result
+    assert(result.failed_step=="site" and result.completed==1 and plant.owner==inst)
+    local site=result.steps[2].result.requested_site
+    assert(not site.valid and site.position.x==8 and site.nearby_obstacles[1].prefab=="boulder")
+end)
+Test("missing expected work loot stops the sequence without selecting an older nearby plant",function()
+    local inst,p,state=F.setup()
+    local old=F.item("dug_grass",nil);old.x=2
+    local plant=F.entity("grass",2)
+    plant.components.workable={CanBeWorked=function()return true end,GetWorkAction=function()return ACTIONS.DIG end}
+    local shovel=F.item("shovel",inst);F.armor(shovel,"hands");shovel.equipped="hands";shovel.tool_action=ACTIONS.DIG
+    local previous=ACTIONS.DIG.fn
+    ACTIONS.DIG.fn=function()plant.valid=false;F.item("cutgrass",nil).x=2;return true end
+    local job=F.call(inst,p,"execute_sequence",{steps={
+        {id="dig",skill="work",arguments={target=H(state,plant),action="DIG",drop_prefab="dug_grass"}},
+        {id="take",skill="pickup",arguments={target="$dig.drop.handle",count=1}},
+    }})
+    Drain(inst)
+    local result=state.jobs[job.action_id]
+    assert(result.status=="failed" and result.reason=="expected_drop_missing" and result.result.failed_step=="dig")
+    assert(result.result.steps[1].result.work_units==1 and old.owner==nil)
+    assert(#(plant.events.loot_prefab_spawned or {})==0 and Terminals(state,job.action_id)==1)
+    ACTIONS.DIG.fn=previous
+end)
+Test("a partial pickup stops the sequence with the real quantity instead of running delivery",function()
+    local inst,p,state=F.setup()
+    local item=F.item("rocks",nil,5)
+    inst.components.inventory.CanAcceptCount=function(_,_,count)return math.min(2,count)end
+    local job=F.call(inst,p,"execute_sequence",{steps={
+        {id="take",skill="pickup",arguments={target=H(state,item),count=4}},
+        {id="deliver",skill="drop",arguments={item="$take.items.1.handle"}},
+    }})
+    Drain(inst)
+    local result=state.jobs[job.action_id]
+    assert(result.status=="failed" and result.reason=="quantity_incomplete" and result.result.failed_step=="take")
+    local partial=result.result.steps[1].result
+    assert(partial.count==2 and partial.remaining==2 and partial.partial and item.size==3)
+    assert(#result.result.steps==1 and API.Observation.Resolve(state,partial.items[1].handle).owner==inst)
 end)
 print(passed.." composition tests passed")

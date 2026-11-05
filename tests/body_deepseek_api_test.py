@@ -233,15 +233,35 @@ class APITests(unittest.TestCase):
             store.close()
 
     def test_argument_correction_is_bounded_and_keeps_specific_field_error(self):
-        bad = response("work_many", {"action": "PICK", "count": 6})
+        bad = response("work_many", {"action": "PICK", "count_wrong": 6})
         with patch.object(self.adapter, "_post", return_value=bad) as post:
             with self.assertRaises(ToolArgumentError) as error:
                 self.adapter.decide(self.context)
-        self.assertIn("work_many.arguments.count", str(error.exception))
+        self.assertIn("work_many.arguments.count_wrong", str(error.exception))
         self.assertEqual(error.exception.category, "unknown_field")
         self.assertEqual(post.call_count, 2)
         self.assertEqual(self.adapter.messages, [])
         self.assertIsNone(self.adapter.pending)
+
+    def test_task_batch_and_runtime_placement_fields_are_accepted_without_model_round_trips(self):
+        from tools.companion_bridge.deepseek_api import validate
+        schemas = {tool["name"]: tool["parameters"] for tool in TOOLS}
+        operations = [
+            ("observe", {"action": "CHOP", "target_type": "tree"}),
+            ("work_many", {"action": "CHOP", "target_type": "tree", "count": 2}),
+            ("work", {"action": "DIG", "target": "e1", "drop_prefab": "dug_grass"}),
+            ("pickup", {"target": "$dig.drop.handle", "count": 1}),
+            ("query_sites", {"item": "$take.items.1.handle", "position": {"x": 8, "z": 4}, "exact": True}),
+        ]
+        for name, arguments in operations:
+            with self.subTest(skill=name):
+                validate(arguments, schemas[name])
+        steps = [{"id": step_id, "skill": name, "arguments": arguments}
+                 for step_id, (name, arguments) in zip(("dig", "take", "site"), operations[2:])]
+        decision, pending, _ = self.adapter._decision(response("execute_sequence", {"steps": steps}),
+                                                     self.context, schemas)
+        self.assertEqual(decision["arguments"]["steps"], steps)
+        self.assertEqual(pending["function"]["name"], "execute_sequence")
 
     def test_cancel_during_argument_correction_discards_the_fixed_action(self):
         replies = iter([response("drop", {"item": "e1", "count_wrong": 1}), None])

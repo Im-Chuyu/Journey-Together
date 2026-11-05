@@ -117,4 +117,47 @@ Test("batch discovery stays bounded and never expands to newly spawned items", f
     local job=state.jobs[accepted.action_id]
     assert(scans()==1 and job.result.targets==100 and job.result.limited and late.owner==nil)
 end)
+Test("counted tree work finds and completes exactly the nearest two trees within 32 units", function()
+    local inst,p,state=f.setup(); local trees={}
+    for n,x in ipairs({14,24,30}) do
+        local tree=f.entity("evergreen",x); tree.tags.tree=true; tree.left=2
+        tree.components.workable={CanBeWorked=function()return tree.left>0 end,GetWorkAction=function()return ACTIONS.CHOP end}
+        trees[n]=tree
+    end
+    local other=f.entity("choppable_object",1); other.left=2
+    other.components.workable={CanBeWorked=function()return true end,GetWorkAction=function()return ACTIONS.CHOP end}
+    local axe=f.item("axe",inst); f.armor(axe,"hands"); axe.equipped="hands"; axe.tool_action=ACTIONS.CHOP
+    Scan({trees[3],other,trees[2],trees[1]})
+    local accepted=f.call(inst,p,"work_many",{action="CHOP",target_type="tree",count=2})
+    Drain(inst)
+    local job=state.jobs[accepted.action_id]
+    assert(job.status=="completed" and job.result.requested==2 and job.result.targets==2 and job.result.remaining==0)
+    assert(job.result.work_units==4 and trees[1].left==0 and trees[2].left==0 and trees[3].left==2 and other.left==2)
+    assert(Terminals(state,job.id)==1)
+end)
+Test("counted work reports the actual shortfall when fewer targets are available", function()
+    local inst,p,state=f.setup(); local tree=f.entity("evergreen",4); tree.tags.tree=true; tree.left=1
+    tree.components.workable={CanBeWorked=function()return tree.left>0 end,GetWorkAction=function()return ACTIONS.CHOP end}
+    local axe=f.item("axe",inst); f.armor(axe,"hands"); axe.equipped="hands"; axe.tool_action=ACTIONS.CHOP
+    Scan({tree})
+    local accepted=f.call(inst,p,"work_many",{action="CHOP",target_type="tree",count=2})
+    Drain(inst)
+    local job=state.jobs[accepted.action_id]
+    assert(job.status=="failed" and job.reason=="insufficient_targets" and job.result.partial)
+    assert(job.result.targets==1 and job.result.remaining==1 and job.result.work_units==1)
+end)
+Test("a target changing while the tool is equipped is not counted as completed work", function()
+    local inst,p,state=f.setup(); local tree=f.entity("evergreen",4); tree.tags.tree=true; tree.left=1
+    tree.components.workable={CanBeWorked=function()return tree.left>0 end,GetWorkAction=function()return ACTIONS.CHOP end}
+    local axe=f.item("axe",inst); f.armor(axe,"hands"); axe.tool_action=ACTIONS.CHOP
+    Scan({tree})
+    local accepted=f.call(inst,p,"work_many",{action="CHOP",target_type="tree",count=1})
+    f.perform(inst)
+    assert(axe.equipped=="hands" and tree.left==1)
+    tree.left=0
+    Drain(inst)
+    local job=state.jobs[accepted.action_id]
+    assert(job.status=="failed" and job.reason=="target_not_workable")
+    assert(job.result.targets==0 and job.result.remaining==1 and job.result.work_units==0)
+end)
 print(passed .. " body batch tests passed")
