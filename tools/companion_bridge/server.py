@@ -148,6 +148,9 @@ class Store:
                     self._invalidate_locked()
                     self.notify("task_replaced", reason="manual_command")
                     continue
+                if event.get("kind") == "input_broadcast_failed":
+                    self.notify("input_broadcast_failed", input_id=event.get("input_id"))
+                    continue
                 if event.get("kind") == "ambient_context":
                     ambient_due = True
                     continue
@@ -271,9 +274,15 @@ class Store:
             cancel()
         self.condition.notify_all()
 
-    def submit(self, text, source="user"):
+    def submit(self, text, source="user", *, broadcast=False):
         if not isinstance(text, str) or source != "ambient" and not text.strip() or len(text.encode()) > 1200:
             raise BridgeError("输入文字为空或过长")
+        if type(broadcast) is not bool:
+            raise BridgeError("公屏同步设置必须为布尔值")
+        if broadcast:
+            text = "".join(" " if ord(c) < 32 or ord(c) == 127 else c for c in text).strip()
+            if not text or len(text) > 150:
+                raise BridgeError("同步到游戏公屏的消息最多150个字符；可缩短内容或关闭公屏同步")
         with self.condition:
             if not self.connected:
                 raise BridgeError("请先在游戏中配对连接")
@@ -281,9 +290,11 @@ class Store:
                 if len(self.inputs) >= 16:
                     raise BridgeError("待发送消息过多，请等待游戏接收")
                 input_id = secrets.token_hex(12)
-                self.inputs[input_id] = {"id": input_id, "text": text.strip()}
+                self.inputs[input_id] = {"id": input_id, "text": text.strip(), "broadcast": broadcast}
                 self.condition.notify_all()
                 return input_id
+            if broadcast:
+                raise BridgeError("公屏同步需要更新游戏模组并重新连接")
             self._start_turn_locked(text.strip(), source)
 
     def _receive_input_locked(self, event):
@@ -597,7 +608,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not isinstance(token, str) or not token.isascii() or not hmac.compare_digest(token, store.client_token):
                     raise BridgeError("本机客户端凭据不正确")
                 if self.path == "/v1/client/utterance":
-                    store.submit(data.get("text")); result = {"accepted": True}
+                    store.submit(data.get("text"), broadcast=data.get("broadcast", False)); result = {"accepted": True}
                 elif self.path == "/v1/client/call":
                     result = {"request_id": store.direct_call(data.get("skill"), data.get("arguments", {}))}
                 else:

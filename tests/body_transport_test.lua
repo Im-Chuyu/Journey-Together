@@ -349,6 +349,84 @@ Test("assistant text is validated once by native names and carries a bound input
     assert(rejected and unbound)
     API.Close(inst,"done")
 end)
+Test("assistant public chat uses the actual local player's native Say once and never repeats model input",function()
+    local inst,p,requests=Setup()
+    local previous,previous_player=TheNet,ThePlayer
+    local previous_possess=package.loaded.my_friend_possess
+    package.loaded.my_friend_possess={GetCommandTarget=function()return nil end}
+    local Chat=require("my_friend_chat")
+    local said={}
+    ThePlayer=p
+    TheNet={Say=function(_,text,whisper)
+        assert(not whisper and ThePlayer==p)
+        said[#said+1]=text
+        assert(Chat.Dispatch(p,text,"native"))
+        Chat.Dispatch(p,text,"rpc")
+    end}
+    Bridge.Install({AddModRPCHandler=function()end,AddClientModRPCHandler=function()end,
+        SendModRPCToClient=function()error("host must not RPC itself")end})
+    local state=Connect(inst,p,requests)
+    local input={id="public-1",text="温蒂你好一起走",broadcast=true}
+    Reply(requests[2],{inputs={input}})
+    assert(#said==1 and said[1]==input.text)
+    assert(state.public_echoes[input.id].confirmed)
+    local accepted=0;for _,event in ipairs(state.events)do if event.kind=="player_input"then accepted=accepted+1 end end
+    assert(accepted==1)
+    state.poll.fn();Reply(requests[#requests],{inputs={input}})
+    assert(#said==1)
+    fixture.advance(1)
+    state.poll.fn();Reply(requests[#requests],{inputs={{id="private",text="不要广播",broadcast=false}}})
+    assert(#said==1)
+    fixture.advance(1)
+    state.poll.fn();Reply(requests[#requests],{inputs={
+        {id="invalid-flag",text="不要广播",broadcast="true"},
+        {id="invalid-text",text=string.rep("树",151),broadcast=true}}})
+    assert(#said==1)
+    local reasons={};for _,event in ipairs(state.events)do if event.kind=="input_rejected"then reasons[event.reason]=true end end
+    assert(reasons.invalid_broadcast and reasons.invalid_public_text)
+    TheNet.Say=nil
+    state.poll.fn();Reply(requests[#requests],{inputs={{id="unavailable",text="不要发送",broadcast=true}}})
+    assert(state.events[#state.events].reason=="public_chat_unavailable")
+    API.Close(inst,"done")
+    assert(state.public_echoes==nil)
+    TheNet,ThePlayer=previous,previous_player
+    package.loaded.my_friend_possess=previous_possess
+end)
+Test("remote public chat targets only the bound player and deduplicates client delivery",function()
+    local inst,p,requests=Setup()
+    local previous,previous_player=TheNet,ThePlayer
+    local clients,packets={},{}
+    ThePlayer=nil
+    Bridge.Install({AddModRPCHandler=function()end,
+        AddClientModRPCHandler=function(_,name,fn)clients[name]=fn end,
+        GetClientModRPC=function(_,name)return name end,
+        SendModRPCToClient=function(name,users,payload)
+            if name=="BodyPublicInput"then
+                assert(#users==1 and users[1]==p.userid)
+                packets[#packets+1]=payload
+            end
+        end})
+    local state=Connect(inst,p,requests)
+    Reply(requests[2],{inputs={{id="remote-public",text="玩家的公屏文字",broadcast=true}}})
+    assert(#packets==1)
+    local sent=0
+    TheNet={Say=function(_,text,whisper)sent=sent+1;assert(text=="玩家的公屏文字" and whisper==false)end}
+    ThePlayer=fixture.entity("wilson");ThePlayer.userid="stranger"
+    clients.BodyPublicInput(packets[1]);assert(sent==0)
+    ThePlayer=p
+    clients.BodyPublicInput(packets[1]);clients.BodyPublicInput(packets[1]);assert(sent==1)
+    -- No echo: report the missing delivery instead of resending player chat.
+    state.public_echoes["remote-public"].timeout.fn()
+    assert(state.events[#state.events].kind=="input_broadcast_failed")
+    assert(state.public_echoes["remote-public"]==nil)
+    fixture.advance(1)
+    ThePlayer=nil
+    state.poll.fn();Reply(requests[#requests],{inputs={{id="cleanup-public",text="关闭测试",broadcast=true}}})
+    local timeout=state.public_echoes["cleanup-public"].timeout
+    API.Close(inst,"done");assert(timeout.cancelled)
+    timeout.fn()
+    TheNet,ThePlayer=previous,previous_player
+end)
 Test("a room player shares an existing assistant without stealing its transport or requiring follow",function()
     local inst,p,requests=Setup();inst.components.follower.GetLeader=function()return nil end;p.x=100
     local state=Connect(inst,p,requests);Reply(requests[2],{})

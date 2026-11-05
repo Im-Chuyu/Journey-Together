@@ -85,6 +85,67 @@ async function main() {
         assert.equal(clicks, 0, "a replacement containing an unsent draft must not trigger a duplicate click");
         console.log("PASS a replacement editor retaining an unsent draft still reports send_not_confirmed");
     }
+    // Reproduce first-send false failure: the current editor keeps the prompt
+    // while a genuine submitted message is already visible. A delayed reply
+    // must still be collected and the send button must not be clicked again.
+    {
+        let time = 0, sends = 0, clicks = 0;
+        const answer = {request_id: "retained-first", text: "首条正常返回。"};
+        const prompt = '请求数据：{"request_id":"retained-first","utterance":"你好"}';
+        class RetainedBox extends TextArea {
+            get value() { return this.text; }
+            set value(value) { this.text = value; }
+            dispatchEvent(event) { if (event.type === "keydown") sends++; }
+            closest() { return this; }
+        }
+        const composer = new RetainedBox();
+        const transcript = {getClientRects: () => [1], closest: () => null};
+        const nodes = () => [
+            {nodeValue: composer.value, parentElement: composer},
+            ...(sends ? [{nodeValue: time < 8000 ? prompt : JSON.stringify(answer), parentElement: transcript}] : [])
+        ];
+        const context = {
+            setInterval() {}, setTimeout(fn, ms) {time += ms; fn();}, clearTimeout() {},
+            Date: {now: () => time}, HTMLTextAreaElement: RetainedBox,
+            Event: sandbox.Event, KeyboardEvent: sandbox.KeyboardEvent,
+            NodeFilter: {SHOW_TEXT: 4, FILTER_ACCEPT: 1, FILTER_REJECT: 2},
+            window: {addEventListener() {}},
+            document: {addEventListener() {}, body: {get innerText() {return composer.value;}},
+                querySelectorAll(selector) {
+                    if (selector.startsWith("textarea")) return [composer];
+                    if (selector.startsWith('[data-testid="chat_input_send_button"]')) return [{
+                        getClientRects: () => [1], getAttribute: () => null, closest: () => null, click() {clicks++;}
+                    }];
+                    return [];
+                },
+                createTreeWalker(root, type, filter) {
+                    const visible = nodes().filter(n => !filter || filter.acceptNode(n) === 1);
+                    let index = -1;
+                    return {currentNode: root,
+                        nextNode() {return visible[++index] || null;},
+                        lastChild() {index = visible.length - 1; this.currentNode = visible[index]; return this.currentNode;},
+                        previousNode() {this.currentNode = visible[--index]; return this.currentNode || null;}};
+                }
+            },
+            chrome: {runtime: {onMessage: {addListener() {}}, sendMessage: async () => ({connected: false})}}
+        };
+        vm.createContext(context);
+        vm.runInContext(fs.readFileSync("tools/companion_bridge/browser_extension/sites.js", "utf8"), context);
+        vm.runInContext(fs.readFileSync("tools/companion_bridge/browser_extension/content.js", "utf8"), context);
+        await new Promise(setImmediate);
+        // Neither a draft nor matching JSON pasted inside the editor is evidence.
+        composer.value = JSON.stringify(answer);
+        assert.equal(vm.runInContext('readReply("retained-first").request_seen', context), false);
+        assert.equal(vm.runInContext('readReply("retained-first").reply', context), null);
+        composer.value = "";
+        vm.runInContext('activeRequest="retained-first"', context);
+        context.job = {request_id: answer.request_id, prompt};
+        const result = await vm.runInContext('execute(job)', context);
+        assert.deepEqual(JSON.parse(result), answer);
+        assert.equal(sends, 1); assert.equal(clicks, 0);
+        assert.equal(composer.value, prompt);
+        console.log("PASS retained first editor uses visible transcript confirmation and collects delayed reply exactly once");
+    }
     sandbox.document.body.innerText = JSON.stringify(current);
     vm.runInContext('activeRequest="nonce"', sandbox);
     const result = await vm.runInContext('execute({request_id:"nonce",prompt:"generic model request"})', sandbox);

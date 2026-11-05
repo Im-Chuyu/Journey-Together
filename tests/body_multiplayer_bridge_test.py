@@ -80,6 +80,22 @@ class MultiplayerTests(unittest.TestCase):
         self.assertEqual(self.model.contexts, [])
         self.assertFalse(self.exchange()["inputs"])
 
+    def test_public_chat_choice_is_per_input_and_requires_a_real_boolean(self):
+        private = self.store.submit("私聊")
+        public = self.store.submit("同步到公屏", broadcast=True)
+        queued = {entry["id"]: entry for entry in self.exchange()["inputs"]}
+        self.assertFalse(queued[private]["broadcast"])
+        self.assertTrue(queued[public]["broadcast"])
+        self.assertEqual(self.model.contexts, [])
+        for value in ("false", 1, None):
+            with self.assertRaises(BridgeError): self.store.submit("错误选项", broadcast=value)
+        self.assertEqual(len(self.store.inputs), 2)
+        with self.assertRaises(BridgeError): self.store.submit("字" * 151, broadcast=True)
+        normalized = self.store.submit("单行\n公屏文字", broadcast=True)
+        self.assertEqual(self.store.inputs[normalized]["text"], "单行 公屏文字")
+        self.exchange([{"event_id": "broadcast-failed", "kind": "input_broadcast_failed", "input_id": public}])
+        self.assertTrue(any(e["kind"] == "input_broadcast_failed" for e in list(self.store.messages.queue)))
+
     def test_batch_has_one_command_and_no_model_roundtrip_before_terminal_result(self):
         self.model.decide_fn = lambda c: {} if c["results"] else {"skill": "pickup_many", "arguments": {"filter": "livinglog"}}
         self.exchange([self.input("batch")])

@@ -44,6 +44,49 @@ local function Report(status, reason)
     Log(messages[reason or status] or (tostring(status) .. ": " .. tostring(reason)))
 end
 local function Cancel(task) if task ~= nil then task:Cancel() end end
+local public_sent, public_order = {}, {}
+local function ValidPublicText(text)
+    if type(text) ~= "string" or text == "" or #text > 1200 or text:find("[%c]") then return false end
+    local _, count = text:gsub("[^\128-\191]", "")
+    return count <= (MAX_CHAT_INPUT_LENGTH or 150)
+end
+local function ClientPublicInput(data)
+    local player = ThePlayer
+    if type(data) ~= "table" or type(data.id) ~= "string" or #data.id > 160
+        or not ValidPublicText(data.text) or player == nil or not player:IsValid()
+        or data.userid ~= player.userid
+        or TheNet == nil or TheNet.Say == nil or public_sent[data.id] then return end
+    -- Mark before Say: an echo can arrive synchronously on a listen host.
+    public_sent[data.id], public_order[#public_order + 1] = true, data.id
+    if #public_order > 64 then public_sent[table.remove(public_order, 1)] = nil end
+    local ok, result = pcall(TheNet.Say, TheNet, data.text, false)
+    return ok and result ~= false
+end
+local function SendPublicInput(inst, state, input)
+    state.public_echoes = state.public_echoes or {}
+    local record = {text = input.text, expires = Clock() + 8, sources = {}}
+    state.public_echoes[input.id] = record
+    record.timeout = inst:DoStaticTaskInTime(8, function()
+        if state.public_echoes == nil or state.public_echoes[input.id] ~= record then return end
+        state.public_echoes[input.id] = nil
+        if inst:IsValid() and inst._my_friend_body == state and not record.confirmed then
+            API.Emit(inst, {kind = "input_broadcast_failed", input_id = input.id})
+        end
+    end)
+    local payload = {id = state.session .. ":public:" .. input.id, text = input.text, userid = state.owner.userid}
+    local ok
+    if state.owner == ThePlayer then ok = ClientPublicInput(payload)
+    else
+        ok = pcall(function()
+            rpc.SendModRPCToClient(rpc.GetClientModRPC("MyFriends", "BodyPublicInput"), {state.owner.userid}, json.encode(payload))
+        end)
+    end
+    if not ok then
+        Cancel(record.timeout)
+        state.public_echoes[input.id] = nil
+        API.Emit(inst, {kind = "input_broadcast_failed", input_id = input.id})
+    end
+end
 local function Notify(player, status, reason, attempt)
     if player == ThePlayer then
         if automatic ~= nil then automatic:Result(status, reason, attempt) end
@@ -197,8 +240,19 @@ Poll = function(inst, state)
                 state.input_request_order = state.input_request_order or {}
                 state.input_request_order[#state.input_request_order + 1] = input.id
                 if #state.input_request_order > 64 then state.input_requests[table.remove(state.input_request_order, 1)] = nil end
-                local accepted, why = API.Input(inst, state.owner, input.text, input.id, false)
+                local accepted, why
+                if input.broadcast ~= nil and type(input.broadcast) ~= "boolean" then
+                    accepted, why = false, "invalid_broadcast"
+                elseif input.broadcast and not ValidPublicText(input.text) then
+                    accepted, why = false, "invalid_public_text"
+                elseif input.broadcast and (state.owner == ThePlayer and (TheNet == nil or TheNet.Say == nil)
+                    or state.owner ~= ThePlayer and (rpc == nil or rpc.SendModRPCToClient == nil or rpc.GetClientModRPC == nil)) then
+                    accepted, why = false, "public_chat_unavailable"
+                else
+                    accepted, why = API.Input(inst, state.owner, input.text, input.id, false)
+                end
                 if not accepted then API.Emit(inst, {kind = "input_rejected", input_id = input.id, reason = why}) end
+                if accepted and input.broadcast then SendPublicInput(inst, state, input) end
             end
         end end
         if type(reply.commands) == "table" then for i = 1, math.min(4, #reply.commands) do
@@ -270,6 +324,8 @@ function M.Connect(inst, player, code, relay, attempt, dedicated)
         state.exchanging, state.flush_pending, state.flush_scheduled = false, false, false
         Cancel(state.poll); Cancel(state.http_timeout)
         state.poll, state.http_timeout = nil, nil
+        for _, record in pairs(state.public_echoes or {}) do Cancel(record.timeout) end
+        state.public_echoes = nil
         for id, record in pairs(pending) do
             if record.state == state then pending[id] = nil end
         end
@@ -399,6 +455,11 @@ function M.Install(api, enabled, options)
     end
     require("my_friend_body_world").Install(api)
     require("my_friend_body_chat").Install(api)
+    api.AddClientModRPCHandler("MyFriends", "BodyPublicInput", function(payload)
+        if type(payload) ~= "string" or #payload > 4096 then return end
+        local ok, data = pcall(json.decode, payload)
+        if ok then ClientPublicInput(data) end
+    end)
     api.AddModRPCHandler("MyFriends", "BodyRelayReply", function(player, payload)
         if type(payload) ~= "string" or #payload > 32768 then return end
         local ok, data = pcall(json.decode, payload)

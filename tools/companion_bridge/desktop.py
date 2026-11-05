@@ -22,10 +22,11 @@ def desktop(store, server, language):
     root = tk.Tk()
     root.title("一路同行 · 本机动作与语音助手")
     root.geometry("780x720")
-    from .settings import load, HOTKEYS
-    voice_hotkey = tk.StringVar(value=load().get("voice_hotkey", "F9"))
+    from .settings import load, save, HOTKEYS
+    preferences = load()
+    voice_hotkey = tk.StringVar(value=preferences.get("voice_hotkey", "F9"))
     hotkey = VoiceHotkey()
-    voice = WindowsVoice(language, load())
+    voice = WindowsVoice(language, preferences)
     voice_installing = [False]
     voice_installer = [None]
     speaking = queue.Queue(maxsize=12)
@@ -160,6 +161,17 @@ def desktop(store, server, language):
     auto_send, speak = tk.BooleanVar(value=True), tk.BooleanVar(value=False)
     ttk.Checkbutton(options, text="识别后自动发送", variable=auto_send).pack(side="left")
     ttk.Checkbutton(options, text="本机念出伙伴回复", variable=speak).pack(side="left")
+    broadcast_input = tk.BooleanVar(value=preferences.get("broadcast_input", False))
+    def save_broadcast():
+        try:
+            latest = load()
+            latest["broadcast_input"] = broadcast_input.get()
+            save(latest)
+        except (ValueError, OSError) as error:
+            broadcast_input.set(not broadcast_input.get())
+            message.config(text="公屏同步设置未保存：" + str(error))
+    ttk.Checkbutton(options, text="以玩家身份同步到游戏公屏", variable=broadcast_input,
+                    command=save_broadcast).pack(side="left", padx=8)
     message = ttk.Label(root, text=voice_hotkey.get() + " 按住录音、松开识别；持续语音需手动开启，无需说伙伴名字。", wraplength=740, justify="left")
     message.pack(anchor="w", padx=12)
     buttons = ttk.Frame(root); buttons.pack(fill="x", padx=12, pady=6)
@@ -179,24 +191,10 @@ def desktop(store, server, language):
 
     local_inputs = {}
 
-    def append(text, tag=None):
-        log.insert("end", text + "\n", (tag,) if tag else ()); log.see("end")
+    def append(text):
+        log.insert("end", text + "\n"); log.see("end")
         if int(log.index("end-1c").split(".")[0]) > 300:
             log.delete("1.0", "50.0")
-
-    def resolve_input(event, text):
-        input_id = event.get("input_id")
-        if input_id not in local_inputs:
-            return False
-        del local_inputs[input_id]
-        tag = "local_input_" + input_id
-        ranges = log.tag_ranges(tag)
-        if ranges:
-            start = str(ranges[0])
-            log.delete(ranges[0], ranges[-1])
-            log.insert(start, text + "\n")
-        log.tag_delete(tag)
-        return True
 
     def submit():
         text = entry.get("1.0", "end").strip()
@@ -206,10 +204,10 @@ def desktop(store, server, language):
             if hasattr(store.adapter, "connection_state"):
                 if store.adapter.connection_state() == "disconnected":
                     raise BridgeError("网页尚未连通：刷新当前模型聊天页，在扩展中重新连接，确认弹窗显示网页和助手均已连通。")
-            input_id = store.submit(text)
+            input_id = store.submit(text, broadcast=broadcast_input.get())
             if input_id:
                 local_inputs[input_id] = text
-                append("你（待游戏确认）：" + text, "local_input_" + input_id)
+                message.config(text="消息已提交，等待游戏确认。")
             speech_epoch[0] += 1; voice.stop()
             entry.delete("1.0", "end")
         except BridgeError as error:
@@ -328,11 +326,15 @@ def desktop(store, server, language):
             elif kind == "voice_preview":
                 message.config(text="试听完成。" if event["result"].get("status") == "completed" else event["result"].get("error", "试听失败"))
             elif kind == "input_rejected":
-                reason = {"companion_name_required": "请在消息中包含伙伴名字。", "rate_limited": "消息太快，请稍后再说。"}.get(event.get("reason"), "游戏未接收消息，请检查连接。")
+                reason = {"companion_name_required": "请在消息中包含伙伴名字。", "rate_limited": "消息太快，请稍后再说。",
+                          "invalid_public_text": "公屏消息须为150字符以内的单行文字。",
+                          "public_chat_unavailable": "当前游戏无法同步公屏，请关闭同步后重试。"}.get(event.get("reason"), "游戏未接收消息，请检查连接。")
                 message.config(text=reason)
-                if not resolve_input(event, "未发送：" + event.get("text", "") + "（" + reason + "）"):
-                    append("未发送：" + reason)
+                local_inputs.pop(event.get("input_id"), None)
+                append("未发送：" + event.get("text", "") + "（" + reason + "）")
                 if event.get("text") and not entry.get("1.0", "end").strip(): entry.insert("1.0", event["text"])
+            elif kind == "input_broadcast_failed":
+                append("消息已被游戏接受，但未能确认公屏发送，请查看游戏。")
             elif kind == "assistant":
                 append("伙伴：" + event["text"])
                 if speak.get():
@@ -343,15 +345,18 @@ def desktop(store, server, language):
                 else: store.speech(event.get("action_id"), "disabled")
             elif kind == "disconnected":
                 speech_epoch[0] += 1; voice.stop()
-                for input_id, text in list(local_inputs.items()):
-                    resolve_input({"input_id": input_id}, "未确认：" + text)
+                for text in local_inputs.values():
+                    append("未确认：" + text)
+                local_inputs.clear()
                 append("控制已结束：" + str(event.get("reason")))
             elif kind == "task_replaced":
                 speech_epoch[0] += 1; voice.stop()
                 append("游戏新指令已接替旧模型任务，连接保持。")
             elif kind == "user":
                 text = (event.get("speaker") or "玩家") + "：" + event["text"]
-                if not resolve_input(event, text): append(text)
+                local_inputs.pop(event.get("input_id"), None)
+                append(text)
+                message.config(text="游戏已接收消息。")
             else: append(json.dumps(event, ensure_ascii=False)[:8000])
         status = "游戏已连接" if store.connected else "等待游戏配对"
         if getattr(store.adapter, "diagnostics_kind", None) == "api":

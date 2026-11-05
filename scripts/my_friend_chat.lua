@@ -31,6 +31,19 @@ function M.Dispatch(player, message, source)
         if relay ~= nil then relay.Forward(player, message, source) end
         return false
     end
+    local body = friend._my_friend_body
+    -- Assistant input was already accepted with its real player identity.
+    -- Its native public echo is presentation, not a second model command.
+    if body ~= nil and body.owner == player then
+        local clock = (GetStaticTime or GetTime)()
+        for _, record in pairs(body.public_echoes or {}) do
+            if record.text == message and clock < record.expires and not record.sources[source or "native"] then
+                record.sources[source or "native"] = true
+                if not record.confirmed then record.confirmed, record.expires = true, clock + 1 end
+                return true
+            end
+        end
+    end
     local previous = player._my_friend_last_chat_command
     local now = GetTime()
     -- Some hosts receive both the native chat callback and the sender's RPC.
@@ -39,7 +52,6 @@ function M.Dispatch(player, message, source)
     player._my_friend_last_chat_command = {
         message = message, friend = friend, source = source, time = now,
     }
-    local body = friend._my_friend_body
     if body ~= nil and body.ready and require("my_friend_body_api").Valid(friend) == body then
         return require("my_friend_body_api").Input(friend, player, message)
     end

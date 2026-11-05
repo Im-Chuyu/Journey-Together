@@ -413,9 +413,14 @@ class WebModelTests(unittest.TestCase):
         directory = Path("tests/.local/body_bridge") / ("settings_" + secrets.token_hex(4))
         first = settings.load(directory)
         self.assertEqual(first["pair_code"], "321151")
+        self.assertFalse(first["broadcast_input"])
         self.assertEqual(settings.load(directory)["web_code"], first["web_code"])
         changed = {"pair_code": "987654", "web_code": "my-custom-web-connection-code"}
         settings.save(changed, directory); self.assertEqual(settings.load(directory), changed)
+        changed["broadcast_input"] = True
+        settings.save(changed, directory)
+        self.assertTrue(settings.load(directory)["broadcast_input"])
+        with self.assertRaises(ValueError): settings.save({**changed, "broadcast_input": "false"}, directory)
         with self.assertRaises(ValueError): settings.validate("12x456", changed["web_code"])
         self.assertIn("沃拓克斯", instruction({"character": {"id": "wortox"}}))
         self.assertIn("沃特", instruction({"prefab": "my_friend_wurt"}))

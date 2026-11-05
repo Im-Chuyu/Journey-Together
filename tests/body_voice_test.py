@@ -287,7 +287,7 @@ class VoiceTests(unittest.TestCase):
         if failures: raise failures[0]
 
 
-    def test_desktop_echoes_pending_text_and_updates_accepted_rejected_and_disconnected_rows(self):
+    def test_desktop_waits_for_game_confirmation_and_persists_public_chat_choice(self):
         import tkinter as tk
         from tkinter import ttk
         from tools.companion_bridge.desktop import desktop
@@ -295,6 +295,8 @@ class VoiceTests(unittest.TestCase):
         native_tk = tk.Tk
         failures = []
         contexts = []
+        preferences = {"voice_hotkey": "F9", "broadcast_input": False}
+        saved = []
         adapter = Mock()
         adapter.label = "test"
         adapter.decide.side_effect = lambda context: contexts.append(context) or {}
@@ -318,16 +320,18 @@ class VoiceTests(unittest.TestCase):
             def send(text):
                 entry.delete("1.0", "end"); entry.insert("1.0", text)
                 button.invoke()
-                self.assertIn(text, log.get("1.0", "end"))
-                self.assertIn("待游戏确认", log.get("1.0", "end"))
+                self.assertNotIn(text, log.get("1.0", "end"))
                 return next(iter(store.inputs))
             def exchange(event=None, **extra):
                 return store.exchange({"token": token, "session": "echo", "events": [event] if event else [], **extra})
             def begin():
-                nonlocal entry, log, button
+                nonlocal entry, log, button, checkbox
                 entry, log = [w for w in widgets(root) if isinstance(w, tk.Text)]
                 button = next(w for w in widgets(root) if isinstance(w, ttk.Button) and w.cget("text") == "发送文字")
+                checkbox = next(w for w in widgets(root) if isinstance(w, ttk.Checkbutton) and w.cget("text") == "以玩家身份同步到游戏公屏")
+                self.assertFalse(checkbox.instate(["selected"]))
                 input_id = send("第一条本机消息")
+                self.assertFalse(store.inputs[input_id]["broadcast"])
                 self.assertEqual(contexts, [])
                 exchange({"event_id": "accept", "kind": "player_input", "input_id": input_id,
                           "turn_id": "turn", "text": "第一条本机消息", "speaker": {"name": "发言者", "userid": "owner"}})
@@ -337,7 +341,10 @@ class VoiceTests(unittest.TestCase):
                 self.assertEqual(text.count("第一条本机消息"), 1)
                 self.assertIn("发言者：第一条本机消息", text)
                 self.assertNotIn("待游戏确认", text)
+                checkbox.invoke()
+                self.assertTrue(saved[-1]["broadcast_input"])
                 input_id = send("需要拒绝的消息")
+                self.assertTrue(store.inputs[input_id]["broadcast"])
                 exchange({"event_id": "reject", "kind": "input_rejected", "input_id": input_id, "reason": "rate_limited"})
                 root.after(180, lambda: check(rejected))
             def rejected():
@@ -345,7 +352,10 @@ class VoiceTests(unittest.TestCase):
                 self.assertEqual(text.count("需要拒绝的消息"), 1)
                 self.assertIn("未发送：需要拒绝的消息", text)
                 self.assertEqual(entry.get("1.0", "end").strip(), "需要拒绝的消息")
-                send("断线前的消息")
+                checkbox.invoke()
+                self.assertFalse(saved[-1]["broadcast_input"])
+                input_id = send("断线前的消息")
+                self.assertFalse(store.inputs[input_id]["broadcast"])
                 exchange(closing="test_disconnect")
                 root.after(180, lambda: check(disconnected))
             def disconnected():
@@ -353,7 +363,7 @@ class VoiceTests(unittest.TestCase):
                 self.assertIn("未确认：断线前的消息", text)
                 self.assertNotIn("待游戏确认", text)
                 finish()
-            entry = log = button = None
+            entry = log = button = checkbox = None
             root.after(20, lambda: check(begin))
             root.after(3000, finish)
             return root
@@ -363,7 +373,8 @@ class VoiceTests(unittest.TestCase):
         with patch.object(tk, "Tk", side_effect=hidden_tk), \
              patch("tools.companion_bridge.desktop.WindowsVoice"), \
              patch("tools.companion_bridge.desktop.VoiceHotkey", return_value=hotkey), \
-             patch.object(settings, "load", return_value={"voice_hotkey": "F9"}):
+             patch.object(settings, "load", side_effect=lambda: dict(preferences)), \
+             patch.object(settings, "save", side_effect=lambda data: (saved.append(dict(data)), preferences.update(data))):
             desktop(store, None, "zh-CN")
         if failures: raise failures[0]
 

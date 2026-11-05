@@ -31,10 +31,16 @@ def validate_voice(data):
             raise ValueError("语速范围-10～10，音量范围0～100")
 
 
+def validate_chat(data):
+    if type(data.get("broadcast_input", False)) is not bool:
+        raise ValueError("公屏同步设置必须为布尔值")
+
+
 def save(data, directory=None):
     validate(data["pair_code"], data["web_code"])
     validate_hotkey(data.get("voice_hotkey", "F9"))
     validate_voice(data)
+    validate_chat(data)
     data = {k:v for k,v in data.items() if k != "asr_prompt"}
     directory = Path(directory) if directory else data_dir()
     directory.mkdir(parents=True, exist_ok=True)
@@ -52,8 +58,10 @@ def load(directory=None):
         validate(data["pair_code"], data["web_code"])
         validate_hotkey(data.get("voice_hotkey", "F9"))
         validate_voice(data)
+        validate_chat(data)
         return data
     data = {"pair_code": DEFAULT_CODE, "web_code": secrets.token_urlsafe(32), "voice_hotkey": "F9"}
     data["asr_backend"]="whisper"
+    data["broadcast_input"] = False
     save(data, directory)
     return data

@@ -176,38 +176,44 @@ function objectReply(text, request) {
     }
     return null;
 }
+const replySkip = 'script,style,textarea,input,[contenteditable="true"],[hidden],[aria-hidden="true"]';
+function visibleReplyText(node) {
+    if (document.createTreeWalker && typeof NodeFilter !== "undefined") {
+        const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT, {
+            acceptNode(textNode) {
+                const parent = textNode.parentElement;
+                return parent && parent.getClientRects().length && !parent.closest(replySkip)
+                    ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+            }
+        });
+        if (typeof walker.nextNode === "function") {
+            const chunks = [];
+            let child, scanned = 0;
+            while ((child = walker.nextNode()) && scanned++ < 20000)
+                chunks.push(child.nodeValue || "");
+            return chunks.join("").slice(-120000);
+        }
+    }
+    return (node.innerText || node.textContent || "").slice(-120000);
+}
 function readReply(request) {
-    const skip = 'script,style,textarea,input,[contenteditable="true"],[hidden],[aria-hidden="true"]';
+    const skip = replySkip;
     let requestSeen = false;
     // textContent joins syntax/renderer spans without injecting visual line
     // breaks. Filter hidden descendants before accepting executable JSON.
     function parseNode(node) {
-        let text = node.textContent || "";
+        if (!(node.textContent || node.innerText || "").includes(request)) return null;
+        const text = visibleReplyText(node);
         if (!text.includes(request)) return null;
         requestSeen = true;
-        if (document.createTreeWalker && typeof NodeFilter !== "undefined") {
-            const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT, {
-                acceptNode(textNode) {
-                    const parent = textNode.parentElement;
-                    return parent && parent.getClientRects().length && !parent.closest(skip)
-                        ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
-                }
-            });
-            if (typeof walker.nextNode === "function") {
-                const chunks = [];
-                let textNode;
-                while ((textNode = walker.nextNode())) chunks.push(textNode.nodeValue || "");
-                text = chunks.join("");
-            }
-        }
-        return objectReply(text.slice(-120000), request);
+        return objectReply(text, request);
     }
     // Syntax-highlighted code can have visual line breaks or spacing that
     // differs from its actual text. Read visible code first, preserving strings.
     const blocks = [...document.querySelectorAll("pre,code")].slice(-16).reverse();
     let inspected = 0;
     for (const node of blocks) {
-        if (!node.getClientRects().length || node.closest('textarea,[contenteditable="true"]')) continue;
+        if (!node.getClientRects().length || node.closest(skip)) continue;
         inspected++;
         const reply = parseNode(node);
         if (reply) return {reply, blocks: inspected, source: "code", request_seen: true};
@@ -247,7 +253,7 @@ function readReply(request) {
             } while (++scanned < 20000 && walker.previousNode());
         }
     }
-    const tail = document.body.innerText.slice(-120000);
+    const tail = visibleReplyText(document.body);
     const reply = objectReply(tail, request);
     return {reply, blocks: inspected, source: reply ? "page" : "none", request_seen: requestSeen || tail.includes(request)};
 }
@@ -325,14 +331,19 @@ async function execute(job, prepared = false, deadline = Date.now() + 280000) {
     }
     await sleep(1400);
     if (activeRequest !== job.request_id) throw pageError("request_superseded", "request_superseded");
-    if (!clicked && unsentComposer() === box) {
+    if (!clicked && unsentComposer() === box && !readReply(job.request_id).request_seen) {
         const send = sendButton(box);
         if (send) { send.click(); clicked = true; }
     }
-    // A successful DOM click is not proof of submission. Fail promptly with a
-    // useful diagnosis instead of waiting minutes for a reply to unsent text.
-    for (let n=0; n<15 && unsentComposer() && !contextLimited(); n++) await sleep(200);
-    if (unsentComposer() && !contextLimited())
+    // DeepSeek's first route transition can leave a visible editor containing
+    // the sent prompt. The current nonce in the visible transcript also proves
+    // submission; the editor and hidden DOM never count as that evidence.
+    for (let n=0; n<30 && unsentComposer() && !contextLimited()
+        && !readReply(job.request_id).request_seen; n++) {
+        await sleep(400);
+        if (activeRequest !== job.request_id) throw pageError("request_superseded", "request_superseded");
+    }
+    if (unsentComposer() && !contextLimited() && !readReply(job.request_id).request_seen)
         throw pageError("send_not_confirmed", "输入仍停留在网页编辑框，发送未确认。请检查发送控件或输入法状态；为避免重复发送，本轮没有再次点击。");
     pageProgress.phase = "waiting_reply";
     let last = null, since = 0;

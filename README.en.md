@@ -150,6 +150,8 @@ The Windows launcher checks for Python/Tk and installs it if needed. Assistant s
 
 While connected, players can address the companion by name in public chat. One assistant can handle room messages, including surface/cave chat relays. Only the leader can assign work while the companion follows; other players can assign basic work while it is independent. Assistant text and voice do not require the companion's name. Delivery, following and other entity interactions remain subject to shard boundaries.
 
+The assistant's public-chat checkbox sends typed or recognized speech through the connected player's own account as native public chat. It defaults to off and remembers your choice. Public messages are limited to 150 characters; their echoes do not trigger the model again. Assistant input appears in the message log only after the game accepts it.
+
 ### Tasks and limitations
 
 Tools support observation, collection, carrying, resource work, crafting, cooking, planting and native item interactions. Character abilities depend on the live capability query. Independent queries can be batched, and decided steps can run as a local sequence that stops on failure and reports actual progress. Examples include uprooting a plant, collecting its actual drop, checking a location and planting it, or chopping a specified number of trees.
