@@ -167,15 +167,15 @@ Windows 启动器会检查 Python/Tk，缺失时下载安装。语音可在“�
 
 ## 开发与贡献
 
-- [DEVELOPER.md](DEVELOPER.md)：架构、行为规则、模块索引、扩展步骤、排错及测试地图。
+- [DEVELOPER.md](DEVELOPER.md)：架构、行为规则、模块索引、扩展步骤、排错及验证原则。
 - [AGENTS.md](AGENTS.md)：简短维护约束和代码入口。
 - [CONTRIBUTING.md](CONTRIBUTING.md) / [English](CONTRIBUTING.en.md)：翻译提交规范。
 - [语言目录说明](scripts/languages/README.md)：语言文件结构与模板。
 
 `main` 为发布分支，`develop` 用于下一版本集成；新功能从 `develop` 开始，维护代理默认使用 `codex/<主题>` 分支。发布后将 `main` 同步回 `develop`，提交与合并说明使用英文。翻译贡献保留现有指令 ID、台词键和占位符，不修改核心代码、声音资源或发布配置。
 
-在模组根目录使用 Lua 5.1 对受影响的文件执行 `luac -p <文件>`，并运行相关回归；小改动不要求全量检查。完整命令和按改动范围选择检查的规则见[开发文档第 18 节](DEVELOPER.md#18-扩展步骤排错与验证)。按实际行为风险选择游戏验证场景，桩测试不能替代游戏实测。
+日常修改先阅读差异及直接调用处；必要时使用 Lua 5.1 对修改的 Lua 文件执行 `luac -p <文件>`。只有存在具体行为风险时才做最少的定向验证，不因新增功能或准备发布而默认运行整套测试。规则见[开发文档第 18 节](DEVELOPER.md#18-扩展步骤排错与验证)，桩测试不能替代游戏实测。
 
 报告问题时请提供模组版本、服务器类型、相关角色、复现步骤，以及客户端或服务端日志中的完整 Lua 报错栈。
 
-可复用回归用例放在 `tests/`，与对应源码一同维护。临时验证脚本、桩数据、发布导出和备份放在 `tests/.local/`；助手运行数据放在 `tools/companion_bridge/.local/`。这些本地产物、Python 缓存及个人 `AssistantAPI.json` 不提交到仓库，配置示例保留空 Key。
+`tests/` 及其中的回归脚本、临时验证数据、发布导出和备份全部仅保留本地，不随 GitHub 仓库或创意工坊分发。删除本地测试不会影响模组运行；后续维护不要求重建。助手运行数据位于 `tools/companion_bridge/.local/`，它与 Python 缓存、个人 `AssistantAPI.json` 同样不提交，配置示例保留空 Key。

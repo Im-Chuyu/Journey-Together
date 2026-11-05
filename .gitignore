@@ -5,8 +5,8 @@ server_log.txt
 client_log.txt
 *.dmp
 
-# Workspace-local temporary validation scripts and fixtures
-tests/.local/
+# All tests and validation artifacts stay local; do not publish them to GitHub.
+/tests/
 tools/companion_bridge/.local/
 AssistantAPI.json
 AssistantAPI.json.*

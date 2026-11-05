@@ -166,15 +166,15 @@ See the [assistant guide](tools/companion_bridge/README.md) for setup, troublesh
 
 ## Development and contributions
 
-- [DEVELOPER.md](DEVELOPER.md): architecture, behaviour rules, module index, extension steps, troubleshooting and test map, in Chinese.
+- [DEVELOPER.md](DEVELOPER.md): architecture, behaviour rules, module index, extension steps, troubleshooting and verification policy, in Chinese.
 - [AGENTS.md](AGENTS.md): concise maintenance constraints and entry points, in Chinese.
 - [CONTRIBUTING.en.md](CONTRIBUTING.en.md) / [Chinese entry](CONTRIBUTING.md): translation submission rules.
 - [Language directory guide](scripts/languages/README.md): file structure and templates.
 
 `main` is the release branch; `develop` integrates the next version. Start new features from `develop`; maintenance agents use `codex/<topic>` branches by default. Sync `main` back into `develop` after a release, and use English commit and merge messages. Translation contributions must preserve command IDs, dialogue keys and placeholders, without changing core code, sound assets or release settings.
 
-From the mod root, run Lua 5.1's `luac -p <file>` on the affected files and the relevant regression tests; small changes do not require the full suite. Section 18 of the developer guide describes the scope-based checks and the full commands. Select in-game scenarios according to the actual behaviour risk; stub tests do not establish in-game correctness.
+Start by reviewing the diff and direct callers. Use Lua 5.1's `luac -p <file>` on changed Lua files when necessary. Run only the smallest targeted check needed for a concrete behaviour risk; new features and release preparation do not automatically require the test suite. Section 18 of the developer guide describes this policy. Stub tests do not establish in-game correctness.
 
 When reporting a problem, include the mod version, server type, relevant character, reproduction steps and the complete Lua traceback from the client or server log.
 
-Keep reusable regression tests in `tests/` alongside the code they cover. Temporary scripts, fixtures, Workshop exports and backups belong in `tests/.local/`; assistant runtime data belongs in `tools/companion_bridge/.local/`. Local artifacts, Python caches and personal `AssistantAPI.json` files are excluded from Git. Configuration examples must contain an empty API key.
+The entire `tests/` directory, including regression scripts, fixtures, Workshop exports and backups, stays local and is excluded from GitHub and Workshop releases. Deleting local tests does not affect the mod, and maintenance does not require recreating them. Assistant runtime data in `tools/companion_bridge/.local/`, Python caches and personal `AssistantAPI.json` files are also excluded from Git. Configuration examples must contain an empty API key.
