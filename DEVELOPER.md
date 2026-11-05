@@ -775,7 +775,7 @@ modinfo 模型模式总开关 model_enabled 默认关闭，六个 model_pair_dig
 
 首次连接构建环境摘要，之后每 60～120 秒随机 RefreshEnvironment。地面实体共用一次半径 20 的原生扫描，玩家由 AllPlayers 按同半径筛选。各类最多 12 条，不扫容器内容。摘要记录扫描中心，超过 90 秒或移动超过 4 单位时暂不发送。快照含 world(day/season/phase/temperature/weather)、character(id/name)、manual_task、pending、revision。助手空闲、最近60秒无玩家模型输入且无危险/busy时才处理 ambient_context，闲聊轮次只提供say工具并做服务端二次限制。personas.py 按真实prefab（兼容包装名）追加角色语气；模型指令含主动闲聊与最新意图规则。
 
-仅连接期间短 POST 轮询，快照不变不重发，结果按 event_id 确认，每次最多 4 条指令；HTTP 不等待动作完成，连续失败关闭控制。迟到/重复/手动接管后的请求失效。观察最多 40 个实体/64 条容器内容，句柄最多 192 个且 90 秒失效；结果历史 40 条、待事件 64 条，本机队列、对话和日志也有上限。不接受模型返回的可执行代码。
+仅连接期间使用原短 POST 交换协议。body_api.Emit 通过会话内 on_emit 回调唤醒 Bridge 的一次性发送任务，同一批事件合并；同一会话只允许一个 exchange 在途，发起间隔至少 0.5 秒，失败仍按原退避重试。完全空闲时下一次交换延迟 2 秒，同时减少快照生成与 JSON 编码次数；存在输入上下文、任务、有效计划、语音等待、未确认事件或最近事件活动时保持 0.5 秒节奏。助手主动发起的首次空闲输入仍等待下一次交换，最多增加到约 2 秒；公屏输入和动作回执入队可提前唤醒。每次发出仍读取当前快照，不增加跨事件的状态缓存或库存失效监听。旧定时任务按身份失效，关闭连接清理回调、唤醒与 HTTP 超时任务。结果按 event_id 确认，每次最多 4 条指令；HTTP 不等待动作完成，连续失败关闭控制，迟到/重复/手动接管后的请求失效。观察最多 40 个实体/64 条容器内容，句柄最多 2048 个且无固定时间期限；结果历史 40 条、待事件 64 条，本机队列、对话和日志也有上限。不接受模型返回的可执行代码。
 
 动态文字用四语言一致的固定 `ai_dynamic` 模板 `{1}`，不增加动态字符串表条目或语音编号。自由回复的声音由助手可选本机 TTS 播放，状态通过会话回传；不是游戏内 3D 声音，也不对其他玩家自动分发。播报期间协调现有自定义语音队列，结束、失败或断开后释放；默认关闭TTS，快捷键在设置中选择F1～F12（默认F9），持久保存并立即重新注册。持续语音按钮显式启动一个长期识别进程，每条识别JSON立即flush返回；停止/退出只清理自身监听进程。朗读期间及结束短时屏蔽持续识别的回声。快捷键由hotkey.py管理，F1～F11走RegisterHotKey；[微软文档](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-registerhotkey)保留F12，F12改用只响应该键的WH_KEYBOARD_LL回调，过滤修饰键、注入及长按重复，关闭/改键解除钩子；不注入游戏键盘事件。Windows PowerShell 脚本使用 UTF-8 BOM 避免 5.1 按 ANSI 误读中文。
 
@@ -987,7 +987,7 @@ modinfo 模型模式总开关 model_enabled 默认关闭，六个 model_pair_dig
 | `body_api_test.lua` | 基础技能、模型模式/连接与工作权限分离、玩家角色三维、双向交接/安全边界/紧急保护、自然清理不误替换规划、工作工具绑定、原跟随模式、保存/换体顺序及有界缓存 |
 | `body_interactions_test.lua` | 实际座位请求/评分、目标能力输出、真正坐稳才完成且不重启 Sit、占用/距离/取消/关闭清理、机器状态及激活条件复核 |
 | `body_autoconnect_test.lua` | 实际入口/行为树按模式加载、5秒递增与30次精确上限、成功重置、旧attempt回调隔离、清理、新世界恢复预算，以及四语言最小modinfo沙箱/六位码默认 |
-| `body_transport_test.lua` | POST/确认、旧revision响应拒绝、连接幂等/保留工作、随机环境更新、本地自动连接/首次exchange确认/断线再连、RPC权限和跨会话回调隔离 |
+| `body_transport_test.lua` | POST/确认、旧revision响应拒绝、连接幂等/保留工作、随机环境更新、本地自动连接/首次exchange确认/断线再连、RPC权限和跨会话回调隔离、空闲降频/事件合并唤醒/在途串行/失败退避/关闭清理 |
 | `body_bridge_test.py` | `python -B -m unittest discover -s tests -p body_bridge_test.py`：HTTP/配对/去重、最新输入替换、原指令revision、主动闲聊/安全、设置持久化与角色语气、网页nonce/鉴权、独立heartbeat不消费job、45/120秒状态边界、真实网页回复协议→说话/观察/最终回复及安全阶段诊断、世界操作不重放；用临时端口 |
 | `body_web_page_test.js` | `node tests/body_web_page_test.js`：可见代码块/普通段落/分散div/span→result回传、长正文末尾不含回复时独立提取、字符串内空格保留/旧或隐藏JSON排除、提前计时重排、输入/弹窗、保存码恢复新页面、原页保留/多页激活、真实页面应答心跳、无页面不伪造、助手恢复/HTTP超时、显式断开、待结果重试、有界推理心跳及迟到查询不取消新请求；不代表真实 DOM 验证 |
 | `xiangqi_test.lua` | 开局 44/1920 走法数、各棋子/将帅安全、将死/困毙、重复/长将、无进展、悔棋及 AI 将杀/预算/无真棋盘修改 |
@@ -1119,7 +1119,7 @@ model_instructions.md内容改纯文本（保留文件路径兼容），去除�
 
 网页回传排错：waiting_reply一直未出现reply_detected且由页面报reply_timeout时，优先检查DOM提取与nonce，不先认定游戏动作失败。readReply的倒序文本遍历不再用“单节点包含完整编号”作为祖先检查前提，最深24层、有界文本大小及遍历量；可见文本拼接过滤隐藏后代，旧nonce和非协议对象仍拒绝。web_model保存/记录布尔request_seen供诊断，不能将页面包含输入提示词中的编号误当已经收到回复。对应body_web_page定向回归从用户JSON的分段/深嵌套读取到回传accepted；web_sites和WebModelTests检查接续及诊断，不代表真实登录网页验证。
 
-网页首发发送确认：DeepSeek 首次进入会话可能替换输入框，content.execute 在发送后重取可见输入框，不因旧脱离节点仍有提示词而报 send_not_confirmed，也不对该旧节点补点发送；当前新框仍有草稿则保留失败判断。web_model 错误分类补齐发送确认/换会话错误，仅记录白名单元数据。server.submit 对协议 2 返回本机排队 input_id，游戏确认/拒绝消息沿原 ID 回传；desktop 立即显示待确认行，按 ID 原位更新，拒绝恢复输入、断线清理待确认状态。游戏授权、模型启动时机、0.5 秒交换和 100 毫秒 UI 刷新频率保持。定向检查复用 body_web_page/sites、WebModelTests、body_multiplayer_bridge 和无麦克风的隐藏 Tk 用例；不宣称真实网页已验证。
+网页首发发送确认：DeepSeek 首次进入会话可能替换输入框，content.execute 在发送后重取可见输入框，不因旧脱离节点仍有提示词而报 send_not_confirmed，也不对该旧节点补点发送；当前新框仍有草稿则保留失败判断。web_model 错误分类补齐发送确认/换会话错误，仅记录白名单元数据。server.submit 对协议 2 返回本机排队 input_id，游戏确认/拒绝消息沿原 ID 回传；desktop 立即显示待确认行，按 ID 原位更新，拒绝恢复输入、断线清理待确认状态。游戏授权、模型启动时机和 100 毫秒 UI 刷新频率保持，交换节奏见上述连接传输规则。定向检查复用 body_web_page/sites、WebModelTests、body_multiplayer_bridge 和无麦克风的隐藏 Tk 用例；不宣称真实网页已验证。
 
 全局按住说话修正：原RegisterHotKey(None)绑定Tk线程但由after轮询PeekMessage，存在消息先被Tk循环取走的路径，且原只提供按下事件。VoiceHotkey改为独立消息线程，在注册线程消费消息/注销，F1～F11注册、F12钩子，事件队列传按下和松开；回调不录音。桌面层按下启动listen_held、松开发送finish；Whisper先采集再加载模型，Windows系统识别用C#事件处理器异步收集语句后停止，避免PowerShell后台回调缺runspace。识别术语UI/传参/预置initial_prompt移除，旧字段保存时清除。定向回归覆盖线程归属、双边沿、松开控制和隐藏UI连接；真实Windows专用消息线程探针确认事件接收，不开启麦克风；游戏物理按键尚待验证。
 

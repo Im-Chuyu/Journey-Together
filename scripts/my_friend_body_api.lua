@@ -91,6 +91,7 @@ function M.Emit(inst, record)
     record.revision = state.revision
     state.events[#state.events + 1] = record
     if #state.events > 64 then table.remove(state.events, 1) end
+    if state.on_emit ~= nil then state.on_emit() end
 end
 function M.Result(job)
     return {action_id = job.id, request_id = job.request_id, skill = job.skill,

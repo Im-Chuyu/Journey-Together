@@ -9,6 +9,8 @@ local pending = {}
 local automatic
 local dedicated_transport, dedicated_pair_code
 local stopped_worlds = setmetatable({}, {__mode = "k"})
+local ACTIVE_INTERVAL, IDLE_INTERVAL, EVENT_DELAY = .5, 2, .05
+local function Clock() return (GetStaticTime or GetTime)() end
 local function Dedicated()
     return TheNet ~= nil and TheNet.IsDedicated ~= nil and TheNet:IsDedicated()
 end
@@ -114,13 +116,41 @@ local function Clean(value, depth)
 end
 local Poll
 local function Schedule(inst, state, delay)
-    state.poll = inst:DoStaticTaskInTime(delay, function()
+    Cancel(state.poll)
+    local task
+    task = inst:DoStaticTaskInTime(delay, function()
+        if state.poll ~= task then return end
         state.poll = nil
+        state.flush_scheduled = false
         if inst:IsValid() and inst._my_friend_body == state then Poll(inst, state) end
     end)
+    state.poll = task
+end
+local function FlushDelay(state)
+    -- Coalesce bursts and keep the existing maximum of two exchanges/second.
+    return math.max(EVENT_DELAY, ACTIVE_INTERVAL - (Clock() - (state.last_exchange or -math.huge)))
+end
+local function RequestFlush(inst, state)
+    if state.transport_closed or not inst:IsValid() or inst._my_friend_body ~= state then return end
+    state.flush_pending = true
+    state.transport_active_until = Clock() + IDLE_INTERVAL
+    if state.ready and state.token ~= nil and not state.exchanging and not state.flush_scheduled
+        and (state.failures or 0) == 0 then
+        Schedule(inst, state, FlushDelay(state))
+        state.flush_scheduled = true
+    end
+end
+local function PollInterval(inst, state)
+    if state.active ~= nil or state.pending ~= nil or API.PlanActive(inst)
+        or next(state.inputs) ~= nil or #state.events > 0
+        or GetTime() < (inst._my_friend_body_speaking or 0)
+        or Clock() < (state.transport_active_until or 0) then return ACTIVE_INTERVAL end
+    return IDLE_INTERVAL
 end
 Poll = function(inst, state)
+    if state.transport_closed or state.exchanging then return end
     if not RelayAuthorized(inst, state) then return end
+    state.exchanging, state.last_exchange = true, Clock()
     API.Tick(inst)
     if inst._my_friend_body ~= state then return end
     if GetTime() >= (state.next_context or math.huge) then
@@ -134,11 +164,13 @@ Poll = function(inst, state)
     local request_revision = state.revision
     local signature = json.encode(snapshot)
     local events = {}; for i = 1, math.min(12, #state.events) do events[#events + 1] = state.events[i] end
-    state.http_timeout = Post(inst, state, "exchange", {token = state.token, session = state.session,
+    state.flush_pending = false
+    local timeout = Post(inst, state, "exchange", {token = state.token, session = state.session,
         snapshot = signature ~= state.snapshot_signature and snapshot or nil, events = events}, function(reply, reason)
         state.http_timeout = nil
         if not inst:IsValid() or inst._my_friend_body ~= state then return end
         if reply == nil then
+            state.exchanging = false
             state.failures = (state.failures or 0) + 1
             if state.failures >= 3 then Log("Disconnected: " .. tostring(reason)); API.Close(inst, "bridge_unavailable"); return end
             Schedule(inst, state, 1); return
@@ -192,8 +224,16 @@ Poll = function(inst, state)
             if type(id) == "string" then state.inputs[id] = nil end
         end end
         API.UpdatePlan(inst, reply.plan)
-        if inst._my_friend_body == state then Schedule(inst, state, .5) end
+        state.exchanging = false
+        if inst._my_friend_body == state then
+            local delay = state.flush_pending and FlushDelay(state) or PollInterval(inst, state)
+            Schedule(inst, state, delay)
+            state.flush_scheduled = state.flush_pending
+        end
     end)
+    -- QueryServer may invoke its callback synchronously; do not retain a
+    -- completed timeout or overwrite a new exchange started by that callback.
+    if state.exchanging then state.http_timeout = timeout end
 end
 function M.Connect(inst, player, code, relay, attempt, dedicated)
     if type(code) ~= "string" or not code:match("^%d%d%d%d%d%d$") then return false, "invalid_pairing_code" end
@@ -223,8 +263,11 @@ function M.Connect(inst, player, code, relay, attempt, dedicated)
     state.relay_owner = relay and player or nil
     state.admin_relay = admin_relay
     state.dedicated = dedicated == true
+    state.on_emit = function() RequestFlush(inst, state) end
     local world = TheWorld
     state.cleanup = function(why)
+        state.transport_closed, state.on_emit = true, nil
+        state.exchanging, state.flush_pending, state.flush_scheduled = false, false, false
         Cancel(state.poll); Cancel(state.http_timeout)
         state.poll, state.http_timeout = nil, nil
         for id, record in pairs(pending) do

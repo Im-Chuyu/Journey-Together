@@ -359,4 +359,106 @@ Test("a room player shares an existing assistant without stealing its transport 
     assert(state.owner==p and API.Valid(inst)==state and #requests==before and state.observers[other]~=nil)
     API.Close(inst,"done")
 end)
+local function Step(state)
+    local task = assert(state.poll)
+    fixture.advance(task.delay)
+    task.fn()
+end
+local function Ack(request, data)
+    data = data or {}
+    data.ack = {}
+    for _, event in ipairs(request.data.events or {}) do data.ack[#data.ack + 1] = event.event_id end
+    Reply(request, data)
+end
+Test("idle exchanges build snapshots once every two seconds without accumulating timers", function()
+    local inst, p, requests = Setup()
+    local original, snapshots = API.Observation.Snapshot, 0
+    API.Observation.Snapshot = function(...) snapshots = snapshots + 1; return original(...) end
+    local state = Connect(inst, p, requests); Ack(requests[2])
+    for _ = 1, 5 do
+        assert(state.poll.delay == 2)
+        Step(state); Ack(requests[#requests])
+    end
+    assert(#requests == 7 and snapshots == 6 and not state.exchanging)
+    API.Observation.Snapshot = original
+    API.Close(inst, "done")
+end)
+Test("new chat wakes idle transport, coalesces bursts and preserves events arriving in flight", function()
+    local inst, p, requests = Setup(); local state = Connect(inst, p, requests); Ack(requests[2])
+    local idle = state.poll
+    fixture.advance(.6); inst.x = 2
+    assert(API.Input(inst, p, "温蒂，你好"))
+    local wake = state.poll
+    assert(idle.cancelled and wake.delay == .05 and #requests == 2)
+    for _ = 1, 4 do API.Emit(inst, {kind = "test_burst"}) end
+    assert(state.poll == wake)
+    idle.fn(); assert(#requests == 2)
+    Step(state)
+    local in_flight = requests[#requests]
+    assert(#requests == 3 and state.exchanging and in_flight.data.snapshot.position.x == 2)
+    assert(in_flight.data.events[1].kind == "player_input" and #in_flight.data.events == 5)
+    API.Emit(inst, {kind = "test_in_flight"})
+    wake.fn(); assert(#requests == 3 and state.poll == nil)
+    Ack(in_flight)
+    assert(#state.events == 1 and state.events[1].kind == "test_in_flight")
+    assert(state.poll.delay >= .49 and state.poll.delay <= .5)
+    Step(state); local next_request = requests[#requests]
+    assert(#requests == 4 and #next_request.data.events == 1 and next_request.data.events[1].kind == "test_in_flight")
+    Ack(next_request)
+    local scheduled = state.poll
+    API.Close(inst, "done")
+    local after_close = #requests
+    scheduled.fn(); assert(#requests == after_close and scheduled.cancelled and state.on_emit == nil)
+end)
+Test("uncompleted input and leased plans retain the active exchange cadence", function()
+    local inst, p, requests = Setup(); local state = Connect(inst, p, requests); Ack(requests[2])
+    fixture.advance(3)
+    assert(API.Input(inst, p, "温蒂，你好"))
+    Step(state)
+    local input_id = requests[#requests].data.events[1].turn_id
+    Ack(requests[#requests]); fixture.advance(5)
+    Step(state); Ack(requests[#requests])
+    assert(state.poll.delay == .5 and state.inputs[input_id] ~= nil)
+    Step(state); Ack(requests[#requests], {finished_inputs = {input_id}})
+    assert(state.poll.delay == 2)
+    state.plan = {id = "live-plan", revision = state.revision, until_time = GetTime() + 30}
+    Step(state); Ack(requests[#requests])
+    assert(state.poll.delay == .5 and API.PlanActive(inst))
+    state.plan = nil
+    local spoken = API.Call(inst, p, "transport-speech", "say", {text = "你好"})
+    Step(state); Ack(requests[#requests]); fixture.advance(3)
+    Step(state); Ack(requests[#requests])
+    assert(state.poll.delay == .5)
+    API.Playback(inst, spoken.action_id, "disabled")
+    Step(state); Ack(requests[#requests]); fixture.advance(3)
+    Step(state); Ack(requests[#requests])
+    assert(state.poll.delay == 2)
+    API.Close(inst, "done")
+end)
+Test("event wakeups do not bypass timeout backoff or accept a late failed exchange", function()
+    local inst, p, requests = Setup(); local state = Connect(inst, p, requests); Ack(requests[2])
+    fixture.advance(3); API.Emit(inst, {kind = "test_event"}); Step(state)
+    local failed = requests[#requests]
+    state.http_timeout.fn()
+    local retry = state.poll
+    assert(state.failures == 1 and retry.delay == 1 and not state.exchanging)
+    API.Emit(inst, {kind = "test_after_timeout"})
+    assert(state.poll == retry and not retry.cancelled)
+    Reply(failed, {commands = {{request_id = "too-late", skill = "move_to", arguments = {position = {x = 9, z = 0}}}}})
+    assert(state.active == nil and state.poll == retry)
+    Step(state); assert(state.exchanging)
+    Ack(requests[#requests])
+    assert(state.failures == 0 and #state.events == 0)
+    API.Close(inst, "done")
+end)
+Test("a synchronous exchange reply clears its timeout and retains exactly one next poll", function()
+    local inst, p, requests = Setup(); local state = Connect(inst, p, requests); Ack(requests[2])
+    TheSim.QueryServer = function(_, url, callback, method, payload)
+        requests[#requests + 1] = {url = url, data = json.decode(payload)}
+        callback(json.encode({}), true, 200)
+    end
+    Step(state)
+    assert(not state.exchanging and state.http_timeout == nil and state.poll.delay == 2 and #requests == 3)
+    API.Close(inst, "done")
+end)
 print(string.format("%d body transport tests passed", passed))
