@@ -1119,6 +1119,8 @@ model_instructions.md内容改纯文本（保留文件路径兼容），去除�
 
 网页回传排错：waiting_reply一直未出现reply_detected且由页面报reply_timeout时，优先检查DOM提取与nonce，不先认定游戏动作失败。readReply的倒序文本遍历不再用“单节点包含完整编号”作为祖先检查前提，最深24层、有界文本大小及遍历量；可见文本拼接过滤隐藏后代，旧nonce和非协议对象仍拒绝。web_model保存/记录布尔request_seen供诊断，不能将页面包含输入提示词中的编号误当已经收到回复。对应body_web_page定向回归从用户JSON的分段/深嵌套读取到回传accepted；web_sites和WebModelTests检查接续及诊断，不代表真实登录网页验证。
 
+网页首发发送确认：DeepSeek 首次进入会话可能替换输入框，content.execute 在发送后重取可见输入框，不因旧脱离节点仍有提示词而报 send_not_confirmed，也不对该旧节点补点发送；当前新框仍有草稿则保留失败判断。web_model 错误分类补齐发送确认/换会话错误，仅记录白名单元数据。server.submit 对协议 2 返回本机排队 input_id，游戏确认/拒绝消息沿原 ID 回传；desktop 立即显示待确认行，按 ID 原位更新，拒绝恢复输入、断线清理待确认状态。游戏授权、模型启动时机、0.5 秒交换和 100 毫秒 UI 刷新频率保持。定向检查复用 body_web_page/sites、WebModelTests、body_multiplayer_bridge 和无麦克风的隐藏 Tk 用例；不宣称真实网页已验证。
+
 全局按住说话修正：原RegisterHotKey(None)绑定Tk线程但由after轮询PeekMessage，存在消息先被Tk循环取走的路径，且原只提供按下事件。VoiceHotkey改为独立消息线程，在注册线程消费消息/注销，F1～F11注册、F12钩子，事件队列传按下和松开；回调不录音。桌面层按下启动listen_held、松开发送finish；Whisper先采集再加载模型，Windows系统识别用C#事件处理器异步收集语句后停止，避免PowerShell后台回调缺runspace。识别术语UI/传参/预置initial_prompt移除，旧字段保存时清除。定向回归覆盖线程归属、双边沿、松开控制和隐藏UI连接；真实Windows专用消息线程探针确认事件接收，不开启麦克风；游戏物理按键尚待验证。
 
 

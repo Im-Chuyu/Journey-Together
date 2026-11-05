@@ -297,6 +297,14 @@ async function execute(job, prepared = false, deadline = Date.now() + 280000) {
         ? new InputEvent("input", {bubbles: true, inputType: "insertText", data: job.prompt})
         : new Event("input", {bubbles: true}));
     ownedComposer = {box, request: job.request_id, text: box.value || box.textContent || ""};
+    function unsentComposer() {
+        // The first DeepSeek submission can replace the landing-page editor.
+        // Its detached node may retain the already-sent prompt indefinitely.
+        // Inspect the current visible editor; never resend from a stale node.
+        const current = inputBox();
+        const editor = current || (box.isConnected === false ? null : box);
+        return editor && (editor.value || editor.textContent || "").trim() ? editor : null;
+    }
     await sleep(400);
     if (activeRequest !== job.request_id) throw pageError("request_superseded", "request_superseded");
     const doubao = typeof location !== "undefined" && BuddySites.identify(location.href)?.id === "doubao";
@@ -317,14 +325,14 @@ async function execute(job, prepared = false, deadline = Date.now() + 280000) {
     }
     await sleep(1400);
     if (activeRequest !== job.request_id) throw pageError("request_superseded", "request_superseded");
-    if (!clicked && (box.value || box.textContent || "").trim()) {
+    if (!clicked && unsentComposer() === box) {
         const send = sendButton(box);
         if (send) { send.click(); clicked = true; }
     }
     // A successful DOM click is not proof of submission. Fail promptly with a
     // useful diagnosis instead of waiting minutes for a reply to unsent text.
-    for (let n=0; n<15 && (box.value || box.textContent || "").trim() && !contextLimited(); n++) await sleep(200);
-    if ((box.value || box.textContent || "").trim() && !contextLimited())
+    for (let n=0; n<15 && unsentComposer() && !contextLimited(); n++) await sleep(200);
+    if (unsentComposer() && !contextLimited())
         throw pageError("send_not_confirmed", "输入仍停留在网页编辑框，发送未确认。请检查发送控件或输入法状态；为避免重复发送，本轮没有再次点击。");
     pageProgress.phase = "waiting_reply";
     let last = null, since = 0;

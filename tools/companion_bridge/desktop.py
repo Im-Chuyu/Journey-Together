@@ -30,6 +30,7 @@ def desktop(store, server, language):
     voice_installer = [None]
     speaking = queue.Queue(maxsize=12)
     closed = threading.Event()
+    poll_timer = [None]
     speech_epoch = [0]
     ttk.Label(root, text="模式：" + getattr(store.adapter, "label", type(store.adapter).__name__)).pack(anchor="w", padx=12, pady=6)
     pairing_line = tk.StringVar(value=f'游戏配对码：{store.code}；可在模组配置启用AI大模型模式，也可复制手动命令。')
@@ -176,10 +177,26 @@ def desktop(store, server, language):
     held_release = threading.Event()
     held_recording = [False]
 
-    def append(text):
-        log.insert("end", text + "\n"); log.see("end")
+    local_inputs = {}
+
+    def append(text, tag=None):
+        log.insert("end", text + "\n", (tag,) if tag else ()); log.see("end")
         if int(log.index("end-1c").split(".")[0]) > 300:
             log.delete("1.0", "50.0")
+
+    def resolve_input(event, text):
+        input_id = event.get("input_id")
+        if input_id not in local_inputs:
+            return False
+        del local_inputs[input_id]
+        tag = "local_input_" + input_id
+        ranges = log.tag_ranges(tag)
+        if ranges:
+            start = str(ranges[0])
+            log.delete(ranges[0], ranges[-1])
+            log.insert(start, text + "\n")
+        log.tag_delete(tag)
+        return True
 
     def submit():
         text = entry.get("1.0", "end").strip()
@@ -189,7 +206,10 @@ def desktop(store, server, language):
             if hasattr(store.adapter, "connection_state"):
                 if store.adapter.connection_state() == "disconnected":
                     raise BridgeError("网页尚未连通：刷新当前模型聊天页，在扩展中重新连接，确认弹窗显示网页和助手均已连通。")
-            store.submit(text)
+            input_id = store.submit(text)
+            if input_id:
+                local_inputs[input_id] = text
+                append("你（待游戏确认）：" + text, "local_input_" + input_id)
             speech_epoch[0] += 1; voice.stop()
             entry.delete("1.0", "end")
         except BridgeError as error:
@@ -277,6 +297,8 @@ def desktop(store, server, language):
         message.config(text=voice_hotkey.get() + " 注册失败或被占用，请在设置更换或使用语音输入按钮。")
 
     def poll():
+        poll_timer[0] = None
+        if closed.is_set(): return
         for down in hotkey.poll_events():
             if down: start_held()
             elif held_recording[0]:
@@ -308,7 +330,8 @@ def desktop(store, server, language):
             elif kind == "input_rejected":
                 reason = {"companion_name_required": "请在消息中包含伙伴名字。", "rate_limited": "消息太快，请稍后再说。"}.get(event.get("reason"), "游戏未接收消息，请检查连接。")
                 message.config(text=reason)
-                append("未发送：" + reason)
+                if not resolve_input(event, "未发送：" + event.get("text", "") + "（" + reason + "）"):
+                    append("未发送：" + reason)
                 if event.get("text") and not entry.get("1.0", "end").strip(): entry.insert("1.0", event["text"])
             elif kind == "assistant":
                 append("伙伴：" + event["text"])
@@ -320,11 +343,15 @@ def desktop(store, server, language):
                 else: store.speech(event.get("action_id"), "disabled")
             elif kind == "disconnected":
                 speech_epoch[0] += 1; voice.stop()
+                for input_id, text in list(local_inputs.items()):
+                    resolve_input({"input_id": input_id}, "未确认：" + text)
                 append("控制已结束：" + str(event.get("reason")))
             elif kind == "task_replaced":
                 speech_epoch[0] += 1; voice.stop()
                 append("游戏新指令已接替旧模型任务，连接保持。")
-            elif kind == "user": append((event.get("speaker") or "玩家") + "：" + event["text"])
+            elif kind == "user":
+                text = (event.get("speaker") or "玩家") + "：" + event["text"]
+                if not resolve_input(event, text): append(text)
             else: append(json.dumps(event, ensure_ascii=False)[:8000])
         status = "游戏已连接" if store.connected else "等待游戏配对"
         if getattr(store.adapter, "diagnostics_kind", None) == "api":
@@ -334,9 +361,11 @@ def desktop(store, server, language):
             status += {"connected": " · 模型网页已连接", "background": " · 网页后台等待（仍可发送）",
                        "disconnected": " · 网页暂未连通，请检查浏览器"}[store.adapter.connection_state()]
         connection.config(text=status)
-        if not closed.is_set(): root.after(100, poll)
+        if not closed.is_set(): poll_timer[0] = root.after(100, poll)
 
     def close():
+        if poll_timer[0] is not None:
+            root.after_cancel(poll_timer[0]); poll_timer[0] = None
         closed.set(); listener_stop.set(); held_release.set(); voice.close(); store.close()
         installer = voice_installer[0]
         if installer is not None and installer.poll() is None:
@@ -346,7 +375,7 @@ def desktop(store, server, language):
         hotkey.close()
         root.destroy()
     root.protocol("WM_DELETE_WINDOW", close)
-    root.after(100, poll)
+    poll_timer[0] = root.after(100, poll)
     root.mainloop()
 
 

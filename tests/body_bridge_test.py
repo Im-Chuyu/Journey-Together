@@ -503,6 +503,22 @@ class WebModelTests(unittest.TestCase):
         self.assertIsNone(adapter.diagnostics()["phase"])
         adapter.close()
 
+    def test_send_confirmation_failure_keeps_its_safe_diagnostic_code(self):
+        adapter = DeepSeekWebAdapter()
+        adapter.poll()
+        def fail_first_send(_):
+            adapter.receive({"request_id": adapter.pending["request_id"], "text": "",
+                             "error": "private failure detail", "error_code": "send_not_confirmed"})
+        try:
+            with self.assertLogs("companion_bridge", level="WARNING") as captured, \
+                 patch.object(adapter.condition, "wait", side_effect=fail_first_send):
+                with self.assertRaisesRegex(ValueError, "private failure detail"):
+                    adapter.decide({"utterance": "first message", "tools": TOOLS})
+            self.assertIn("reason=send_not_confirmed", "\n".join(captured.output))
+            self.assertNotIn("private failure detail", "\n".join(captured.output))
+        finally:
+            adapter.close()
+
     def test_background_tab_grace_and_true_expiration_are_distinct(self):
         adapter = DeepSeekWebAdapter()
         with patch("tools.companion_bridge.web_model.time.monotonic", return_value=1000):

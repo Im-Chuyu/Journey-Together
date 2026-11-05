@@ -52,14 +52,21 @@ class MultiplayerTests(unittest.TestCase):
                                "skill": command["skill"], "status": status, "result": result or {}}])
 
     def test_assistant_text_waits_for_native_name_and_identity_validation(self):
-        self.store.submit("温蒂，你好")
+        input_id = self.store.submit("温蒂，你好")
         request = self.exchange()["inputs"][0]
+        self.assertEqual(input_id, request["id"])
         self.assertEqual(self.model.contexts, [])
         self.exchange([self.input("native-1", input_id=request["id"])])
         self.until(lambda: not self.store.busy)
         self.assertFalse(self.exchange()["inputs"])
         self.assertEqual(len(self.model.contexts), 1)
         self.assertIn("native-1", self.exchange()["finished_inputs"])
+        messages = []
+        while not self.store.messages.empty():
+            messages.append(self.store.messages.get_nowait())
+        users = [event for event in messages if event["kind"] == "user"]
+        self.assertEqual(len(users), 1)
+        self.assertEqual(users[0]["input_id"], input_id)
 
     def test_rejected_unnamed_input_does_not_invoke_model_or_replace_a_plan(self):
         self.store.busy = True

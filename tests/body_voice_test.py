@@ -287,5 +287,86 @@ class VoiceTests(unittest.TestCase):
         if failures: raise failures[0]
 
 
+    def test_desktop_echoes_pending_text_and_updates_accepted_rejected_and_disconnected_rows(self):
+        import tkinter as tk
+        from tkinter import ttk
+        from tools.companion_bridge.desktop import desktop
+        from tools.companion_bridge.server import Store
+        native_tk = tk.Tk
+        failures = []
+        contexts = []
+        adapter = Mock()
+        adapter.label = "test"
+        adapter.decide.side_effect = lambda context: contexts.append(context) or {}
+        del adapter.connection_state
+        del adapter.secret
+        adapter.diagnostics_kind = None
+        store = Store(adapter)
+        token = store.connect({"code": store.code, "session": "echo", "input_protocol": 2})["token"]
+
+        def widgets(root):
+            for child in root.winfo_children():
+                yield child
+                yield from widgets(child)
+
+        def hidden_tk():
+            root = native_tk(); root.withdraw()
+            def finish(): root.tk.call(root.protocol("WM_DELETE_WINDOW"))
+            def check(fn):
+                try: fn()
+                except Exception as error: failures.append(error); finish()
+            def send(text):
+                entry.delete("1.0", "end"); entry.insert("1.0", text)
+                button.invoke()
+                self.assertIn(text, log.get("1.0", "end"))
+                self.assertIn("待游戏确认", log.get("1.0", "end"))
+                return next(iter(store.inputs))
+            def exchange(event=None, **extra):
+                return store.exchange({"token": token, "session": "echo", "events": [event] if event else [], **extra})
+            def begin():
+                nonlocal entry, log, button
+                entry, log = [w for w in widgets(root) if isinstance(w, tk.Text)]
+                button = next(w for w in widgets(root) if isinstance(w, ttk.Button) and w.cget("text") == "发送文字")
+                input_id = send("第一条本机消息")
+                self.assertEqual(contexts, [])
+                exchange({"event_id": "accept", "kind": "player_input", "input_id": input_id,
+                          "turn_id": "turn", "text": "第一条本机消息", "speaker": {"name": "发言者", "userid": "owner"}})
+                root.after(180, lambda: check(accepted))
+            def accepted():
+                text = log.get("1.0", "end")
+                self.assertEqual(text.count("第一条本机消息"), 1)
+                self.assertIn("发言者：第一条本机消息", text)
+                self.assertNotIn("待游戏确认", text)
+                input_id = send("需要拒绝的消息")
+                exchange({"event_id": "reject", "kind": "input_rejected", "input_id": input_id, "reason": "rate_limited"})
+                root.after(180, lambda: check(rejected))
+            def rejected():
+                text = log.get("1.0", "end")
+                self.assertEqual(text.count("需要拒绝的消息"), 1)
+                self.assertIn("未发送：需要拒绝的消息", text)
+                self.assertEqual(entry.get("1.0", "end").strip(), "需要拒绝的消息")
+                send("断线前的消息")
+                exchange(closing="test_disconnect")
+                root.after(180, lambda: check(disconnected))
+            def disconnected():
+                text = log.get("1.0", "end")
+                self.assertIn("未确认：断线前的消息", text)
+                self.assertNotIn("待游戏确认", text)
+                finish()
+            entry = log = button = None
+            root.after(20, lambda: check(begin))
+            root.after(3000, finish)
+            return root
+
+        hotkey = Mock()
+        hotkey.poll_events.return_value = []
+        with patch.object(tk, "Tk", side_effect=hidden_tk), \
+             patch("tools.companion_bridge.desktop.WindowsVoice"), \
+             patch("tools.companion_bridge.desktop.VoiceHotkey", return_value=hotkey), \
+             patch.object(settings, "load", return_value={"voice_hotkey": "F9"}):
+            desktop(store, None, "zh-CN")
+        if failures: raise failures[0]
+
+
 if __name__ == "__main__":
     unittest.main()

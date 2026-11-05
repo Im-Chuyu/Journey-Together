@@ -138,7 +138,8 @@ class Store:
                 if event.get("kind") in {"player_input", "input_rejected"}:
                     pending = self.inputs.pop(event.get("input_id"), None)
                     if event["kind"] == "input_rejected":
-                        self.notify("input_rejected", reason=event.get("reason"), text=pending["text"] if pending else "")
+                        self.notify("input_rejected", reason=event.get("reason"), text=pending["text"] if pending else "",
+                                    input_id=event.get("input_id"))
                     else:
                         self._receive_input_locked(event)
                     continue
@@ -282,7 +283,7 @@ class Store:
                 input_id = secrets.token_hex(12)
                 self.inputs[input_id] = {"id": input_id, "text": text.strip()}
                 self.condition.notify_all()
-                return
+                return input_id
             self._start_turn_locked(text.strip(), source)
 
     def _receive_input_locked(self, event):
@@ -291,7 +292,7 @@ class Store:
             return
         self.input_seen.append(turn_id)
         self.last_user_at = time.monotonic()
-        self.notify("user", text=text, speaker=speaker.get("name"))
+        self.notify("user", text=text, speaker=speaker.get("name"), input_id=event.get("input_id"))
         if self.busy and self.turn_source == "user" and not event.get("can_work"):
             if len(self.chat_queue) >= 16:
                 self.finished_inputs.append(turn_id)

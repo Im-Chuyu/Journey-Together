@@ -35,6 +35,56 @@ assert.deepEqual(JSON.parse(parse("prose\n```json\n" + JSON.stringify(current) +
 assert.equal(parse('{"request_id":"nonce","arguments":{"target":"e1"'), null);
 assert.equal(parse(JSON.stringify({request_id: "old", skill: "observe"}) + JSON.stringify(current)), JSON.stringify(current));
 async function main() {
+    // DeepSeek's first send can replace the landing-page composer while its
+    // detached DOM node still retains the prompt that was already submitted.
+    {
+        let time = 0, sends = 0, clicks = 0, preserveDraft = false;
+        const answer = {request_id: "first-chat", text: "第一条回复。"};
+        let liveBox;
+        class FirstBox extends TextArea {
+            get value() { return this.text; }
+            set value(value) { this.text = value; }
+            dispatchEvent(event) {
+                if (event.type === "keydown") {
+                    sends++;
+                    this.isConnected = false;
+                    liveBox = new FirstBox();
+                    if (preserveDraft) liveBox.value = this.value;
+                    context.document.body.innerText = JSON.stringify(answer);
+                }
+            }
+        }
+        const initialBox = liveBox = new FirstBox();
+        const context = {
+            setInterval() {}, setTimeout(fn, ms) { time += ms; fn(); }, clearTimeout() {},
+            Date: {now: () => time}, HTMLTextAreaElement: FirstBox,
+            Event: sandbox.Event, KeyboardEvent: sandbox.KeyboardEvent,
+            window: {addEventListener() {}},
+            document: {addEventListener() {}, body: {innerText: ""},
+                querySelectorAll: selector => selector.startsWith("textarea") ? [liveBox]
+                    : selector.startsWith('[data-testid="chat_input_send_button"]') ? [{getClientRects: () => [1],
+                        getAttribute: () => null, closest: () => null, click() { clicks++; }}] : []},
+            chrome: {runtime: {onMessage: {addListener() {}}, sendMessage: async () => ({connected: false})}},
+        };
+        vm.createContext(context);
+        vm.runInContext(fs.readFileSync("tools/companion_bridge/browser_extension/sites.js", "utf8"), context);
+        vm.runInContext(fs.readFileSync("tools/companion_bridge/browser_extension/content.js", "utf8"), context);
+        await new Promise(setImmediate);
+        vm.runInContext('activeRequest="first-chat"', context);
+        const reply = await vm.runInContext('execute({request_id:"first-chat",prompt:"first prompt"})', context);
+        assert.deepEqual(JSON.parse(reply), answer);
+        assert.equal(initialBox.value, "first prompt");
+        assert.equal(sends, 1);
+        assert.equal(clicks, 0);
+        console.log("PASS first-conversation composer replacement preserves the first reply without resubmitting");
+        preserveDraft = true;
+        liveBox = new FirstBox();
+        vm.runInContext('activeRequest="unsent-first-chat"', context);
+        await assert.rejects(vm.runInContext('execute({request_id:"unsent-first-chat",prompt:"still unsent"})', context),
+            error => error.code === "send_not_confirmed");
+        assert.equal(clicks, 0, "a replacement containing an unsent draft must not trigger a duplicate click");
+        console.log("PASS a replacement editor retaining an unsent draft still reports send_not_confirmed");
+    }
     sandbox.document.body.innerText = JSON.stringify(current);
     vm.runInContext('activeRequest="nonce"', sandbox);
     const result = await vm.runInContext('execute({request_id:"nonce",prompt:"generic model request"})', sandbox);

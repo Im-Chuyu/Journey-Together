@@ -96,7 +96,8 @@ class WebChatAdapter:
                     self.condition.wait(.5)
                 if self.reply.get("error"):
                     code = self.reply.get("error_code")
-                    allowed = {"no_input", "composer_not_empty", "request_superseded", "reply_timeout", "page_error"}
+                    allowed = {"no_input", "composer_not_empty", "request_superseded", "reply_timeout", "page_error",
+                               "send_not_confirmed", "context_limit", "new_chat_failed", "new_chat_unavailable"}
                     LOG.warning("model_page_error reason=%s", code if isinstance(code, str) and code in allowed else "unknown")
                     raise ValueError(str(self.reply["error"])[:180])
                 try:
