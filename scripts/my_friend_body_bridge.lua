@@ -343,6 +343,7 @@ function M.Connect(inst, player, code, relay, attempt, dedicated)
     state.on_emit = function() RequestFlush(inst, state) end
     local world = TheWorld
     state.cleanup = function(why)
+        if why == "user_disconnected" then stopped_worlds[world] = true end
         state.transport_closed, state.on_emit = true, nil
         state.exchanging, state.flush_pending, state.flush_scheduled = false, false, false
         Cancel(state.poll); Cancel(state.http_timeout)
@@ -369,7 +370,7 @@ function M.Connect(inst, player, code, relay, attempt, dedicated)
             if observer:IsValid() then Notify(observer, "disconnected", why, observer_attempt or nil) end
         end
     end
-    state.http_timeout = Post(inst, state, "connect", {code = code, session = state.session,
+    local timeout = Post(inst, state, "connect", {code = code, session = state.session,
         capabilities = API.NAMES, input_protocol = 2, companion = inst.prefab, owner = player:GetDisplayName()}, function(reply, err)
         state.http_timeout = nil
         if not inst:IsValid() or inst._my_friend_body ~= state then return end
@@ -382,6 +383,7 @@ function M.Connect(inst, player, code, relay, attempt, dedicated)
         state.token = reply.token
         Poll(inst, state)
     end)
+    if inst._my_friend_body == state and state.token == nil then state.http_timeout = timeout end
     return true
 end
 local function DedicatedOwner(friend)
@@ -399,8 +401,12 @@ function M.TryDedicated(friend, code)
     local now = (GetStaticTime or GetTime)()
     if now < (world._my_friend_dedicated_pair_after or 0) then return end
     local player = DedicatedOwner(friend)
+    if player == nil then
+        local sent = require("my_friend_body_shard").Offer(code)
+        if sent then world._my_friend_dedicated_pair_after = now + 10 end
+        return sent
+    end
     world._my_friend_dedicated_pair_after = now + 10
-    if player == nil then return require("my_friend_body_shard").Offer(code) end
     return M.Connect(friend, player, code, false, nil, true)
 end
 
@@ -445,12 +451,15 @@ function M.Control(operation, code, from_automatic, attempt)
     return true
 end
 function M.AttachAuto(player, enabled, code)
-    if not enabled or player._my_friend_auto_model_attached or player:HasTag("my_friend") then return end
+    if not enabled or Dedicated() or player._my_friend_auto_model_attached or player:HasTag("my_friend") then return end
     player._my_friend_auto_model_attached = true
     local world = TheWorld
-    local activate
+    local activate, activation_task, activated
     activate = function()
         if player ~= ThePlayer or TheWorld ~= world or stopped_worlds[world] or not player:IsValid() then return end
+        if activated then return end
+        activated = true
+        Cancel(activation_task); activation_task = nil
         player:RemoveEventCallback("playeractivated", activate, world)
         if automatic ~= nil then automatic:Stop() end
         automatic = require("my_friend_body_autoconnect").New(player, code, function(value, attempt)
@@ -464,7 +473,7 @@ function M.AttachAuto(player, enabled, code)
         end)
     end
     player:ListenForEvent("playeractivated", activate, world)
-    player:DoStaticTaskInTime(1, activate)
+    activation_task = player:DoStaticTaskInTime(1, activate)
 end
 function M.Install(api, enabled, options)
     local chat_api = api
@@ -524,12 +533,26 @@ function M.Install(api, enabled, options)
     end)
     api.AddModRPCHandler("MyFriends", "BodyControl", function(player, operation, payload)
         if type(operation) ~= "string" or type(payload) ~= "string" or #payload > 4096 then return end
+        if TheWorld == nil or not TheWorld.ismastersim then return end
+        if not require("my_friend_policy").IsLocalPlayer(player) then return end
         local friend = TheWorld ~= nil and TheWorld._my_friend or nil
         local ok, args = pcall(json.decode, payload)
         if not ok or type(args) ~= "table" then return end
         if args.attempt ~= nil and (type(args.attempt) ~= "number" or args.attempt < 1 or args.attempt > 1000000 or args.attempt % 1 ~= 0) then return end
+        if operation == "connect" then
+            if args.attempt ~= nil and stopped_worlds[TheWorld] then
+                Notify(player, "failed", "user_disconnected", args.attempt); return
+            end
+            stopped_worlds[TheWorld] = nil
+        end
         if friend == nil then
-            if operation == "disconnect" then require("my_friend_body_shard").Disconnect(player); return end
+            if operation == "disconnect" then
+                if require("my_friend_body_shard").Disconnect(player) then
+                    stopped_worlds[TheWorld] = true
+                    Notify(player, "disconnected", "user_disconnected")
+                end
+                return
+            end
             if operation == "connect" then
                 local accepted, reason = require("my_friend_body_shard").Request(player, args.code, args.attempt)
                 if not accepted then Notify(player, "failed", reason, args.attempt) end
@@ -549,7 +572,8 @@ function M.Install(api, enabled, options)
             result = {status = accepted and "connecting" or "failed", reason = reason, attempt = args.attempt}
         elseif operation == "disconnect" then
             local state = friend._my_friend_body
-            if state ~= nil and (state.owner ~= player or state.dedicated) then return end
+            if state ~= nil and state.owner ~= player then return end
+            stopped_worlds[TheWorld] = true
             API.Close(friend, "user_disconnected"); result = {status = "disconnected"}
         elseif operation == "call" then
             serial = serial + 1
@@ -568,7 +592,10 @@ function M.Install(api, enabled, options)
     -- Appended after existing handlers to preserve every established RPC ID.
     local forwards = {}
     require("my_friend_body_shard").Install(chat_api, enabled, {
+        can_request = function() return not stopped_worlds[TheWorld] end,
         connect = function(inst, actor, code, attempt, server_http)
+            if stopped_worlds[TheWorld] and (attempt ~= nil or server_http) then return false, "user_disconnected" end
+            stopped_worlds[TheWorld] = nil
             if server_http and Dedicated() and not AdminRelayMode() then
                 return M.Connect(inst, actor, code, false, attempt, true)
             end

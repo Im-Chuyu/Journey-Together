@@ -23,7 +23,7 @@ for i = 1, 6 do
     model_pair_code = model_pair_code .. (digit:match("^%d$") and digit or ("321151"):sub(i, i))
 end
 
-require("my_friend_body_bridge").Install({
+require("my_friend_body_startup").Install({
     AddModRPCHandler = AddModRPCHandler, AddClientModRPCHandler = AddClientModRPCHandler,
     SendModRPCToClient = SendModRPCToClient, GetClientModRPC = GetClientModRPC,
     SendModRPCToServer = SendModRPCToServer, GetModRPC = GetModRPC,

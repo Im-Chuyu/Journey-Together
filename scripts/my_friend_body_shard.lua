@@ -17,10 +17,14 @@ end
 local function Send(shards, data)
     if rpc == nil or rpc.SendModRPCToShard == nil or rpc.GetShardModRPC == nil then return false end
     if type(shards) ~= "table" then shards = {tostring(shards)} end
-    if #shards == 0 then return false end
+    local targets = {}
+    for _, shard in ipairs(shards) do
+        if Online(shard) then targets[#targets + 1] = tostring(shard) end
+    end
+    if #targets == 0 then return false end
     local payload = json.encode(data)
     if #payload > 64000 then return false end
-    rpc.SendModRPCToShard(rpc.GetShardModRPC("MyFriends", "BodyShardLink"), shards, payload)
+    rpc.SendModRPCToShard(rpc.GetShardModRPC("MyFriends", "BodyShardLink"), targets, payload)
     return true
 end
 local function Capture(player)
@@ -67,7 +71,8 @@ local function Drop(record, reason, notify)
     Cancel(record.timeout); Cancel(record.watch)
     for _, cancel in pairs(record.forwarding) do cancel() end
     if record.target ~= nil then
-        Send(record.target, {op = "stop", id = record.id, userid = record.player.userid})
+        Send(record.target, {op = "stop", id = record.id, userid = record.player.userid,
+            manual = reason == "user_disconnected"})
         -- Best effort close while the client is still changing shards. A new
         -- link never inherits pending commands or the previous actor identity.
         if record.last_exchange ~= nil then
@@ -96,6 +101,7 @@ end
 function M.Request(player, code, attempt, server_http)
     if not enabled or not Policy.IsLocalPlayer(player) or type(player.userid) ~= "string"
         or type(code) ~= "string" or not code:match("^%d%d%d%d%d%d$") then return false, "permission_denied" end
+    if hooks.can_request ~= nil and not hooks.can_request() then return false, "user_disconnected" end
     local old = outgoing[player]
     local count = 0
     for owner, record in pairs(outgoing) do
@@ -109,7 +115,7 @@ function M.Request(player, code, attempt, server_http)
             hooks.notify(player, old.connected and "connected" or "connecting", nil, attempt)
             return true
         end
-        Drop(old, "user_disconnected")
+        Drop(old, "owner_or_body_changed")
     end
     local shards, candidates = {}, {}
     for shard in pairs(Shard_GetConnectedShards ~= nil and Shard_GetConnectedShards() or {}) do
@@ -141,7 +147,7 @@ function M.Offer(code)
     for shard in pairs(Shard_GetConnectedShards ~= nil and Shard_GetConnectedShards() or {}) do
         if Online(shard) then shards[#shards + 1] = tostring(shard) end
     end
-    Send(shards, {op = "offer", id = "server-offer", userid = "server", code = code})
+    return Send(shards, {op = "offer", id = "server-offer", userid = "server", code = code})
 end
 function M.Disconnect(player)
     local record = outgoing[player]
@@ -160,10 +166,14 @@ function M.Post(inst, actor, path, payload, callback)
         callback(reply, reason)
     end
     record.finish = Finish
+    function record:Cancel()
+        if requests[id] == self then requests[id] = nil end
+        Cancel(self.timeout)
+    end
     record.timeout = inst:DoStaticTaskInTime(8, function() Finish(nil, "timeout") end)
     if not Send(actor.shard, {op = "http", id = actor.link, userid = actor.userid,
         request = id, path = path, payload = payload, admin = actor.requires_admin}) then Finish(nil, "shard_unavailable") end
-    return record.timeout
+    return record
 end
 function M.Public(actor, payload, input)
     return Send(actor.shard, {op = "public", id = actor.link, userid = actor.userid, payload = payload, input = input})
@@ -301,7 +311,7 @@ function M.Install(api, on, callbacks)
             elseif data.op == "stop" then
                 local inst = TheWorld._my_friend
                 if inst ~= nil and inst._my_friend_body ~= nil and inst._my_friend_body.owner == actor then
-                    require("my_friend_body_api").Close(inst, "owner_or_body_changed")
+                    require("my_friend_body_api").Close(inst, data.manual == true and "user_disconnected" or "owner_or_body_changed")
                 end
                 incoming[actor.key] = nil
             end

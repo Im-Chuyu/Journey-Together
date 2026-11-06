@@ -19,6 +19,7 @@ PUBLIC = {"query_batch", "say", "observe", "query_recipe", "query_sites", "query
           "save_game", "rollback_game", "pause_game", "kick_player", "ban_player"}
 AMBIENT = {"say", "observe", "query_actions", "get_capabilities", "emote", "move_to", "equip", "unequip", "interact"}
 TERMINAL = {"completed", "failed", "cancelled", "interrupted"}
+CONNECTION_TIMEOUT = 20
 
 
 class BridgeError(Exception):
@@ -87,7 +88,7 @@ class Store:
         if not isinstance(session, str) or not 1 <= len(session) <= 128:
             raise BridgeError("会话格式不正确")
         with self.condition:
-            if self.connected and time.monotonic() - self.last_seen <= 20:
+            if self.is_connected():
                 if self.session == session:
                     return {"token": self.token, "protocol": 1}
                 raise BridgeError("已有游戏连接，请先断开")
@@ -107,7 +108,7 @@ class Store:
     def exchange(self, data):
         with self.condition:
             token = data.get("token")
-            if self.session is None or not isinstance(token, str) or not token.isascii() or not hmac.compare_digest(token, self.token) or data.get("session") != self.session:
+            if not self.is_connected() or not isinstance(token, str) or not token.isascii() or not hmac.compare_digest(token, self.token) or data.get("session") != self.session:
                 raise BridgeError("会话已失效")
             self.last_seen = time.monotonic()
             snapshot = data.get("snapshot")
@@ -203,6 +204,19 @@ class Store:
                     packet[key].pop()
             return packet
 
+    def is_connected(self):
+        with self.condition:
+            if self.connected and time.monotonic() - self.last_seen > CONNECTION_TIMEOUT:
+                self.connected = False
+                self.current_action = None
+                self.inputs.clear()
+                self.chat_queue.clear()
+                self.playback.clear()
+                self._invalidate_locked()
+                self.notify("disconnected", reason="connection_timeout")
+                LOG.info("game_closed reason=connection_timeout")
+            return self.connected and not self.stopped
+
     def speech(self, action_id, status):
         if not isinstance(action_id, str) or status not in {"queued", "playing", "completed", "failed", "disabled"}:
             return
@@ -226,7 +240,7 @@ class Store:
                 raise PlanCancelled("新指令已接替旧规划")
             if expected_session is not None and expected_session != self.session:
                 raise BridgeError("游戏会话已改变，旧模型回复已丢弃")
-            if self.stopped or not self.connected or time.monotonic() - self.last_seen > 20:
+            if not self.is_connected():
                 raise BridgeError("游戏尚未连接或连接已失效")
             if len(self.commands) >= 16:
                 raise BridgeError("待处理动作过多")
@@ -254,7 +268,7 @@ class Store:
                 if result is not None and (result.get("status") in TERMINAL
                                            or accept_running and result.get("status") in {"accepted", "running"}):
                     return result
-                if self.stopped or not self.connected or time.monotonic() - self.last_seen > 20:
+                if not self.is_connected():
                     raise BridgeError("游戏连接中断，等待重新配对")
                 if time.monotonic() >= deadline:
                     raise BridgeError("等待动作结果超时；请检查游戏状态")
@@ -287,7 +301,7 @@ class Store:
             if not text or len(text) > 150:
                 raise BridgeError("同步到游戏聊天的消息最多150个字符；可缩短内容或关闭聊天同步")
         with self.condition:
-            if not self.connected:
+            if not self.is_connected():
                 raise BridgeError("请先在游戏中配对连接")
             if source == "user" and self.input_protocol >= 2:
                 if len(self.inputs) >= 16:
@@ -333,7 +347,7 @@ class Store:
         with self.condition:
             if not getattr(self.adapter, "ambient_enabled", True):
                 return False
-            if self.stopped or not self.connected or self.busy or self.commands or self.inputs or self.chat_queue or self.current_action or time.monotonic() - self.last_user_at < 60:
+            if not self.is_connected() or self.busy or self.commands or self.inputs or self.chat_queue or self.current_action or time.monotonic() - self.last_user_at < 60:
                 return False
             if any(self.snapshot.get(key) for key in ("emergency", "action", "pending", "busy", "manual_task", "planning")):
                 return False
@@ -575,7 +589,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/health":
-            state = {"protocol": "my_friend_body/1", "connected": self.server.store.connected}
+            state = {"protocol": "my_friend_body/1", "connected": self.server.store.is_connected()}
             diagnostics = getattr(self.server.store.adapter, "diagnostics", None)
             if callable(diagnostics):
                 state[getattr(self.server.store.adapter, "diagnostics_kind", "web")] = diagnostics()

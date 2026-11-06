@@ -31,6 +31,31 @@ const sleep = ms => new Promise(resolve => {
     wakeSleep = finish;
     timer = setTimeout(finish, ms);
 });
+// Observe only while waiting for a reply. Coalesce streaming mutations to at
+// most four DOM reads/second; the timer also works on quiet/background pages.
+function waitReplyChange(ms) {
+    return new Promise(resolve => {
+        const started = Date.now();
+        let timer, wakeTimer, observer;
+        const finish = () => {
+            clearTimeout(timer);
+            if (wakeTimer !== undefined) clearTimeout(wakeTimer);
+            if (observer) observer.disconnect();
+            if (wakeSleep === wake) wakeSleep = null;
+            resolve();
+        };
+        const wake = () => {
+            if (wakeTimer === undefined)
+                wakeTimer = setTimeout(finish, Math.max(0, 250 - (Date.now() - started)));
+        };
+        wakeSleep = wake;
+        if (typeof MutationObserver !== "undefined" && document.body) {
+            observer = new MutationObserver(wake);
+            observer.observe(document.body, {childList: true, characterData: true, subtree: true});
+        }
+        timer = setTimeout(finish, ms);
+    });
+}
 function inputBox() {
     const doubao = typeof location !== "undefined" && BuddySites.identify(location.href)?.id === "doubao";
     if (doubao) {
@@ -347,9 +372,7 @@ async function execute(job, prepared = false, deadline = Date.now() + 280000) {
     if (unsentComposer() && !contextLimited() && !readReply(job.request_id).request_seen)
         throw pageError("send_not_confirmed", "输入仍停留在网页编辑框，发送未确认。请检查发送控件或输入法状态；为避免重复发送，本轮没有再次点击。");
     pageProgress.phase = "waiting_reply";
-    let last = null, since = 0;
     while (Date.now() < deadline) {
-        await sleep(1000);
         if (activeRequest !== job.request_id) throw pageError("request_superseded", "request_superseded");
         // Exclude the composer. Only a JSON object with this request's nonce
         // may cross back into the game; prose/reasoning is never executed.
@@ -361,11 +384,11 @@ async function execute(job, prepared = false, deadline = Date.now() + 280000) {
         }
         pageProgress = {request_id: job.request_id, phase: reply ? "reply_detected" : "waiting_reply",
             blocks: found.blocks, source: found.source, request_seen: found.request_seen};
-        if (reply && reply === last && Date.now() - since >= 2500) return reply;
-        if (reply !== last) { last = reply; since = Date.now(); }
+        if (reply) return reply;
+        await waitReplyChange(750);
     }
     throw pageError("reply_timeout", pageProgress?.request_seen
-        ? "扩展读取网页回复超时：页面出现本轮 request_id，但尚未拼接出稳定有效的 JSON。请检查回复是否完整或被页面格式拆分。"
+        ? "扩展读取网页回复超时：页面出现本轮 request_id，但尚未拼接出完整有效的 JSON。请检查回复是否完整或被页面格式拆分。"
         : "扩展读取网页回复超时：页面尚未发现匹配本轮 request_id 的 JSON。请检查回复编号、消息是否显示在当前页面及网页加载状态。");
 }
 async function pollOnce() {

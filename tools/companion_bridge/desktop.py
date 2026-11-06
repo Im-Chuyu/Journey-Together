@@ -207,7 +207,7 @@ def desktop(store, server, language):
     def submit():
         text = entry.get("1.0", "end").strip()
         try:
-            if not store.connected:
+            if not store.is_connected():
                 raise BridgeError("游戏未连接：确认模组开启AI大模型模式、六位码一致，并等待自动连接；也可复制手动配对命令。")
             if hasattr(store.adapter, "connection_state"):
                 if store.adapter.connection_state() == "disconnected":
@@ -367,7 +367,7 @@ def desktop(store, server, language):
                 append(text)
                 message.config(text="游戏已接收消息。")
             else: append(json.dumps(event, ensure_ascii=False)[:8000])
-        status = "游戏已连接" if store.connected else "等待游戏配对"
+        status = "游戏已连接" if store.is_connected() else "等待游戏配对"
         if getattr(store.adapter, "diagnostics_kind", None) == "api":
             usage = store.adapter.diagnostics()
             status += f' · API请求{usage["requests"]}次 · 输入{usage["prompt_tokens"]}/输出{usage["completion_tokens"]} tokens'

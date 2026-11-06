@@ -21,7 +21,7 @@ function M.New(player, code, connect, on_retry)
     function self:Result(status, reason, attempt)
         if not self.enabled or not self:Valid() then return end
         if attempt ~= nil and attempt ~= self.serial then return end
-        if reason == "pairing_code_mismatch" or reason == "relay_admin_required" then
+        if reason == "pairing_code_mismatch" or reason == "relay_admin_required" or reason == "user_disconnected" then
             self:Stop()
         elseif status == "connected" then
             Cancel(self.retry); Cancel(self.timeout)
@@ -41,8 +41,13 @@ function M.New(player, code, connect, on_retry)
         self.connecting, self.connected = false, false
         Cancel(self.retry); Cancel(self.timeout)
         self.retry, self.timeout = nil, nil
+        if self.onremove ~= nil and self.player.RemoveEventCallback ~= nil then
+            self.player:RemoveEventCallback("onremove", self.onremove)
+            self.onremove = nil
+        end
     end
-    player:ListenForEvent("onremove", function() self:Stop() end)
+    self.onremove = function() self:Stop() end
+    player:ListenForEvent("onremove", self.onremove)
     self:Schedule(1)
     return self
 end
