@@ -12,6 +12,18 @@ local function ResourceType(target)
     return target.prefab == "oasis_cactus" and "cactus" or target.prefab
 end
 
+function M.IsContactDamage(inst, source, cause, overtime)
+    if overtime then return false end
+    local action = inst.GetBufferedAction ~= nil and inst:GetBufferedAction() or nil
+    local contact = inst._my_friend_gather_contact
+    local target = IsGather(action) and action.target
+        or contact ~= nil and GetTime() <= contact.untiltime and contact.target or nil
+    if target == nil then return false end
+    local c = target.components or {}
+    if c.aura ~= nil and c.aura.active then return false end
+    return source == target or source == nil and cause == target.prefab
+end
+
 function M.IsBlocked(inst, target)
     local blocked = inst._my_friend_harmful_resources
     if blocked == nil or target == nil then return false end

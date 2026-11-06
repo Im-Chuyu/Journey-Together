@@ -187,7 +187,7 @@ end
 
 -- Speaks one line. Returns false when the key or index does not exist so the
 -- caller can fall back; a missing chatter channel degrades to a local bubble.
-function M.Say(inst, key, index, duration, argument, quiet)
+function M.Say(inst, key, index, duration, argument, quiet, chat_echo)
     if inst == nil or not inst:IsValid() then return false end
     local talker = inst.components ~= nil and inst.components.talker or nil
     if talker == nil then return false end
@@ -199,7 +199,7 @@ function M.Say(inst, key, index, duration, argument, quiet)
     if talker.chatter ~= nil and TheWorld ~= nil and TheWorld.ismastersim then
         local payload = (argument ~= nil and argument ~= "")
             and (key .. SEPARATOR .. argument) or key
-        talker:Chatter(payload, index, duration, true, Priority())
+        talker:Chatter(payload, index, duration, true, chat_echo == false and 0 or Priority())
         require("my_friend_voice").PlayLine(inst, key, index)
         return true
     end
@@ -209,8 +209,8 @@ function M.Say(inst, key, index, duration, argument, quiet)
 end
 
 -- Convenience wrapper for the fixed one-line replies.
-function M.Reply(inst, key, argument)
-    return M.Say(inst, key, 1, M.MAX_DURATION, argument)
+function M.Reply(inst, key, argument, chat_echo)
+    return M.Say(inst, key, 1, M.MAX_DURATION, argument, nil, chat_echo)
 end
 
 function M.Random(inst, key, duration, argument, quiet)

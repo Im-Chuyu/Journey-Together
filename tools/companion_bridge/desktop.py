@@ -162,16 +162,24 @@ def desktop(store, server, language):
     ttk.Checkbutton(options, text="识别后自动发送", variable=auto_send).pack(side="left")
     ttk.Checkbutton(options, text="本机念出伙伴回复", variable=speak).pack(side="left")
     broadcast_input = tk.BooleanVar(value=preferences.get("broadcast_input", False))
-    def save_broadcast():
+    whisper_input = tk.BooleanVar(value=preferences.get("whisper_input", False))
+    def save_chat_choice():
         try:
             latest = load()
             latest["broadcast_input"] = broadcast_input.get()
+            latest["whisper_input"] = whisper_input.get()
             save(latest)
         except (ValueError, OSError) as error:
-            broadcast_input.set(not broadcast_input.get())
-            message.config(text="公屏同步设置未保存：" + str(error))
-    ttk.Checkbutton(options, text="以玩家身份同步到游戏公屏", variable=broadcast_input,
-                    command=save_broadcast).pack(side="left", padx=8)
+            broadcast_input.set(preferences.get("broadcast_input", False))
+            whisper_input.set(preferences.get("whisper_input", False))
+            message.config(text="聊天设置未保存：" + str(error))
+        else:
+            preferences["broadcast_input"] = broadcast_input.get()
+            preferences["whisper_input"] = whisper_input.get()
+    ttk.Checkbutton(options, text="以玩家身份同步到游戏聊天", variable=broadcast_input,
+                    command=save_chat_choice).pack(side="left", padx=8)
+    ttk.Checkbutton(options, text="开启私聊", variable=whisper_input,
+                    command=save_chat_choice).pack(side="left")
     message = ttk.Label(root, text=voice_hotkey.get() + " 按住录音、松开识别；持续语音需手动开启，无需说伙伴名字。", wraplength=740, justify="left")
     message.pack(anchor="w", padx=12)
     buttons = ttk.Frame(root); buttons.pack(fill="x", padx=12, pady=6)
@@ -204,7 +212,7 @@ def desktop(store, server, language):
             if hasattr(store.adapter, "connection_state"):
                 if store.adapter.connection_state() == "disconnected":
                     raise BridgeError("网页尚未连通：刷新当前模型聊天页，在扩展中重新连接，确认弹窗显示网页和助手均已连通。")
-            input_id = store.submit(text, broadcast=broadcast_input.get())
+            input_id = store.submit(text, broadcast=broadcast_input.get(), whisper=whisper_input.get())
             if input_id:
                 local_inputs[input_id] = text
                 message.config(text="消息已提交，等待游戏确认。")
@@ -327,14 +335,14 @@ def desktop(store, server, language):
                 message.config(text="试听完成。" if event["result"].get("status") == "completed" else event["result"].get("error", "试听失败"))
             elif kind == "input_rejected":
                 reason = {"companion_name_required": "请在消息中包含伙伴名字。", "rate_limited": "消息太快，请稍后再说。",
-                          "invalid_public_text": "公屏消息须为150字符以内的单行文字。",
-                          "public_chat_unavailable": "当前游戏无法同步公屏，请关闭同步后重试。"}.get(event.get("reason"), "游戏未接收消息，请检查连接。")
+                          "invalid_public_text": "游戏聊天消息须为150字符以内的单行文字。",
+                          "public_chat_unavailable": "当前游戏无法同步聊天，请检查连接或关闭同步后重试。"}.get(event.get("reason"), "游戏未接收消息，请检查连接。")
                 message.config(text=reason)
                 local_inputs.pop(event.get("input_id"), None)
                 append("未发送：" + event.get("text", "") + "（" + reason + "）")
                 if event.get("text") and not entry.get("1.0", "end").strip(): entry.insert("1.0", event["text"])
             elif kind == "input_broadcast_failed":
-                append("消息已被游戏接受，但未能确认公屏发送，请查看游戏。")
+                append("消息已被游戏接受，但未能确认聊天发送，请查看游戏。")
             elif kind == "assistant":
                 append("伙伴：" + event["text"])
                 if speak.get():

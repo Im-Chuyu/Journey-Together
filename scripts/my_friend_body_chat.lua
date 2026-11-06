@@ -11,7 +11,9 @@ local function Display(data)
         or displayed[data.id] then return end
     displayed[data.id], display_order[#display_order + 1] = true, data.id
     if #display_order > 64 then displayed[table.remove(display_order, 1)] = nil end
-    if Networking_Announcement ~= nil then Networking_Announcement(data.name .. ": " .. data.text) end
+    if ChatHistory ~= nil and ChatHistory.OnSay ~= nil then
+        ChatHistory:OnSay(0, nil, nil, data.name, data.prefab, data.text, WHITE or {1,1,1,1}, false, false)
+    end
 end
 local function Send(name, shard, data)
     local targets = {}
@@ -34,8 +36,9 @@ local function Identity(player)
     end
     return player._my_friend_model_chat_identity
 end
-function M.Forward(player, text, source)
-    if rpc == nil or TheWorld == nil or not TheWorld.ismastersim or not Policy.IsLocalPlayer(player) then return false end
+function M.Forward(player, text, source, whisper)
+    if whisper == true or rpc == nil or rpc.SendModRPCToShard == nil or TheWorld == nil
+        or not TheWorld.ismastersim or not Policy.IsLocalPlayer(player) then return false end
     local previous, now = player._my_friend_model_chat_forward, (GetStaticTime or GetTime)()
     if previous ~= nil and previous.text == text and previous.source ~= source and now - previous.time < 1 then return true end
     if previous ~= nil and now - previous.time < .5 then return false end
@@ -60,8 +63,29 @@ end
 function M.Reply(inst, actor, id, text)
     if rpc ~= nil and M.Available(inst, actor) then
         Send("BodyChatSpeech", actor.shard, {identity = actor.identity, userid = actor.userid,
-            id = id, name = inst:GetDisplayName(), text = text})
+            id = id, name = inst:GetDisplayName(), prefab = inst.prefab, text = text})
     end
+end
+function M.CanBroadcast()
+    return rpc ~= nil and rpc.GetClientModRPC ~= nil and rpc.SendModRPCToClient ~= nil
+end
+local function BroadcastLocal(data)
+    if not M.CanBroadcast() then return false end
+    local targets = {}
+    for _, player in ipairs(AllPlayers or {}) do
+        if Policy.IsLocalPlayer(player) then
+            if player == ThePlayer then Display(data)
+            elseif type(player.userid) == "string" then targets[#targets + 1] = player.userid end
+        end
+    end
+    if #targets > 0 then rpc.SendModRPCToClient(rpc.GetClientModRPC("MyFriends", "BodyChatSpeech"), targets, json.encode(data)) end
+    return true
+end
+function M.Broadcast(inst, id, text)
+    local data = {id = id, name = inst:GetDisplayName(), prefab = inst.prefab, text = text, public = true}
+    if not BroadcastLocal(data) then return false end
+    if rpc.SendModRPCToShard ~= nil then Send("BodyChatSpeech", nil, data) end
+    return true
 end
 function M.WorldCall(actor, skill, args, callback, dialogue)
     if rpc == nil or not Online(actor.shard) then callback(false, nil, "speaker_shard_unavailable"); return end
@@ -87,8 +111,7 @@ function M.WorldCall(actor, skill, args, callback, dialogue)
     Send("BodyChatWorld", actor.shard, {id = id, identity = actor.identity, userid = actor.userid, skill = skill, args = args, dialogue=dialogue})
 end
 function M.Install(api)
-    rpc = api.SendModRPCToShard ~= nil and api or nil
-    if api.AddShardModRPCHandler == nil then return end
+    rpc = api
     if api.AddClientModRPCHandler ~= nil then
         api.AddClientModRPCHandler("MyFriends", "BodyChatSpeech", function(payload)
             if type(payload) ~= "string" or #payload > 10000 then return end
@@ -96,10 +119,12 @@ function M.Install(api)
             if ok then Display(data) end
         end)
     end
+    if api.AddShardModRPCHandler == nil then return end
     api.AddShardModRPCHandler("MyFriends", "BodyChatSpeech", function(source, payload)
         if TheWorld == nil or not TheWorld.ismastersim or not Online(source) or type(payload) ~= "string" or #payload > 10000 then return end
         local ok, data = pcall(json.decode, payload)
         if not ok or type(data) ~= "table" then return end
+        if data.public == true then BroadcastLocal(data); return end
         for _, player in ipairs(AllPlayers or {}) do
             if Policy.IsLocalPlayer(player) and player.userid == data.userid and player._my_friend_model_chat_identity == data.identity then
                 if player == ThePlayer then Display(data)

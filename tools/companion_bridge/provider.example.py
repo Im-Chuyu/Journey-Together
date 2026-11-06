@@ -2,7 +2,7 @@
 
 context contains utterance, current authoritative snapshot, tools, results,
 and a short history. Return ONE skill invocation and/or text on each call.
-input_kind is user or ambient; ambient may only return a short chat line or {}.
+input_kind is user or ambient; ambient may chat or use the current limited tools.
 snapshot includes actual character, world/environment, revision and pending task.
 Optionally implement cancel_pending() to interrupt a superseded network request.
 After the game reports its result, decide is called again with results updated.

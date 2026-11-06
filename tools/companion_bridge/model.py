@@ -47,7 +47,7 @@ def context_data(context, request_id=None):
     # Stable reading order: identity, six basic stats, world, surroundings,
     # supplies, then execution/permission metadata. Keep all authoritative data.
     snapshot = context.get("snapshot", {})
-    order = ("name", "character", "prefab", "hunger", "sanity", "health", "temperature", "moisture",
+    order = ("name", "character", "prefab", "hunger", "sanity", "health", "chat_channel", "temperature", "moisture",
              "world", "location", "base", "mobility", "speaker", "environment", "position", "inventory", "prepared_builds")
     ordered = {key: snapshot[key] for key in order if key in snapshot}
     ordered.update({key: value for key, value in snapshot.items() if key not in ordered})

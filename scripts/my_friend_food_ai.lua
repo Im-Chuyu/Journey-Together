@@ -9,6 +9,7 @@ local PERISH_BONUS_DAYS = .75
 local FOOD_SUPPLY_HUNGER_THRESHOLD = .85
 local FOOD_SUPPLY_MIN_COUNT = 4
 local EMERGENCY_THRESHOLD = .15
+local MIN_HEALING_RECOVERY = 1
 local GetFoodDeltas
 
 local function CanSurviveFood(inst, delta)
@@ -78,7 +79,12 @@ function M.Configure(inst)
         -- Player feeding retains its separate native diet/permission rules.
         if inst:HasTag("my_friend") and (feeder == nil or feeder == inst)
             and not M.CanSafelyEat(inst, food) then return false end
-        return eat(self, food, feeder, ...)
+        local previous = inst._my_friend_eating_food
+        inst._my_friend_eating_food = food
+        local ok, result = pcall(eat, self, food, feeder, ...)
+        inst._my_friend_eating_food = previous
+        if not ok then error(result, 0) end
+        return result
     end
 end
 
@@ -101,6 +107,15 @@ end
 local function GetMaximum(component, fallback)
     return component.GetMaxWithPenalty ~= nil and component:GetMaxWithPenalty()
         or component.max or component.maxhealth or fallback
+end
+
+local function IsSafeHealthDelta(inst, delta)
+    if not CanSurviveFood(inst, delta) then return false end
+    if delta >= 0 then return true end
+    local health = inst.components.health
+    local maximum = math.max(1, GetMaximum(health, health.currenthealth))
+    return health.currenthealth / maximum > .35
+        and health.currenthealth + delta > math.max(1, maximum * .10)
 end
 
 function M.CanHealWithFood(inst)
@@ -375,7 +390,7 @@ end
 function M.CanSafelyEat(inst, food)
     if food == nil or not food:IsValid() or food.components == nil
         or food.components.edible == nil or inst.components.eater == nil then return false end
-    return CanSurviveFood(inst, GetFoodDeltas(inst, food))
+    return IsSafeHealthDelta(inst, GetFoodDeltas(inst, food))
 end
 
 local function IsInBeargerSack(item)
@@ -418,17 +433,22 @@ function M.Evaluate(inst, food, stats)
     stats = stats or GetStats(inst)
     if stats == nil then return end
     local health, hunger, sanity = GetFoodDeltas(inst, food)
-    if not CanSurviveFood(inst, health) then return end
+    if not IsSafeHealthDelta(inst, health) then return end
     -- Tiny recovery items such as ice and light bulbs are never worth an
     -- eating action. This rule also applies during emergencies.
     if not HasMeaningfulRecovery(health, hunger, sanity) then return end
     if M.IsForbiddenFood(food) then return end
     if M.IsEmergency(inst, stats) then
         -- Actual eater deltas include spoilage, food memory and character
-        -- absorption. In an emergency only a lethal serving is vetoed.
+        -- absorption; low-health harm was already rejected above.
         local perishdays = GetPerishData(food)
         local healing = math.min(math.max(0, health), stats.healthmax - stats.health)
         local calories = math.min(math.max(0, hunger), stats.hungermax - stats.hunger)
+        -- Low health alone does not make calories a healing resource. In a
+        -- hunger emergency a safe serving can still prevent starvation.
+        if not (stats.healthpercent < HEALTH_THRESHOLD and health >= MIN_HEALING_RECOVERY and healing > 0
+            or stats.hungerpercent < HUNGER_THRESHOLD and calories > 0
+            or stats.sanitypercent < SANITY_THRESHOLD and sanity > 0) then return end
         local score = healing * (stats.healthpercent <= EMERGENCY_THRESHOLD and 8 or 2)
             + calories * (stats.hungerpercent <= EMERGENCY_THRESHOLD and 5 or 1)
             + math.min(0, health) * 8 + math.min(0, hunger) * 3 + math.min(0, sanity)
@@ -440,9 +460,7 @@ function M.Evaluate(inst, food, stats)
     if require("my_friend_pets").IsIngredient(inst, food) then return end
     if require("my_friend_food_rules").NeedsRoasting(inst, food, health)
         and stats.hungerpercent > .2 and stats.healthpercent > .35 then return end
-    if health < 0 and stats.health + health <= 1
-        or hunger < 0 and stats.hunger + hunger <= 0
-        or health < 0 and stats.healthpercent <= .35 then return end
+    if hunger < 0 and stats.hunger + hunger <= 0 then return end
 
     local routine_need = stats.healthpercent < HEALTH_THRESHOLD
         or stats.hungerpercent < HUNGER_THRESHOLD
@@ -454,9 +472,9 @@ function M.Evaluate(inst, food, stats)
     local expiring = perishdays ~= nil and perishdays <= EXPIRING_DAYS
     if not routine_need and not expiring then return end
 
-    -- Surplus calories cannot justify a meal intended to heal or restore sanity.
-    -- Small benefits remain usable; there is no minimum food-value cutoff.
-    if routine_need and not (needhealth and health > 0
+    -- A fraction of one health point cannot justify a meal for healing alone.
+    -- Calories and sanity can still justify it when those stats need recovery.
+    if routine_need and not (needhealth and health >= MIN_HEALING_RECOVERY
         or needhunger and hunger > 0 or needsanity and sanity > 0) then return end
 
     local healthdeficit = math.max(0, stats.healthmax - stats.health)
@@ -559,7 +577,7 @@ function M.FindBestFood(inst)
     return best, bestscore
 end
 
--- Explicit meals ignore fullness, but never knowingly eat a lethal serving.
+-- Explicit meals ignore fullness, but retain the same health safety guard.
 function M.CommandScore(inst, food, positive_only)
     if food == nil or not food:IsValid() or food.components.edible == nil
         or food.components.inventoryitem == nil or food.components.inventoryitem.islockedinslot
@@ -573,7 +591,7 @@ function M.CommandScore(inst, food, positive_only)
     end
     local health, hunger, sanity = GetFoodDeltas(inst, food)
     if not HasMeaningfulRecovery(health, hunger, sanity) then return end
-    if health < 0 and inst.components.health.currenthealth + health <= 1 then return end
+    if not IsSafeHealthDelta(inst, health) then return end
     if hunger < 0 and inst.components.hunger.current + hunger <= 0 then return end
     local positive = health >= 0 and hunger >= 0 and sanity >= 0
     if positive_only and not positive then return end

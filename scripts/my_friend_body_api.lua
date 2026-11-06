@@ -63,23 +63,24 @@ function M.Authorize(inst, player)
 end
 local PUBLIC = {observe = true, say = true, query_recipe = true, query_sites = true, query_actions = true, query_batch=true, get_capabilities = true, get_action_status = true,
     save_game = true, rollback_game = true, pause_game = true, kick_player = true, ban_player = true}
-function M.Input(inst, player, text, request_id, require_name)
+function M.Input(inst, player, text, request_id, require_name, whisper)
     local state = M.Valid(inst)
     if state == nil or not state.ready or not M.CanConnect(inst, player) then return false, "disconnected" end
     if type(text) ~= "string" or #text == 0 or #text > 2048 then return false, "invalid_text" end
+    if whisper ~= nil and type(whisper) ~= "boolean" then return false, "invalid_whisper" end
     if require_name ~= false and require("my_friend_commands").AddressedMessage(inst, text) == nil then return false, "companion_name_required" end
     local input_time=(GetStaticTime or GetTime)()
     if input_time < (state.input_after[player.userid or player.GUID] or 0) then return false, "rate_limited" end
     state.input_after[player.userid or player.GUID] = input_time + .5
     state.input_serial = state.input_serial + 1
     local id = state.session .. ":input:" .. state.input_serial
-    state.inputs[id] = {player = player, expires = GetTime() + 900, text=text}
+    state.inputs[id] = {player = player, expires = GetTime() + 900, text=text, whisper = whisper == true}
     state.input_order[#state.input_order + 1] = id
     while #state.input_order > 64 do state.inputs[table.remove(state.input_order, 1)] = nil end
     local speaker = player._my_friend_remote_speaker and player.speaker or Observation.Describe(inst, state, player)
     if not player._my_friend_remote_speaker then speaker.same_shard = true end
     M.Emit(inst, {kind = "player_input", text = text, input_id = request_id, turn_id = id,
-        speaker = speaker, can_work = M.Authorize(inst, player),
+        speaker = speaker, can_work = M.Authorize(inst, player), whisper = whisper == true,
         world_control = player._my_friend_remote_speaker and player.world_control or require("my_friend_body_world").Status(player)})
     return true
 end
@@ -203,7 +204,8 @@ function M.Blockers(inst,state,job)
     if #out==0 and state.blocked then out[1]="survival_recheck" end
     return out
 end
-local function Duration(skill)
+local function Duration(skill, source)
+    if source == "ambient" then return 15 end
     if skill == "execute_sequence" or skill == "move_to" then return 600 end
     if skill == "cook" or skill == "harvest" or skill == "character_skill" or skill == "pickup_many" or skill == "work_many" then return 300 end
     return 120
@@ -212,7 +214,7 @@ local function StartPending(inst, state)
     local job = state.pending
     if job == nil or state.active ~= nil or Policy.IsBusy(inst) or M.Blocked(inst, state, job) then return end
     state.pending = nil
-    job.deadline = GetTime() + Duration(job.skill)
+    job.deadline = GetTime() + Duration(job.skill, job.source)
     require("my_friend_commands").Clear(inst, state)
     if job.skill == "follow" then
         local target = job.args.player ~= nil and Observation.Resolve(state, job.args.player) or job.issuer
@@ -301,21 +303,41 @@ function M.Score(inst, context)
     if step.skill == "revive" then return 145 end
     return (job.skill == "engage" or job.skill == "character_skill" and job.ability == "heal_self") and 132 or 112
 end
+local AMBIENT = {say=true, observe=true, query_actions=true, get_capabilities=true,
+    emote=true, move_to=true, equip=true, unequip=true, interact=true}
+local function AmbientAllowed(inst, state, skill, args)
+    if not AMBIENT[skill] then return false, "ambient_action_not_allowed" end
+    if state.active ~= nil or state.pending ~= nil or M.PlanActive(inst) or inst._my_friend_command ~= nil
+        or Policy.IsBusy(inst) or M.Blocked(inst, state, nil) then return false, "unsafe_for_idle_chat" end
+    if skill == "interact" and args.action ~= "SITON" then return false, "ambient_action_not_allowed" end
+    local point
+    if skill == "move_to" or skill == "interact" then
+        if args.destination ~= nil then return false, "ambient_action_not_allowed" end
+        if args.target ~= nil and args.position ~= nil then return false, "choose_one_destination" end
+        local target = args.target ~= nil and Observation.Resolve(state, args.target) or nil
+        if args.target ~= nil and target == nil then return false, "unknown_handle:target" end
+        point = target ~= nil and target:GetPosition() or args.position
+        if type(point) ~= "table" or type(point.x) ~= "number" or type(point.z) ~= "number"
+            or point.x ~= point.x or point.z ~= point.z then return false, "invalid_position" end
+        local origin = inst:GetPosition()
+        if (point.x-origin.x)^2 + (point.z-origin.z)^2 > 6^2 then return false, "ambient_target_too_far" end
+    end
+    return true, nil, point
+end
 function M.Call(inst, player, request_id, skill, args, revision, source, plan_id, turn_id)
     local state = M.Valid(inst)
     if state == nil or not M.CanConnect(inst, player) then return {status = "failed", reason = "permission_denied"} end
-    local dialogue
+    local dialogue, whisper
     if turn_id ~= nil then
         local input = type(turn_id) == "string" and state.inputs[turn_id] or nil
         if player ~= state.owner or input == nil or GetTime() > input.expires then return {status = "failed", reason = "invalid_input_context"} end
         dialogue={id=turn_id,text=input.text}
+        whisper = input.whisper == true
         player = input.player
         if not M.CanConnect(inst, player) then return {status = "failed", reason = "speaker_left"} end
     end
     if not PUBLIC[skill] and not M.Authorize(inst, player) then return {status = "failed", reason = "leader_only_work"} end
     if revision ~= nil and revision ~= state.revision then return {status = "failed", reason = "superseded"} end
-    if source == "ambient" and skill ~= "say" then return {status = "failed", reason = "ambient_chat_only"} end
-    if source == "ambient" and M.Blocked(inst, state, nil) then return {status = "failed", reason = "unsafe_for_idle_chat"} end
     if type(request_id) ~= "string" or #request_id < 1 or #request_id > 80
         or type(skill) ~= "string" or not KNOWN[skill] or type(args) ~= "table"
         or plan_id ~= nil and (type(plan_id) ~= "string" or #plan_id < 1 or #plan_id > 80) then
@@ -327,6 +349,14 @@ function M.Call(inst, player, request_id, skill, args, revision, source, plan_id
     end
     local old = state.requests[request_id]
     if old ~= nil then return M.Result(old) end
+    if source == "ambient" then
+        local allowed, reason, point = AmbientAllowed(inst, state, skill, args)
+        if not allowed then return {status = "failed", reason = reason} end
+        if skill == "move_to" then
+            -- A casual step targets this position, never a moving entity to chase.
+            args = {position = {x = point.x, z = point.z}, gait = args.gait, distance = args.distance}
+        end
+    end
     if skill == "transfer" then
         local recipient = Observation.Resolve(state, args.destination)
         if recipient ~= nil and recipient:HasTag("playerghost") then return {status = "failed", reason = "recipient_ghost_use_revive"} end
@@ -362,8 +392,8 @@ function M.Call(inst, player, request_id, skill, args, revision, source, plan_id
     end
     state.serial = state.serial + 1
     local job = {id = state.session .. ":a" .. state.serial, request_id = request_id, skill = skill,
-        args = args, issuer = player, status = "accepted", origin = inst:GetPosition(),
-        deadline = GetTime() + Duration(skill)}
+        args = args, issuer = player, source = source, status = "accepted", origin = inst:GetPosition(),
+        deadline = GetTime() + Duration(skill, source)}
     state.jobs[job.id], state.requests[request_id] = job, job
     state.order[#state.order + 1] = job.id
     while #state.order > 40 do
@@ -413,10 +443,14 @@ function M.Call(inst, player, request_id, skill, args, revision, source, plan_id
                 inst._my_friend_body_speaking = GetTime() + 15
                 require("my_friend_voice").StopCustom(inst)
             end
-            local spoken = require("my_friend_dialogue").Reply(inst, "ai_dynamic", args.text)
-            if spoken and player._my_friend_remote_speaker then require("my_friend_body_chat").Reply(inst, player, job.id, args.text) end
+            local chat = require("my_friend_body_chat")
+            local public = not whisper and chat.CanBroadcast()
+            local spoken = require("my_friend_dialogue").Reply(inst, "ai_dynamic", args.text, not public)
+            if spoken and public then chat.Broadcast(inst, job.id, args.text)
+            elseif spoken and player._my_friend_remote_speaker then chat.Reply(inst, player, job.id, args.text) end
             M.Finish(inst, job, spoken and "completed" or "failed",
-                {text = args.text, speech = args.speak == false and "disabled" or "external_pending"}, not spoken and "talker_unavailable" or nil)
+                {text = args.text, audience = public and "public" or "nearby",
+                    speech = args.speak == false and "disabled" or "external_pending"}, not spoken and "talker_unavailable" or nil)
         end
     elseif skill == "disengage" then
         state.plan = nil

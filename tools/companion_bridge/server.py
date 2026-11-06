@@ -17,6 +17,7 @@ from .settings import DEFAULT_CODE
 PHYSICAL = {"move_to", "pickup", "drop", "transfer", "equip", "unequip", "craft", "work", "eat", "cook", "use_item", "interact", "engage", "harvest", "character_skill", "pickup_many", "work_many", "perform_action", "execute_sequence", "dismount", "emote", "revive"}
 PUBLIC = {"query_batch", "say", "observe", "query_recipe", "query_sites", "query_actions", "get_capabilities", "get_action_status",
           "save_game", "rollback_game", "pause_game", "kick_player", "ban_player"}
+AMBIENT = {"say", "observe", "query_actions", "get_capabilities", "emote", "move_to", "equip", "unequip", "interact"}
 TERMINAL = {"completed", "failed", "cancelled", "interrupted"}
 
 
@@ -274,15 +275,17 @@ class Store:
             cancel()
         self.condition.notify_all()
 
-    def submit(self, text, source="user", *, broadcast=False):
+    def submit(self, text, source="user", *, broadcast=False, whisper=False):
         if not isinstance(text, str) or source != "ambient" and not text.strip() or len(text.encode()) > 1200:
             raise BridgeError("输入文字为空或过长")
         if type(broadcast) is not bool:
             raise BridgeError("公屏同步设置必须为布尔值")
+        if type(whisper) is not bool:
+            raise BridgeError("附近私聊设置必须为布尔值")
         if broadcast:
             text = "".join(" " if ord(c) < 32 or ord(c) == 127 else c for c in text).strip()
             if not text or len(text) > 150:
-                raise BridgeError("同步到游戏公屏的消息最多150个字符；可缩短内容或关闭公屏同步")
+                raise BridgeError("同步到游戏聊天的消息最多150个字符；可缩短内容或关闭聊天同步")
         with self.condition:
             if not self.connected:
                 raise BridgeError("请先在游戏中配对连接")
@@ -290,11 +293,11 @@ class Store:
                 if len(self.inputs) >= 16:
                     raise BridgeError("待发送消息过多，请等待游戏接收")
                 input_id = secrets.token_hex(12)
-                self.inputs[input_id] = {"id": input_id, "text": text.strip(), "broadcast": broadcast}
+                self.inputs[input_id] = {"id": input_id, "text": text.strip(), "broadcast": broadcast, "whisper": whisper}
                 self.condition.notify_all()
                 return input_id
-            if broadcast:
-                raise BridgeError("公屏同步需要更新游戏模组并重新连接")
+            if broadcast or whisper:
+                raise BridgeError("游戏聊天同步需要更新游戏模组并重新连接")
             self._start_turn_locked(text.strip(), source)
 
     def _receive_input_locked(self, event):
@@ -332,7 +335,7 @@ class Store:
                 return False
             if self.stopped or not self.connected or self.busy or self.commands or self.inputs or self.chat_queue or self.current_action or time.monotonic() - self.last_user_at < 60:
                 return False
-            if self.snapshot.get("emergency") or self.snapshot.get("action") or self.snapshot.get("pending") or self.snapshot.get("busy"):
+            if any(self.snapshot.get(key) for key in ("emergency", "action", "pending", "busy", "manual_task", "planning")):
                 return False
             check = getattr(self.adapter, "connection_state", None)
             if callable(check) and check() == "disconnected":
@@ -349,6 +352,8 @@ class Store:
         speaker_id = (input_event["speaker"].get("userid") if input_event else None)
         try:
             for iteration in count():
+                if source == "ambient" and iteration >= 4:
+                    return
                 with self.condition:
                     if not self.connected or self.session != session or version != self.turn_version:
                         raise PlanCancelled("控制意图已改变，停止旧规划")
@@ -371,7 +376,12 @@ class Store:
                         leader = snapshot.get("leader")
                         can_work = not leader or leader.get("userid") == speaker.get("userid")
                         snapshot["can_work"] = can_work
-                    allowed = NAMES if source == "user" and can_work else PUBLIC if source == "user" else {"say"}
+                    snapshot["chat_channel"] = "nearby" if input_event and input_event.get("whisper") is True else "public"
+                    if source == "ambient":
+                        leader = snapshot.get("leader") or {}
+                        can_work = not leader or leader.get("userid") == current_owner.get("userid")
+                        snapshot["can_work"] = can_work
+                    allowed = (NAMES if can_work else PUBLIC) if source == "user" else AMBIENT if can_work else AMBIENT & PUBLIC
                     context = {"utterance": text, "snapshot": snapshot,
                                "results": list(results), "results_limited": iteration > results.maxlen,
                                "history": list(self.history),
@@ -392,10 +402,9 @@ class Store:
                 if "plan" in decision:
                     from .model import validate_plan
                     task_plan = validate_plan(decision["plan"])
-                if source == "ambient" and decision.get("skill") not in (None, "say"):
-                    raise BridgeError("主动闲聊只允许聊天，不接管伙伴任务")
                 if decision.get("skill") is not None and decision["skill"] not in allowed:
-                    results.append({"skill": decision["skill"], "status": "failed", "reason": "leader_only_work"})
+                    results.append({"skill": decision["skill"], "status": "failed",
+                                    "reason": "ambient_action_not_allowed" if source == "ambient" else "leader_only_work"})
                     continue
                 reply = decision.get("text")
                 speak = True
@@ -608,7 +617,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not isinstance(token, str) or not token.isascii() or not hmac.compare_digest(token, store.client_token):
                     raise BridgeError("本机客户端凭据不正确")
                 if self.path == "/v1/client/utterance":
-                    store.submit(data.get("text"), broadcast=data.get("broadcast", False)); result = {"accepted": True}
+                    store.submit(data.get("text"), broadcast=data.get("broadcast", False), whisper=data.get("whisper", False)); result = {"accepted": True}
                 elif self.path == "/v1/client/call":
                     result = {"request_id": store.direct_call(data.get("skill"), data.get("arguments", {}))}
                 else:

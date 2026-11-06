@@ -53,18 +53,20 @@ end
 local function ClientPublicInput(data)
     local player = ThePlayer
     if type(data) ~= "table" or type(data.id) ~= "string" or #data.id > 160
-        or not ValidPublicText(data.text) or player == nil or not player:IsValid()
+        or not ValidPublicText(data.text) or data.whisper ~= nil and type(data.whisper) ~= "boolean"
+        or player == nil or not player:IsValid()
         or data.userid ~= player.userid
         or TheNet == nil or TheNet.Say == nil or public_sent[data.id] then return end
     -- Mark before Say: an echo can arrive synchronously on a listen host.
     public_sent[data.id], public_order[#public_order + 1] = true, data.id
     if #public_order > 64 then public_sent[table.remove(public_order, 1)] = nil end
-    local ok, result = pcall(TheNet.Say, TheNet, data.text, false)
+    local ok, result = pcall(TheNet.Say, TheNet, data.text, data.whisper == true)
     return ok and result ~= false
 end
 local function SendPublicInput(inst, state, input)
     state.public_echoes = state.public_echoes or {}
-    local record = {text = input.text, expires = Clock() + 8, sources = {}}
+    local record = {text = input.text, whisper = input.whisper == true,
+        expires = Clock() + 8, sources = {}}
     state.public_echoes[input.id] = record
     record.timeout = inst:DoStaticTaskInTime(8, function()
         if state.public_echoes == nil or state.public_echoes[input.id] ~= record then return end
@@ -73,7 +75,8 @@ local function SendPublicInput(inst, state, input)
             API.Emit(inst, {kind = "input_broadcast_failed", input_id = input.id})
         end
     end)
-    local payload = {id = state.session .. ":public:" .. input.id, text = input.text, userid = state.owner.userid}
+    local payload = {id = state.session .. ":public:" .. input.id, text = input.text, userid = state.owner.userid,
+        whisper = input.whisper == true}
     local ok
     if state.owner == ThePlayer then ok = ClientPublicInput(payload)
     else
@@ -243,13 +246,16 @@ Poll = function(inst, state)
                 local accepted, why
                 if input.broadcast ~= nil and type(input.broadcast) ~= "boolean" then
                     accepted, why = false, "invalid_broadcast"
+                elseif input.whisper ~= nil and type(input.whisper) ~= "boolean" then
+                    accepted, why = false, "invalid_whisper"
                 elseif input.broadcast and not ValidPublicText(input.text) then
                     accepted, why = false, "invalid_public_text"
                 elseif input.broadcast and (state.owner == ThePlayer and (TheNet == nil or TheNet.Say == nil)
                     or state.owner ~= ThePlayer and (rpc == nil or rpc.SendModRPCToClient == nil or rpc.GetClientModRPC == nil)) then
                     accepted, why = false, "public_chat_unavailable"
                 else
-                    accepted, why = API.Input(inst, state.owner, input.text, input.id, false)
+                    accepted, why = API.Input(inst, state.owner, input.text, input.id, false,
+                        input.whisper == true)
                 end
                 if not accepted then API.Emit(inst, {kind = "input_rejected", input_id = input.id, reason = why}) end
                 if accepted and input.broadcast then SendPublicInput(inst, state, input) end

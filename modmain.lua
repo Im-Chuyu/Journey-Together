@@ -898,9 +898,9 @@ local function ConfigureFriend(inst)
         require("my_friend_riding").OnAttacked(inst)
         require("my_friend_equipment").Hurt(inst)
         local attacker = data ~= nil and data.attacker or nil
-        -- Combat emits healthdelta before attacked. damageresolved is the
-        -- signed health delta and already includes armor and damage modifiers.
-        if data ~= nil and ((data.damageresolved or 0) < 0
+        -- Combat emits healthdelta before attacked. Native damageresolved is
+        -- the post-armor damage magnitude; also accept signed modded deltas.
+        if data ~= nil and ((data.damageresolved or 0) ~= 0
             or attacker ~= nil and attacker:IsValid() and attacker:HasTag("player")) then
             require("my_friend_behavior_ai").StartHurtRetreat(inst, attacker)
         end
@@ -1005,19 +1005,20 @@ end)
 local OldNetworkingSay = _G.Networking_Say
 local ChatCommands = require("my_friend_chat")
 
-AddModRPCHandler("MyFriends", "ChatCommand", function(player, message)
-    ChatCommands.Dispatch(player, message, "rpc")
+AddModRPCHandler("MyFriends", "ChatCommand", function(player, message, whisper)
+    ChatCommands.Dispatch(player, message, "rpc", whisper)
 end)
 
 AddClassPostConstruct("screens/chatinputscreen", function(self)
     local run = self.Run
     self.Run = function(screen, ...)
         local message = screen.chat_edit ~= nil and screen.chat_edit:GetString() or nil
+        local whisper = screen.whisper == true
         message = type(message) == "string" and message:match("^%s*(.-%S)%s*$") or nil
         local result = run(screen, ...)
         if message ~= nil and message:sub(1, 1) ~= "/"
             and message:utf8len() <= _G.MAX_CHAT_INPUT_LENGTH then
-            ChatCommands.Forward(_G.ThePlayer, message, "input")
+            ChatCommands.Forward(_G.ThePlayer, message, "input", whisper)
         end
         return result
     end
@@ -1031,7 +1032,7 @@ _G.Networking_Say = function(guid, userid, name, prefab, message, colour, whispe
             for _, online in ipairs(_G.AllPlayers or {}) do
                 if online.userid == userid and online:IsValid()
                     and not online:HasTag("my_friend") and not online._despawning then
-                    ChatCommands.Dispatch(online, message, "native")
+                    ChatCommands.Dispatch(online, message, "native", whisper == true)
                     break
                 end
             end
@@ -1039,7 +1040,7 @@ _G.Networking_Say = function(guid, userid, name, prefab, message, colour, whispe
             and _G.ThePlayer.userid == userid then
             -- Dedicated servers may not run the presentation-side chat callback.
             -- Only the sender forwards it; the RPC authenticates the player.
-            ChatCommands.Forward(_G.ThePlayer, message, "echo")
+            ChatCommands.Forward(_G.ThePlayer, message, "echo", whisper == true)
         end
     end
     return OldNetworkingSay(guid, userid, name, prefab, message, colour, whisper, isemote, ...)

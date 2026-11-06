@@ -83,7 +83,7 @@ DEFINITIONS = [
         "count": COUNT, "target_type": field("string", enum=["tree"]),
         "radius": field("number", minimum=1, maximum=32),
         "action": field("string", enum=["CHOP", "MINE", "DIG", "HAMMER", "PICK", "HARVEST"])}, ["action"]),
-    ("eat", "Eat one carried item under character diet and lethal-food guards; returns actual stat deltas.", {"item": HANDLE}, ["item"]),
+    ("eat", "Eat one carried item under character diet and low-health protection; rejects health-damaging food at low health or if it would leave only a small health margin. Returns actual stat deltas. Check freshness and food.health/hunger/sanity; stale or spoiled food may not heal. Never use calories alone as healing.", {"item": HANDLE}, ["item"]),
     ("cook", "Cook ONE pot of recipe using carried ingredients. Supply validated four-slot ingredients to preserve the chosen mix (and explicit requested jerky); otherwise choose automatically. Default waits and harvests, returning actual product items. wait=false only starts cooking. For two meals call twice and transfer actual product counts; ready pots use harvest.", {
         "recipe": field("string"), "station": HANDLE, "ingredients": MIX, "wait": field("boolean", "Default true: wait and harvest. false: finish after starting; start other devices, then harvest later.")}, ["recipe", "station"]),
     ("harvest", "Collect from a ready pot. wait=true waits locally if it is still cooking; recipe guards against harvesting the wrong product. Returns actual product handles.", {

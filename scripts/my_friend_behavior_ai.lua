@@ -18,6 +18,8 @@ M.LEADER_RETURN_DISTANCE = 20
 M.ASSIST_RANGE = 32
 M.HAZARD_RETREAT_TIME = 8
 M.HAZARD_RETREAT_RADIUS = 6
+local HAZARD_SAMPLE_WINDOW = 3
+local HAZARD_SOURCE_DRIFT_SQ = .5^2
 M.COMBAT_DODGE_PADDING = .75
 M.COMBAT_DODGE_MIN_TIME = .2
 M.COMBAT_DODGE_MAX_TIME = .65
@@ -451,9 +453,21 @@ function M.FindAssistTarget(inst)
     return nil
 end
 
+local function IsPersonalDamageSource(inst, source)
+    local parent = source.entity ~= nil and source.entity:GetParent() or nil
+    return source == inst or parent == inst or (source.components or {}).inventoryitem ~= nil
+end
+
 function M.StartHurtRetreat(inst, source, fire_distance, source_position)
     if source == nil or not source:IsValid() or not IsAlive(inst)
         or inst:HasTag("playerghost") then return end
+    -- An impact is not evidence of an attacker that can keep pursuing us.
+    -- Debris, projectiles, traps and attached effects use GetAttacked too.
+    local components = source.components or {}
+    if fire_distance == nil and (not IsAlive(source) or components.combat == nil
+        or IsPersonalDamageSource(inst, source) or components.projectile ~= nil
+        or components.complexprojectile ~= nil) then return end
+    if fire_distance == nil and require("my_friend_resource_safety").IsContactDamage(inst, source) then return end
     if fire_distance == nil and (require("my_friend_combat_rules").IsBeyondFollowCombatRange(inst)
         or require("my_friend_combat_rules").IsFollowTargetPaused(inst, source)
         or require("my_friend_combat_rules").IsPriorityEnemy(source)
@@ -498,6 +512,7 @@ local function ClearHazard(inst)
     inst._my_friend_hazard_position, inst._my_friend_hazard_until = nil, nil
     inst._my_friend_hazard_source, inst._my_friend_hazard_radius = nil, nil
     inst._my_friend_hazard_cause = nil
+    inst._my_friend_hazard_observed_origin, inst._my_friend_hazard_ground = nil, nil
 end
 
 local function GetContactHazard(inst)
@@ -506,6 +521,16 @@ local function GetContactHazard(inst)
     local source = inst._my_friend_hazard_source
     if source ~= nil then
         if source:IsValid() then
+            local origin = inst._my_friend_hazard_observed_origin
+            if origin ~= nil then
+                local current = source:GetPosition()
+                if GetTime() < (inst._my_friend_hazard_until or 0)
+                    and (current.x-origin.x)^2 + (current.z-origin.z)^2 <= HAZARD_SOURCE_DRIFT_SQ then
+                    return point, inst._my_friend_hazard_radius
+                end
+                ClearHazard(inst)
+                return
+            end
             local aura = source.components.aura
             if aura ~= nil and aura.active then
                 for _, tag in ipairs(aura.auraexcludetags or {}) do
@@ -520,6 +545,10 @@ local function GetContactHazard(inst)
         end
         ClearHazard(inst)
         return
+    end
+    if inst._my_friend_hazard_ground then
+        local ground = inst.components.lunarfissureburning
+        if ground == nil or ground.cleartime ~= nil then ClearHazard(inst) return end
     end
     if GetTime() >= (inst._my_friend_hazard_until or 0) then ClearHazard(inst) return end
     return point, inst._my_friend_hazard_radius
@@ -560,14 +589,13 @@ function M.IsHazardRetreatActive(inst)
     return M.IsHazardousPath(inst, point, point)
 end
 
-local function RememberHazard(inst, source, cause, centre, distance)
+local function RememberHazard(inst, source, cause, centre, distance, observed_origin)
     local current = inst:GetPosition()
     local aura = source ~= nil and source.components.aura or nil
     local override = source ~= nil and source.components.temperatureoverrider or nil
     local point = inst._my_friend_hazard_position
     local radius = inst._my_friend_hazard_radius or M.HAZARD_RETREAT_RADIUS
-    -- Unknown damage areas are remembered at the first contact, not recentered
-    -- on every tick while the companion is already running away.
+    -- Keep an established contact area fixed while the companion leaves it.
     if centre ~= nil then
         point, radius = centre, distance
     elseif aura ~= nil then
@@ -583,7 +611,10 @@ local function RememberHazard(inst, source, cause, centre, distance)
     end
     inst._my_friend_hazard_position = Vector3(point.x, 0, point.z)
     inst._my_friend_hazard_radius = radius
-    inst._my_friend_hazard_source = centre == nil and (aura ~= nil or override ~= nil) and source or nil
+    inst._my_friend_hazard_source = (observed_origin ~= nil
+        or centre == nil and (aura ~= nil or override ~= nil)) and source or nil
+    inst._my_friend_hazard_observed_origin = observed_origin
+    inst._my_friend_hazard_ground = nil
     inst._my_friend_hazard_cause = cause
     inst._my_friend_hazard_until = GetTime() + M.HAZARD_RETREAT_TIME
     M.StartHurtRetreat(inst, source or inst, radius + 1, point)
@@ -600,8 +631,6 @@ function M.OnFireDamage(inst)
     if source ~= nil then
         inst._my_friend_fire_source = source
         M.StartHurtRetreat(inst, source, distance + 1)
-    elseif health.takingfiredamage then
-        RememberHazard(inst, nil, "fire")
     end
 end
 
@@ -643,10 +672,36 @@ function M.OnColdDamage(inst)
     end
 end
 
+local function ConfirmAreaDamage(inst, source, cause)
+    -- One bounded event sample supports unfamiliar stationary area sources.
+    -- No timers/scans, and neither overtime nor an unknown cause alone proves
+    -- that moving away can remove the damage.
+    local now, point, origin = GetTime(), inst:GetPosition(), source:GetPosition()
+    local sample = inst._my_friend_hazard_sample
+    local same = source.GUID ~= nil and sample ~= nil and sample.guid == source.GUID and sample.cause == cause
+        and now - sample.time <= HAZARD_SAMPLE_WINDOW
+        and (origin.x-sample.source_x)^2 + (origin.z-sample.source_z)^2 <= HAZARD_SOURCE_DRIFT_SQ
+        and (point.x-sample.x)^2 + (point.z-sample.z)^2 <= 2^2
+    if same and now - sample.time < .1 then return end
+    inst._my_friend_hazard_sample = {guid = source.GUID, cause = cause, time = now,
+        source_x = origin.x, source_z = origin.z, x = point.x, z = point.z}
+    if not same then return end
+    local centre = inst._my_friend_hazard_source == source
+        and inst._my_friend_hazard_observed_origin ~= nil and inst._my_friend_hazard_position
+        or Vector3(sample.x, 0, sample.z)
+    RememberHazard(inst, source, cause, centre, M.HAZARD_RETREAT_RADIUS,
+        Vector3(origin.x, 0, origin.z))
+end
+
 function M.OnEnvironmentalDamage(inst, data)
     if require("my_friend_health").IsAgeDisplayDelta(inst,data) then return end
     if not IsAlive(inst) or inst:HasTag("playerghost") or data == nil
         or (data.amount or 0) >= 0 then return end
+    local food = inst._my_friend_eating_food
+    if food ~= nil and not data.overtime and (data.afflicter == food
+        or data.afflicter == nil and data.cause == food.prefab) then return end
+    local resources = require("my_friend_resource_safety")
+    if resources.IsContactDamage(inst, data.afflicter, data.cause, data.overtime) then return end
     if data.cause == "cold" or data.cause == "freezing" then
         M.OnColdDamage(inst)
         return
@@ -657,21 +712,24 @@ function M.OnEnvironmentalDamage(inst, data)
         or data.cause == "sanity" or data.cause == "sanityloss"
         or data.cause == "acidrain" or data.cause == "statue_attune" then return end
     local source = data.afflicter
-    if source ~= nil and source.IsValid ~= nil and source:IsValid() then
-        local components = source.components or {}
-        local parent = source.entity ~= nil and source.entity:GetParent() or nil
-        -- Aura attacks (e.g. spore clouds) are area damage even though they use
-        -- combat:GetAttacked. Ordinary creatures, food/items and attached
-        -- debuffs must not be mistaken for a patch of dangerous ground.
-        if source == inst or parent == inst or components.inventoryitem ~= nil then return end
-        if components.aura ~= nil then
-            if not components.aura.active then return end
-        elseif components.health ~= nil or components.projectile ~= nil
-            or components.complexprojectile ~= nil then return end
-    else
-        source = nil
+    if source == nil or source.IsValid == nil or not source:IsValid() then
+        -- Native fissures expose whether the current tile is still damaging.
+        -- Damage from a personal burn/debuff has no equivalent spatial proof.
+        local ground = inst.components.lunarfissureburning
+        if ground ~= nil and ground.cleartime == nil then
+            RememberHazard(inst, nil, data.cause)
+            inst._my_friend_hazard_ground = true
+        end
+        return
     end
-    RememberHazard(inst, source, data.cause)
+    local components = source.components or {}
+    if IsPersonalDamageSource(inst, source) then return end
+    if components.aura ~= nil then
+        if components.aura.active then RememberHazard(inst, source, data.cause) end
+    elseif components.health == nil and components.projectile == nil
+        and components.complexprojectile == nil then
+        ConfirmAreaDamage(inst, source, data.cause)
+    end
 end
 
 function M.UpdateFollowCombatReturn(inst)

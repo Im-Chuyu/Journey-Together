@@ -100,11 +100,11 @@ function M.Encourage(inst, player)
 end
 
 -- Immediate, guaranteed reply to a chat command. Bypasses the ambient queue.
-function M.Reply(inst, key, argument)
+function M.Reply(inst, key, argument, chat_echo)
     if inst == nil or not inst:IsValid() or inst.components.talker == nil then return false end
     local state = State(inst)
     state.speech_after = GetTime() + 4
-    return Speech.Reply(inst, key, argument)
+    return Speech.Reply(inst, key, argument, chat_echo)
 end
 
 -- Command acknowledgements can have several authored variants while keeping

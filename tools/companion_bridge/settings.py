@@ -34,6 +34,8 @@ def validate_voice(data):
 def validate_chat(data):
     if type(data.get("broadcast_input", False)) is not bool:
         raise ValueError("公屏同步设置必须为布尔值")
+    if type(data.get("whisper_input", False)) is not bool:
+        raise ValueError("附近私聊设置必须为布尔值")
 
 
 def save(data, directory=None):
@@ -63,5 +65,6 @@ def load(directory=None):
     data = {"pair_code": DEFAULT_CODE, "web_code": secrets.token_urlsafe(32), "voice_hotkey": "F9"}
     data["asr_backend"]="whisper"
     data["broadcast_input"] = False
+    data["whisper_input"] = False
     save(data, directory)
     return data

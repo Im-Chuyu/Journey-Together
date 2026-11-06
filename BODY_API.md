@@ -62,7 +62,9 @@ c_myfriend_ai("stop")
 
 ### 主动闲聊
 
-连接期间每隔随机60～120秒更新一次世界天数、季节、时段、温度、天气，及20单位内的建筑、生物、玩家及其名字、角色、生命、饥饿和理智；每类最多12个，复用既有发现缓存和局部查询。玩家最近60秒没有模型输入、无其他模型轮次、无具体动作/危险/busy 时，模型可按角色主动说一句，也可保持安静；不积压闲聊。主动闲聊只能聊天，不能调用身体技能抢工作。新玩家输入会取消未完成的闲聊规划。默认离线演示不产生主动闲聊。
+连接期间每隔随机60～120秒更新一次世界天数、季节、时段、温度、天气，及20单位内的建筑、生物、玩家及其名字、角色、生命、饥饿和理智；每类最多12个，复用既有发现缓存和局部查询。玩家最近60秒没有模型输入、无其他模型轮次、无具体指令/动作/危险/busy 时，模型可主动短聊，并用查询、emote、6单位内的move_to、换装备或interact(SITON)配合说话；最多4轮，每个动作最多15秒。移动目标固定为接受时的位置，不持续追逐实体。原领队权限保持，不采集、战斗、制作或操作世界。新玩家输入会取消未完成的闲聊规划。默认离线演示不产生主动闲聊。
+
+食物观察返回 `freshness.percent`（0～1）和 `state`：`fresh` 为绿色阶段（≥50%），`stale` 为黄色阶段（20%～50%，不含端点），`spoiled` 为红色阶段（≤20%）。无该字段表示未提供或无腐坏组件。`food.health/hunger/sanity` 是按当前伙伴的原版食用效果计算的预计收益，`can_eat` 与 `safe_to_eat` 分别表示角色可食性与进食安全性。自主回血不会为不足1点的回血单独进食；低血时拒绝扣血食物，真正吃下前再次复核。`snapshot.chat_channel` 为 `public/nearby`，来自当前输入的实际频道；模型动作参数不能改变该频道。
 
 离线诊断：`python -B -m tools.companion_bridge --provider demo`。默认网页模式从不以演示匹配替代模型结果。
 
@@ -225,7 +227,7 @@ def create_adapter():
 python -B -m tools.companion_bridge --adapter "D:\自己的配置\my_model.py"
 ```
 
-`decide` 返回最多一个技能及可选 text；动作结束后把真实结果送回。snapshot.action/pending/manual_task 区分执行、等待与游戏任务；revision 标记游戏新指令，旧版本回复失效。助手按输入轮次撤销旧模型规划，支持新话语接替上一轮；适配器可实现 cancel_pending() 来及时结束网络等待，不能取消的供应商请求返回后也不会执行旧回复。input_kind 为 user/ambient，ambient 只能聊天。同一任务可连续调用多批工具，直到模型收尾或游戏控制权改变等终止条件。助手保留最近 32 个详细回执，早期回执滚出时标记 `results_limited`，任务笔记继续传递。
+`decide` 返回最多一个技能及可选 text；动作结束后把真实结果送回。snapshot.action/pending/manual_task 区分执行、等待与游戏任务；revision 标记游戏新指令，旧版本回复失效。助手按输入轮次撤销旧模型规划，支持新话语接替上一轮；适配器可实现 cancel_pending() 来及时结束网络等待，不能取消的供应商请求返回后也不会执行旧回复。input_kind 为 user/ambient，ambient 按本轮tools与上述主动闲聊限制执行。同一玩家任务可连续调用多批工具，直到模型收尾或游戏控制权改变等终止条件。助手保留最近 32 个详细回执，早期回执滚出时标记 `results_limited`，任务笔记继续传递。
 
 例如 OpenAI Chat Completions 可将 `context["tools"]` 的条目包装为 `{"type":"function","function":tool}`，再将模型的函数名/JSON 参数映射回 `skill/arguments`。Responses 或其他供应商按其官方工具协议转换。严格 Schema 的可选/null 规则需要在适配层处理；本机助手会剔除参数中值为 null 的可选字段。参考 [OpenAI Function calling](https://developers.openai.com/api/docs/guides/function-calling)。
 

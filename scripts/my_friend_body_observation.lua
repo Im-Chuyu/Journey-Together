@@ -95,6 +95,19 @@ function M.Describe(inst, state, entity, opening)
         if record.equipped then record.location = "equipped" end
     end
     if c.finiteuses ~= nil then record.durability = c.finiteuses:GetPercent() end
+    if c.perishable ~= nil then
+        local percent = c.perishable:GetPercent()
+        record.freshness = {percent = percent,
+            state = percent >= (TUNING.PERISH_FRESH or .5) and "fresh"
+                or percent > (TUNING.PERISH_STALE or .2) and "stale" or "spoiled"}
+    end
+    if c.edible ~= nil and inst.components.eater ~= nil then
+        local food = require("my_friend_food_ai")
+        local health, hunger, sanity = food.GetFoodDeltas(inst, entity)
+        local can_eat = inst.components.eater:CanEat(entity) and inst.components.eater:PrefersToEat(entity)
+        record.food = {health = health, hunger = hunger, sanity = sanity,
+            can_eat = can_eat, safe_to_eat = can_eat and food.CanSafelyEat(inst, entity)}
+    end
     if c.tool ~= nil then
         record.tool_actions = {}
         for action in pairs(c.tool.actions or {}) do

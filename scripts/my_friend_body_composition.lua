@@ -17,7 +17,7 @@ local function LimitScan(out,budget)
     -- the budget on its contents. Dropping the tail here hid nearby fridges.
     local fields={handle=true,prefab=true,name=true,position=true,kind=true,count=true,
         accessible=true,capacity=true,cooking=true,pickable=true,carried=true,equipped=true,slot=true,can_store=true,
-        container=true,location=true,backpack=true,delivery=true,cooking_tags=true,durability=true,
+        container=true,location=true,backpack=true,delivery=true,cooking_tags=true,durability=true,freshness=true,food=true,
         can_pick=true,pick_product=true,pick_count=true,work=true,work_left=true,tree=true,tool_actions=true,prototyper=true,interactions=true,
         soil=true,plantable=true,deployable=true,terraformer=true,tendable=true,watersource=true,
         burning=true,burnable=true,building=true,boss=true,alive=true,health=true,ghost=true,
