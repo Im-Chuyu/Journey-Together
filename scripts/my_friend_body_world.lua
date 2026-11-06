@@ -14,6 +14,7 @@ local function Client(userid)
     return TheNet ~= nil and TheNet.GetClientTableForUser ~= nil and TheNet:GetClientTableForUser(userid) or nil
 end
 function M.IsAdmin(player)
+    if player ~= nil and player._my_friend_remote_transport then return require("my_friend_body_shard").IsAdmin(player) end
     if player == nil or not UserID(player.userid) then return false end
     local client = Client(player.userid)
     if client ~= nil then return client.admin == true end

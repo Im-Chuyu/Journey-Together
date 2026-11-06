@@ -11,6 +11,11 @@ local M = {}
 M.TABLE = "MY_FRIEND_SPEECH"
 M.MAX_DURATION = 7
 M.CHAT_ICON = "profileflair_yule_glommer"
+function M.SetChatIcon(icon)
+    if type(icon) == "string" and #icon <= 100 and icon:match("^profileflair_[%w_]+$") then
+        M.CHAT_ICON = icon
+    end
+end
 local SEPARATOR = "\1"
 local ARGUMENT_TOKEN = "{1}"
 -- Per character overrides are stored under "<character>/<key>"; a bare

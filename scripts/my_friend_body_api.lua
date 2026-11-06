@@ -54,12 +54,14 @@ function M.CanConnect(inst, player)
         and inst._my_friend_model_enabled == true and inst:IsValid() and inst:HasTag("my_friend") and not inst._my_friend_possess_parked
         and not inst:HasTag("playerghost")
     if not active then return false end
+    if player._my_friend_remote_transport == true then return require("my_friend_body_shard").Available(inst, player) end
     if player._my_friend_remote_speaker == true then return require("my_friend_body_chat").Available(inst, player) end
     return Policy.IsLocalPlayer(player)
 end
 function M.Authorize(inst, player)
     local leader = inst ~= nil and Policy.GetLeader(inst) or nil
-    return M.CanConnect(inst, player) and (leader == nil or leader == player)
+    return M.CanConnect(inst, player) and (leader == nil or leader == player
+        or player._my_friend_remote_transport and leader.userid ~= nil and leader.userid == player.userid)
 end
 local PUBLIC = {observe = true, say = true, query_recipe = true, query_sites = true, query_actions = true, query_batch=true, get_capabilities = true, get_action_status = true,
     save_game = true, rollback_game = true, pause_game = true, kick_player = true, ban_player = true}

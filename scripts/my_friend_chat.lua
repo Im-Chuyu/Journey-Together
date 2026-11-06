@@ -25,6 +25,8 @@ function M.Dispatch(player, message, source, whisper)
     if TheWorld == nil or not TheWorld.ismastersim or not Policy.IsLocalPlayer(player)
         or type(message) ~= "string" or message == "" or #message > 2048
         or whisper ~= nil and type(whisper) ~= "boolean" then return false end
+    local shard = package.loaded.my_friend_body_shard
+    if shard ~= nil and shard.ConsumeEcho(player, message, source, whisper) then return true end
     local friend = Possess.GetCommandTarget(player) or TheWorld._my_friend
     if friend == nil or not friend:IsValid() or friend._my_friend_possess_parked
         or friend.components == nil or friend.components.my_friend_affinity == nil then

@@ -27,8 +27,8 @@ local function Report(status, reason)
     local messages = {
         permission_denied = "无权连接：请开启AI大模型模式，并确认当前分片存在活动伙伴。",
         relay_admin_required = "当前专服仅允许管理员连接本机助手。公屏仍可使用已连接的助手。",
-        relay_client_required = "当前专服使用管理员客户端中继。请由同分片管理员在游戏客户端连接助手。",
-        companion_missing = "当前分片没有找到活动伙伴。",
+        relay_client_required = "当前专服使用管理员客户端中继。请由管理员在游戏客户端连接助手。",
+        companion_missing = "当前房间没有找到可连接的活动伙伴。",
         too_far_to_connect = "离伙伴太远，请靠近至20游戏单位内。",
         command_in_progress = "伙伴正在执行原有任务，请先结束任务再连接。",
         already_connected = "伙伴已有连接，无需重复配对。",
@@ -78,7 +78,9 @@ local function SendPublicInput(inst, state, input)
     local payload = {id = state.session .. ":public:" .. input.id, text = input.text, userid = state.owner.userid,
         whisper = input.whisper == true}
     local ok
-    if state.owner == ThePlayer then ok = ClientPublicInput(payload)
+    if state.owner._my_friend_remote_transport then
+        ok = require("my_friend_body_shard").Public(state.owner, payload, input.id)
+    elseif state.owner == ThePlayer then ok = ClientPublicInput(payload)
     else
         ok = pcall(function()
             rpc.SendModRPCToClient(rpc.GetClientModRPC("MyFriends", "BodyPublicInput"), {state.owner.userid}, json.encode(payload))
@@ -91,7 +93,9 @@ local function SendPublicInput(inst, state, input)
     end
 end
 local function Notify(player, status, reason, attempt)
-    if player == ThePlayer then
+    if player ~= nil and player._my_friend_remote_transport then
+        return require("my_friend_body_shard").Notify(player, status, reason, attempt)
+    elseif player == ThePlayer then
         if automatic ~= nil then automatic:Result(status, reason, attempt) end
         Report(status, reason)
     elseif rpc ~= nil and player ~= nil and player:IsValid() and type(player.userid) == "string" then
@@ -111,6 +115,9 @@ local function DecodeResponse(path, body, successful, code, limit, failure)
     return nil, failure
 end
 local function Post(inst, state, path, payload, callback)
+    if state.owner._my_friend_remote_transport and not state.dedicated then
+        return require("my_friend_body_shard").Post(inst, state.owner, path, payload, callback)
+    end
     local done = false
     local relay_id
     local function Finish(reply, reason)
@@ -215,8 +222,10 @@ Poll = function(inst, state)
         snapshot = signature ~= state.snapshot_signature and snapshot or nil, events = events}, function(reply, reason)
         state.http_timeout = nil
         if not inst:IsValid() or inst._my_friend_body ~= state then return end
+        if not RelayAuthorized(inst, state) then return end
         if reply == nil then
             state.exchanging = false
+            if reason == "relay_admin_required" then API.Close(inst, reason); return end
             state.failures = (state.failures or 0) + 1
             if state.failures >= 3 then Log("Disconnected: " .. tostring(reason)); API.Close(inst, "bridge_unavailable"); return end
             Schedule(inst, state, 1); return
@@ -224,7 +233,9 @@ Poll = function(inst, state)
         if reply.closed then API.Close(inst, "assistant_stopped"); return end
         if not state.ready then
             state.ready = true
-            if not state.dedicated then Notify(state.owner, "connected", nil, state.connection_attempt) end
+            if not state.dedicated or state.owner._my_friend_remote_transport then
+                Notify(state.owner, "connected", nil, state.connection_attempt)
+            end
             Log("Connected to local assistant.")
         end
         state.failures, state.snapshot_signature = 0, signature
@@ -248,6 +259,8 @@ Poll = function(inst, state)
                     accepted, why = false, "invalid_broadcast"
                 elseif input.whisper ~= nil and type(input.whisper) ~= "boolean" then
                     accepted, why = false, "invalid_whisper"
+                elseif input.whisper and state.owner._my_friend_remote_transport then
+                    accepted, why = false, "nearby_chat_other_shard"
                 elseif input.broadcast and not ValidPublicText(input.text) then
                     accepted, why = false, "invalid_public_text"
                 elseif input.broadcast and (state.owner == ThePlayer and (TheNet == nil or TheNet.Say == nil)
@@ -304,6 +317,9 @@ function M.Connect(inst, player, code, relay, attempt, dedicated)
         if code ~= dedicated_pair_code then return false, "pairing_code_mismatch" end
     end
     local existing = inst ~= nil and inst._my_friend_body or nil
+    if existing ~= nil and existing.owner._my_friend_remote_transport and not API.Valid(inst) then
+        API.Close(inst, "owner_or_body_changed"); existing = nil
+    end
     if existing ~= nil and existing.owner == player and API.CanConnect(inst, player) then
         existing.connection_attempt = attempt
         if not dedicated then Notify(player, existing.ready and "connected" or "connecting", nil, attempt) end
@@ -322,6 +338,7 @@ function M.Connect(inst, player, code, relay, attempt, dedicated)
     state.connection_attempt = attempt
     state.relay_owner = relay and player or nil
     state.admin_relay = admin_relay
+    if player._my_friend_remote_transport then player.requires_admin = admin_relay end
     state.dedicated = dedicated == true
     state.on_emit = function() RequestFlush(inst, state) end
     local world = TheWorld
@@ -344,6 +361,7 @@ function M.Connect(inst, player, code, relay, attempt, dedicated)
         if state.dedicated then
             if why == "pairing_code_mismatch" then stopped_worlds[world] = true end
             if state.ready or why == "pairing_code_mismatch" then Report("disconnected", why) end
+            if player._my_friend_remote_transport then Notify(player, "disconnected", why, state.connection_attempt) end
         else
             Notify(player, "disconnected", why, state.connection_attempt)
         end
@@ -355,6 +373,7 @@ function M.Connect(inst, player, code, relay, attempt, dedicated)
         capabilities = API.NAMES, input_protocol = 2, companion = inst.prefab, owner = player:GetDisplayName()}, function(reply, err)
         state.http_timeout = nil
         if not inst:IsValid() or inst._my_friend_body ~= state then return end
+        if not RelayAuthorized(inst, state) then return end
         if reply == nil or type(reply.token) ~= "string" or #reply.token > 128 then
             API.Close(inst, err or "pairing_failed")
             if not state.dedicated and err ~= "pairing_code_mismatch" then Log("Pairing failed; check the local app and code.") end
@@ -380,8 +399,8 @@ function M.TryDedicated(friend, code)
     local now = (GetStaticTime or GetTime)()
     if now < (world._my_friend_dedicated_pair_after or 0) then return end
     local player = DedicatedOwner(friend)
-    if player == nil then return end
     world._my_friend_dedicated_pair_after = now + 10
+    if player == nil then return require("my_friend_body_shard").Offer(code) end
     return M.Connect(friend, player, code, false, nil, true)
 end
 
@@ -399,6 +418,12 @@ function M.Control(operation, code, from_automatic, attempt)
     -- Sending a client RPC to itself fails on offline/listen-host sessions.
     if TheWorld ~= nil and TheWorld.ismastersim then
         local friend = TheWorld._my_friend
+        if friend == nil and ThePlayer ~= nil then
+            if operation == "disconnect" then return require("my_friend_body_shard").Disconnect(ThePlayer) end
+            local accepted, reason = require("my_friend_body_shard").Request(ThePlayer, code, attempt)
+            if not accepted then Notify(ThePlayer, "failed", reason, attempt) end
+            return accepted
+        end
         if friend == nil then Notify(ThePlayer, "failed", "companion_missing", attempt); return false end
         local dedicated = Dedicated()
         local player = ThePlayer or require("my_friend_policy").GetLeader(friend)
@@ -472,6 +497,7 @@ function M.Install(api, enabled, options)
         local ok, data = pcall(json.decode, payload)
         if not ok or type(data) ~= "table" or type(data.id) ~= "string" then return end
         local record = pending[data.id]
+        if record == nil and M._shard_forward_reply ~= nil then return M._shard_forward_reply(player, data) end
         if record == nil or record.owner ~= player or not player:IsValid() or not record.inst:IsValid() then return end
         if not record.closing and (record.inst._my_friend_body ~= record.state or not API.CanConnect(record.inst, player)) then return end
         if not record.closing and not RelayAuthorized(record.inst, record.state) then return end
@@ -502,6 +528,14 @@ function M.Install(api, enabled, options)
         local ok, args = pcall(json.decode, payload)
         if not ok or type(args) ~= "table" then return end
         if args.attempt ~= nil and (type(args.attempt) ~= "number" or args.attempt < 1 or args.attempt > 1000000 or args.attempt % 1 ~= 0) then return end
+        if friend == nil then
+            if operation == "disconnect" then require("my_friend_body_shard").Disconnect(player); return end
+            if operation == "connect" then
+                local accepted, reason = require("my_friend_body_shard").Request(player, args.code, args.attempt)
+                if not accepted then Notify(player, "failed", reason, args.attempt) end
+                return
+            end
+        end
         if friend == nil or not API.CanConnect(friend, player) then
             if player ~= nil and player:IsValid() and type(player.userid) == "string" then
                 api.SendModRPCToClient(api.GetClientModRPC("MyFriends", "BodyEvent"), {player.userid},
@@ -531,5 +565,53 @@ function M.Install(api, enabled, options)
             Report(data.status, data.reason)
         end
     end)
+    -- Appended after existing handlers to preserve every established RPC ID.
+    local forwards = {}
+    require("my_friend_body_shard").Install(chat_api, enabled, {
+        connect = function(inst, actor, code, attempt, server_http)
+            if server_http and Dedicated() and not AdminRelayMode() then
+                return M.Connect(inst, actor, code, false, attempt, true)
+            end
+            return M.Connect(inst, actor, code, true, attempt)
+        end,
+        notify = Notify,
+        say = function(player, payload)
+            payload.userid = player.userid
+            if player == ThePlayer then return ClientPublicInput(payload) end
+            chat_api.SendModRPCToClient(chat_api.GetClientModRPC("MyFriends", "BodyPublicInput"), {player.userid}, json.encode(payload))
+        end,
+        post = function(player, path, payload, callback, valid)
+            local count = 0; for _ in pairs(forwards) do count = count + 1 end
+            if count >= 64 then callback(nil, "too_many_requests"); return function() end end
+            serial = serial + 1
+            local id = "shard-forward:" .. Clock() .. ":" .. serial
+            local record = {player = player, world = TheWorld, callback = callback, valid = valid}
+            forwards[id] = record
+            local function Finish(reply, reason)
+                if forwards[id] ~= record then return end
+                forwards[id] = nil; Cancel(record.timeout)
+                callback(reply, reason)
+            end
+            record.finish = Finish
+            record.timeout = player:DoStaticTaskInTime(8, function() Finish(nil, "timeout") end)
+            local ok = pcall(function()
+                if player == ThePlayer then
+                    TheSim:QueryServer(ROOT .. path, function(body, successful, code)
+                        if valid() then Finish(DecodeResponse(path, body, successful, code, 30000, "client_http_error")) end
+                    end, "POST", json.encode(payload))
+                else
+                    chat_api.SendModRPCToClient(chat_api.GetClientModRPC("MyFriends", "BodyRelay"), {player.userid},
+                        json.encode({id = id, path = path, payload = payload}))
+                end
+            end)
+            if not ok then Finish(nil, "client_http_api_error") end
+            return function() forwards[id] = nil; Cancel(record.timeout) end
+        end,
+    })
+    M._shard_forward_reply = function(player, data)
+        local record = forwards[data.id]
+        if record == nil or record.player ~= player or record.world ~= TheWorld or not record.valid() then return end
+        record.finish(type(data.reply) == "table" and data.reply or nil, data.reason)
+    end
 end
 return M

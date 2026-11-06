@@ -144,7 +144,7 @@ Enable AI Model Mode in the mod settings and match the six-digit pairing code in
 - **Windows API assistant**: launch `StartVoice.vbs`, enter your DeepSeek API key in Model settings, save and restart. Alternatively, copy `AssistantAPI.example.json` to `AssistantAPI.json` and edit it. The default model is `deepseek-flash`; proactive API chat is disabled by default. API usage is billed to the key owner.
 - **Windows browser assistant**: without an API key, use the DeepSeek or Doubao web bridge. Load `tools/companion_bridge/browser_extension` in Chrome/Edge, sign in yourself and pair the model tab using the assistant's web connection code. Website changes, login state and background throttling can affect the connection.
 - **Linux dedicated API assistant**: configure `AssistantAPI.json` and run `sh ./StartAssistantLinux.sh` with Python 3.10 or newer. The companion's shard pairs automatically when the companion and an online player are present.
-- **Dedicated server admin client**: select Dedicated Server AI Connection → Admin Client. An administrator on the companion's shard can connect a local assistant using the pairing code. Relay access checks administrator status; public-chat work permissions still use the actual speaker's identity.
+- **Dedicated server admin client**: select Dedicated Server AI Connection → Admin Client. An administrator can connect a local assistant from another shard using the pairing code. Relay access checks administrator status; public-chat work permissions still use the actual speaker's identity.
 
 The Windows launcher checks for Python/Tk and installs it if needed. Assistant settings provide local Whisper setup and TTS voice, rate and volume controls. Hold the voice hotkey to speak and release it to recognize speech; the default is `F9`. Text input is also available.
 
@@ -152,7 +152,12 @@ While connected, players can address the companion by name in public chat. One a
 
 The assistant's game-chat sync checkbox sends typed or recognized speech through the connected player's own account. It defaults to off. The separate private-chat checkbox selects the channel: off by default means companion replies appear as named public chat for everyone; on keeps replies visible nearby, using the existing native chatter. Synced player messages use the same channel. You can select the reply channel with input sync disabled. Both choices persist. Synced messages are limited to 150 characters; echoes do not trigger the model again. Assistant input appears in the message log only after the game accepts it. Messages sent inside the game retain their public or nearby reply channel.
 
-Nearby and public companion chat share the native Winter's Feast Glommer avatar, with an empty-avatar fallback if unavailable. Arrival, farewell, death, resurrection and ghost rescue messages appear as named public chat even when model mode is off. Server notices for ordinary players remain unchanged.
+The Companion Chat Avatar setting offers 246 current native icons, including an empty avatar. It defaults to Ice Glomglom and applies to nearby and public chat, with an empty fallback for unavailable assets. Arrival, farewell, death, resurrection and ghost rescue messages appear as named public chat even when model mode is off. Server notices for ordinary players remain unchanged.
+
+
+Within one server cluster, the connecting player and companion may occupy different surface/cave shards, including initial pairing. Changing shards ends old tasks and reconnects automatically. API and web modes share this transport: local assistants use the player's computer; cloud API assistants are accessed directly by the companion's shard, even when all players are elsewhere. Following and delivery still require local entities; nearby private chat does not cross shards.
+
+The web connection code is stored in the current user's data directory and shared across mod copies. Restarting or updating the mod does not rotate it. The extension remembers pairing and restores missing scripts in existing tabs automatically; allow the new scripting permission when updating it. Initial pairing, an explicit code change, disconnect or cleared browser storage requires pairing again.
 
 ### Tasks and limitations
 

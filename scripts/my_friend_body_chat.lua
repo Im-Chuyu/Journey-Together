@@ -14,7 +14,9 @@ local function Display(data)
     displayed[data.id], display_order[#display_order + 1] = true, data.id
     if #display_order > 64 then displayed[table.remove(display_order, 1)] = nil end
     if ChatHistory ~= nil and ChatHistory.OnSay ~= nil then
-        ChatHistory:OnSay(0, nil, nil, data.name, data.prefab, data.text, WHITE or {1,1,1,1}, false, false, {Speech.CHAT_ICON})
+        local icon = type(data.icon) == "string" and #data.icon <= 100
+            and data.icon:match("^profileflair_[%w_]+$") and data.icon or Speech.CHAT_ICON
+        ChatHistory:OnSay(0, nil, nil, data.name, data.prefab, data.text, WHITE or {1,1,1,1}, false, false, {icon})
     end
 end
 local function Send(name, shard, data)
@@ -38,6 +40,7 @@ local function Identity(player)
     end
     return player._my_friend_model_chat_identity
 end
+M.Identity = Identity
 function M.Forward(player, text, source, whisper)
     if not model_enabled or whisper == true or rpc == nil or rpc.SendModRPCToShard == nil or TheWorld == nil
         or not TheWorld.ismastersim or not Policy.IsLocalPlayer(player) then return false end
@@ -65,7 +68,7 @@ end
 function M.Reply(inst, actor, id, text)
     if rpc ~= nil and M.Available(inst, actor) then
         Send("BodyChatSpeech", actor.shard, {identity = actor.identity, userid = actor.userid,
-            id = id, name = inst:GetDisplayName(), prefab = inst.prefab, text = text})
+            id = id, name = inst:GetDisplayName(), prefab = inst.prefab, text = text, icon = Speech.CHAT_ICON})
     end
 end
 function M.CanBroadcast()
@@ -84,7 +87,8 @@ local function BroadcastLocal(data)
     return true
 end
 function M.Broadcast(inst, id, text)
-    local data = {id = id, name = inst:GetDisplayName(), prefab = inst.prefab, text = text, public = true}
+    local data = {id = id, name = inst:GetDisplayName(), prefab = inst.prefab, text = text,
+        icon = Speech.CHAT_ICON, public = true}
     if not BroadcastLocal(data) then return false end
     if rpc.SendModRPCToShard ~= nil then Send("BodyChatSpeech", nil, data) end
     return true

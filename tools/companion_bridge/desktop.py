@@ -335,6 +335,7 @@ def desktop(store, server, language):
                 message.config(text="试听完成。" if event["result"].get("status") == "completed" else event["result"].get("error", "试听失败"))
             elif kind == "input_rejected":
                 reason = {"companion_name_required": "请在消息中包含伙伴名字。", "rate_limited": "消息太快，请稍后再说。",
+                          "nearby_chat_other_shard": "伙伴在另一分片，附近私聊无法传达，请关闭私聊后重试。",
                           "invalid_public_text": "游戏聊天消息须为150字符以内的单行文字。",
                           "public_chat_unavailable": "当前游戏无法同步聊天，请检查连接或关闭同步后重试。"}.get(event.get("reason"), "游戏未接收消息，请检查连接。")
                 message.config(text=reason)

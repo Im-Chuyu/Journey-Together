@@ -62,11 +62,30 @@ function recover(preferredId) {
     selection = next.catch(() => {});
     return next;
 }
+const restoring = new Map();
+async function restoreContent(tabId) {
+    if (!restoring.has(tabId)) restoring.set(tabId, (async () => {
+        const loaded = await chrome.scripting.executeScript({target: {tabId},
+            func: () => Boolean(globalThis.__buddyContentLoaded)});
+        if (!loaded[0]?.result) await chrome.scripting.executeScript({target: {tabId}, files: ["sites.js", "content.js"]});
+    })().finally(() => restoring.delete(tabId)));
+    await restoring.get(tabId);
+}
 async function ping(preferredId) {
     try {
         const state = await recover(preferredId);
         if (!state) return;
-        const page = await bounded(chrome.tabs.sendMessage(state.buddyTab, {kind: "buddy_ping"}), 4000, "网页未响应");
+        let page;
+        try { page = await bounded(chrome.tabs.sendMessage(state.buddyTab, {kind: "buddy_ping"}), 4000, "网页未响应"); }
+        catch (_) {
+            // An already-open tab loses its old content-script context when
+            // the extension updates. Restore it using the existing site access.
+            if (!chrome.scripting) return;
+            const current = await pairing();
+            if (current.buddyToken !== state.buddyToken || current.buddyTab !== state.buddyTab) return;
+            await restoreContent(state.buddyTab);
+            page = await bounded(chrome.tabs.sendMessage(state.buddyTab, {kind: "buddy_ping"}), 4000, "网页未响应");
+        }
         const current = await pairing();
         // A real page response is required. An open tab entry alone is not a
         // heartbeat. This HTTP call does not consume or submit a model job.
@@ -84,6 +103,10 @@ async function ensureHeartbeat() {
 chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "local" || !("buddyTab" in changes || "buddyToken" in changes || "buddyDisabled" in changes)) return;
     void ensureHeartbeat().catch(() => {});
+});
+if (chrome.runtime.onInstalled) chrome.runtime.onInstalled.addListener(() => {
+    void ensureHeartbeat().catch(() => {});
+    void ping();
 });
 chrome.alarms.onAlarm.addListener(alarm => {
     if (alarm.name === HEARTBEAT) return ping();

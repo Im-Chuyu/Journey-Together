@@ -6,6 +6,7 @@
     "permissions": [
         "storage",
         "activeTab",
+        "scripting",
         "alarms"
     ],
     "host_permissions": [

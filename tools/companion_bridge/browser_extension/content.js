@@ -1,4 +1,5 @@
 "use strict";
+globalThis.__buddyContentLoaded = true;
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
     if (sender.id === chrome.runtime.id && message.kind === "buddy_ping") {
         reply({ready: true});

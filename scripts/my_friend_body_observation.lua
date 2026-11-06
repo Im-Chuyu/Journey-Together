@@ -217,8 +217,9 @@ function M.Snapshot(inst, state)
         task = inst._my_friend_current_task, inventory = {}, action = state.active ~= nil and {
             action_id = state.active.id, skill = state.active.skill, status = state.active.status,
             stage = state.active.stage, progress = state.active.progress} or nil}
-    out.owner = M.Describe(inst, state, state.owner)
-    out.world_control = require("my_friend_body_world").Status(state.owner)
+    out.owner = state.owner._my_friend_remote_transport and state.owner.speaker or M.Describe(inst, state, state.owner)
+    out.world_control = state.owner._my_friend_remote_transport and state.owner.world_control
+        or require("my_friend_body_world").Status(state.owner)
     local leader = require("my_friend_policy").GetLeader(inst)
     out.following = leader ~= nil
     out.leader = leader ~= nil and M.Describe(inst, state, leader) or nil

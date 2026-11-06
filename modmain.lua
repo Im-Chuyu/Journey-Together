@@ -57,6 +57,7 @@ end
 -- Every companion line is registered in STRINGS on both the server and the
 -- clients so the vanilla chatter channel can echo it into nearby chat windows.
 local Speech = require("my_friend_speech")
+Speech.SetChatIcon(GetModConfigData("companion_chat_icon"))
 Speech.BuildStrings()
 if not _G.TheNet:IsDedicated() then Speech.InstallChatIcon() end
 -- Rebuilt once every mod has loaded, so per character dialogue files are also

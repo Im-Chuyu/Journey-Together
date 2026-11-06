@@ -2,6 +2,8 @@
 import json
 from pathlib import Path
 import secrets
+import os
+import tempfile
 from .paths import data_dir
 
 DEFAULT_CODE = "321151"
@@ -37,8 +39,49 @@ def validate_chat(data):
     if type(data.get("whisper_input", False)) is not bool:
         raise ValueError("附近私聊设置必须为布尔值")
 
+def pairing_path():
+    """Only the web credential is shared across development/Workshop copies."""
+    if os.environ.get("MY_FRIEND_ASSISTANT_DATA_DIR"):
+        return data_dir() / "web-pairing.json"
+    base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / ".local" / "share")
+    return base / "JourneyTogether" / "companion_bridge" / "web-pairing.json"
+
+
+def _write_pairing(web_code):
+    path = pairing_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix="web-pairing.", suffix=".json.new", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump({"web_code": web_code}, stream)
+            stream.write("\n")
+        Path(temporary).replace(path)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+
+
+def _shared_web_code(fallback):
+    path = pairing_path()
+    if path.exists():
+        value = json.loads(path.read_text(encoding="utf-8-sig")).get("web_code")
+        validate(DEFAULT_CODE, value)
+        return value
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # A simultaneous second launch must use the winner's credential, even if
+    # that second process later fails because the HTTP port is already in use.
+    try:
+        with path.open("x", encoding="utf-8") as stream:
+            json.dump({"web_code": fallback}, stream)
+            stream.write("\n")
+        return fallback
+    except FileExistsError:
+        value = json.loads(path.read_text(encoding="utf-8-sig")).get("web_code")
+        validate(DEFAULT_CODE, value)
+        return value
+
 
 def save(data, directory=None):
+    use_shared = directory is None
     validate(data["pair_code"], data["web_code"])
     validate_hotkey(data.get("voice_hotkey", "F9"))
     validate_voice(data)
@@ -50,21 +93,28 @@ def save(data, directory=None):
     temporary = directory / "settings.json.new"
     temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     temporary.replace(path)
+    if use_shared:
+        _write_pairing(data["web_code"])
 
 
 def load(directory=None):
+    use_shared = directory is None
     directory = Path(directory) if directory else data_dir()
     path = directory / "settings.json"
     if path.exists():
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
         validate(data["pair_code"], data["web_code"])
         validate_hotkey(data.get("voice_hotkey", "F9"))
         validate_voice(data)
         validate_chat(data)
+        if use_shared:
+            data["web_code"] = _shared_web_code(data["web_code"])
         return data
     data = {"pair_code": DEFAULT_CODE, "web_code": secrets.token_urlsafe(32), "voice_hotkey": "F9"}
     data["asr_backend"]="whisper"
     data["broadcast_input"] = False
     data["whisper_input"] = False
+    if use_shared:
+        data["web_code"] = _shared_web_code(data["web_code"])
     save(data, directory)
     return data
