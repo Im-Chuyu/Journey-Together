@@ -10,6 +10,7 @@ local M = {}
 
 M.TABLE = "MY_FRIEND_SPEECH"
 M.MAX_DURATION = 7
+M.CHAT_ICON = "profileflair_yule_glommer"
 local SEPARATOR = "\1"
 local ARGUMENT_TOKEN = "{1}"
 -- Per character overrides are stored under "<character>/<key>"; a bare
@@ -141,6 +142,28 @@ local function IsDynamicKey(key)
     return key == "ai_dynamic" or key:match("^[^/]+/ai_dynamic$") ~= nil
 end
 
+-- NPC chatter uses a separate atlas. Only our badge reads the shared player
+-- flair atlas; the native fallback texture remains available on older clients.
+function M.InstallChatIcon()
+    local templates = require("widgets/redux/templates")
+    if templates._my_friend_chat_icon then return end
+    local create = templates.ChatterMessageBadge
+    templates.ChatterMessageBadge = function(...)
+        local badge = create(...)
+        local set = badge.SetFlair
+        badge.SetFlair = function(self, icon, ...)
+            if icon == M.CHAT_ICON then
+                self.profileflair = icon
+                self.flair_img:SetTexture("images/profileflair.xml", icon .. ".tex", "profileflair_none.tex")
+                return
+            end
+            return set(self, icon, ...)
+        end
+        return badge
+    end
+    templates._my_friend_chat_icon = true
+end
+
 local function InstallDynamicChatEcho()
     local history = ChatHistory
     if history == nil or history._my_friend_dynamic_echo
@@ -150,8 +173,11 @@ local function InstallDynamicChatEcho()
         local talker = inst ~= nil and inst.components ~= nil and inst.components.talker or nil
         local chatter = talker ~= nil and talker.chatter or nil
         local raw = chatter ~= nil and chatter.strtbl:value() or nil
-        if silent and inst ~= nil and inst:HasTag("my_friend") and type(raw) == "string"
-            and IsDynamicKey(raw:match("^[^\1]+") or "") then silent = false end
+        if inst ~= nil and inst:HasTag("my_friend") then
+            icon, background = M.CHAT_ICON, "playericon_bg_none"
+            if silent and type(raw) == "string"
+                and IsDynamicKey(raw:match("^[^\1]+") or "") then silent = false end
+        end
         return previous(self, inst, name_colour, message, colour, icon, background, priority, silent, ...)
     end
     history._my_friend_dynamic_echo = true
@@ -169,7 +195,7 @@ function M.Resolve(inst, strid, strtbl)
     -- Native chatter normally hides the live notification within 8 units of
     -- the camera. Explicit model replies should notify nearby players too.
     -- Resolve runs before OnChatterMessage on both listen hosts and clients.
-    if IsDynamicKey(key) then InstallDynamicChatEcho() end
+    if inst ~= nil and inst:HasTag("my_friend") then InstallDynamicChatEcho() end
     return M.Text(key, math.max(1, strid:value()), argument)
         or ResolveVanilla(strid, strtbl)
 end

@@ -146,11 +146,9 @@ function M.Complete(inst, character, keep_items)
     require("my_friend_abigail").Place(replacement)
     replacement._my_friend_replan_requested = true
     require("my_friend_dialogue").PublicSay(replacement, "switch_arrive")
-    if TheNet ~= nil and TheNet.Announce ~= nil then
-        TheNet:Announce(replacement:GetDisplayName()
-            .. require("my_friend_strings").Text("已经来到永恒领域，请前去迎接。",
-                " has arrived in the Constant. Come and say hello."))
-    end
+    require("my_friend_body_chat").Public(replacement,
+        require("my_friend_strings").Text("已经来到永恒领域，请前去迎接。",
+            "I've arrived in the Constant. Come and say hello."))
     return replacement
 end
 

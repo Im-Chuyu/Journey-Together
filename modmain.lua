@@ -58,12 +58,14 @@ end
 -- clients so the vanilla chatter channel can echo it into nearby chat windows.
 local Speech = require("my_friend_speech")
 Speech.BuildStrings()
+if not _G.TheNet:IsDedicated() then Speech.InstallChatIcon() end
 -- Rebuilt once every mod has loaded, so per character dialogue files are also
 -- picked up for characters added by mods that load after this one.
 AddSimPostInit(function() Speech.BuildStrings() end)
 AddSimPostInit(function()
     if _G.TheWorld ~= nil and _G.TheWorld.ismastersim then
         require("my_friend_discovery").Install(_G.EntityScript)
+        require("my_friend_body_chat").InstallLifecycle(_G)
     end
 end)
 local Home = require("my_friend_home")
@@ -1119,8 +1121,8 @@ local function SpawnFriend(player, announce)
     _G.print("[MyFriends] Companion created on shard " .. tostring(_G.TheShard:GetShardId())
         .. " at " .. tostring(px + 2) .. ", " .. tostring(pz + 2))
     if announce then
-        TheNet:Announce(friend:GetDisplayName()..Text("已经来到永恒领域，请前去迎接。",
-            " has arrived in the Constant. Come and say hello."))
+        require("my_friend_body_chat").Public(friend, Text("已经来到永恒领域，请前去迎接。",
+            "I've arrived in the Constant. Come and say hello."))
     end
 end
 

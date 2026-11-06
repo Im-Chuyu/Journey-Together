@@ -152,6 +152,8 @@ While connected, players can address the companion by name in public chat. One a
 
 The assistant's game-chat sync checkbox sends typed or recognized speech through the connected player's own account. It defaults to off. The separate private-chat checkbox selects the channel: off by default means companion replies appear as named public chat for everyone; on keeps replies visible nearby, using the existing native chatter. Synced player messages use the same channel. You can select the reply channel with input sync disabled. Both choices persist. Synced messages are limited to 150 characters; echoes do not trigger the model again. Assistant input appears in the message log only after the game accepts it. Messages sent inside the game retain their public or nearby reply channel.
 
+Nearby and public companion chat share the native Winter's Feast Glommer avatar, with an empty-avatar fallback if unavailable. Arrival, farewell, death, resurrection and ghost rescue messages appear as named public chat even when model mode is off. Server notices for ordinary players remain unchanged.
+
 ### Tasks and limitations
 
 Tools support observation, collection, carrying, resource work, crafting, cooking, planting and native item interactions. Character abilities depend on the live capability query. Independent queries can be batched, and decided steps can run as a local sequence that stops on failure and reports actual progress. Examples include uprooting a plant, collecting its actual drop, checking a location and planting it, or chopping a specified number of trees.

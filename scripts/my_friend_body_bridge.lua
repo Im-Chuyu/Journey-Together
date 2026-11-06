@@ -442,6 +442,7 @@ function M.AttachAuto(player, enabled, code)
     player:DoStaticTaskInTime(1, activate)
 end
 function M.Install(api, enabled, options)
+    local chat_api = api
     dedicated_transport = options ~= nil and options.dedicated_transport or nil
     dedicated_pair_code = options ~= nil and options.pair_code or "321151"
     rpc = enabled ~= false and api or nil
@@ -460,7 +461,7 @@ function M.Install(api, enabled, options)
         }
     end
     require("my_friend_body_world").Install(api)
-    require("my_friend_body_chat").Install(api)
+    require("my_friend_body_chat").Install(chat_api, enabled)
     api.AddClientModRPCHandler("MyFriends", "BodyPublicInput", function(payload)
         if type(payload) ~= "string" or #payload > 4096 then return end
         local ok, data = pcall(json.decode, payload)

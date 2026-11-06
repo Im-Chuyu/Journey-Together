@@ -1,9 +1,11 @@
--- Server-to-server public chat relay. Never accepts a client-supplied identity.
+-- Named companion chat and model relay. Never accepts a client-supplied identity.
 local json = require("json")
 local Policy = require("my_friend_policy")
+local Speech = require("my_friend_speech")
 local M = {}
-local rpc, serial = nil, 0
+local rpc, serial, model_enabled = nil, 0, true
 local pending = {}
+local lifecycle_wrappers = {}
 local displayed, display_order = {}, {}
 local function Display(data)
     if type(data) ~= "table" or type(data.id) ~= "string" or #data.id > 160
@@ -12,7 +14,7 @@ local function Display(data)
     displayed[data.id], display_order[#display_order + 1] = true, data.id
     if #display_order > 64 then displayed[table.remove(display_order, 1)] = nil end
     if ChatHistory ~= nil and ChatHistory.OnSay ~= nil then
-        ChatHistory:OnSay(0, nil, nil, data.name, data.prefab, data.text, WHITE or {1,1,1,1}, false, false)
+        ChatHistory:OnSay(0, nil, nil, data.name, data.prefab, data.text, WHITE or {1,1,1,1}, false, false, {Speech.CHAT_ICON})
     end
 end
 local function Send(name, shard, data)
@@ -37,7 +39,7 @@ local function Identity(player)
     return player._my_friend_model_chat_identity
 end
 function M.Forward(player, text, source, whisper)
-    if whisper == true or rpc == nil or rpc.SendModRPCToShard == nil or TheWorld == nil
+    if not model_enabled or whisper == true or rpc == nil or rpc.SendModRPCToShard == nil or TheWorld == nil
         or not TheWorld.ismastersim or not Policy.IsLocalPlayer(player) then return false end
     local previous, now = player._my_friend_model_chat_forward, (GetStaticTime or GetTime)()
     if previous ~= nil and previous.text == text and previous.source ~= source and now - previous.time < 1 then return true end
@@ -87,6 +89,34 @@ function M.Broadcast(inst, id, text)
     if rpc.SendModRPCToShard ~= nil then Send("BodyChatSpeech", nil, data) end
     return true
 end
+-- Lifecycle messages do not require a model connection or a living talker.
+function M.Public(inst, text)
+    if TheWorld == nil or not TheWorld.ismastersim or inst == nil or not inst:IsValid()
+        or not inst:HasTag("my_friend") or type(text) ~= "string" or #text == 0 or #text > 600 then return false end
+    serial = serial + 1
+    local shard = TheShard ~= nil and TheShard:GetShardId() or "local"
+    return M.Broadcast(inst, "public:" .. tostring(shard) .. ":" .. tostring(inst.GUID)
+        .. ":" .. tostring(GetTime()) .. ":" .. serial, text)
+end
+function M.InstallLifecycle(globals)
+    for _, name in ipairs({"GetNewDeathAnnouncementString", "GetNewRezAnnouncementString"}) do
+        local previous = globals[name]
+        if type(previous) == "function" and previous ~= lifecycle_wrappers[name] then
+            local wrapped = function(inst, ...)
+                local text = previous(inst, ...)
+                if TheWorld ~= nil and TheWorld.ismastersim and inst ~= nil and inst:HasTag("my_friend")
+                    and type(text) == "string" and text ~= "" then
+                    local speaker = inst:GetDisplayName()
+                    local content = text:sub(1, #speaker) == speaker
+                        and text:sub(#speaker + 1):match("^%s+(.+)$") or text
+                    if M.Public(inst, content or text) then return "" end
+                end
+                return text
+            end
+            lifecycle_wrappers[name], globals[name] = wrapped, wrapped
+        end
+    end
+end
 function M.WorldCall(actor, skill, args, callback, dialogue)
     if rpc == nil or not Online(actor.shard) then callback(false, nil, "speaker_shard_unavailable"); return end
     local count = 0; for _ in pairs(pending) do count = count + 1 end
@@ -110,8 +140,9 @@ function M.WorldCall(actor, skill, args, callback, dialogue)
     end)
     Send("BodyChatWorld", actor.shard, {id = id, identity = actor.identity, userid = actor.userid, skill = skill, args = args, dialogue=dialogue})
 end
-function M.Install(api)
+function M.Install(api, enabled)
     rpc = api
+    model_enabled = enabled ~= false
     if api.AddClientModRPCHandler ~= nil then
         api.AddClientModRPCHandler("MyFriends", "BodyChatSpeech", function(payload)
             if type(payload) ~= "string" or #payload > 10000 then return end
@@ -136,6 +167,7 @@ function M.Install(api)
         end
     end)
     api.AddShardModRPCHandler("MyFriends", "BodyChat", function(source, payload)
+        if not model_enabled then return end
         if TheWorld == nil or not TheWorld.ismastersim or not Online(source) or type(payload) ~= "string" or #payload > 16000 then return end
         local ok, data = pcall(json.decode, payload)
         if not ok or type(data) ~= "table" or type(data.identity) ~= "string" or #data.identity > 100 then return end
@@ -171,6 +203,7 @@ function M.Install(api)
         body_api.Input(inst, actor, data.text)
     end)
     api.AddShardModRPCHandler("MyFriends", "BodyChatWorld", function(source, payload)
+        if not model_enabled then return end
         if TheWorld == nil or not TheWorld.ismastersim or not Online(source) or type(payload) ~= "string" or #payload > 10000 then return end
         local ok, data = pcall(json.decode, payload)
         if not ok or type(data) ~= "table" or type(data.id) ~= "string" or #data.id > 100
@@ -198,6 +231,7 @@ function M.Install(api)
         end,data.dialogue)
     end)
     api.AddShardModRPCHandler("MyFriends", "BodyChatWorldReply", function(source, payload)
+        if not model_enabled then return end
         if type(payload) ~= "string" or #payload > 10000 then return end
         local ok, data = pcall(json.decode, payload)
         local record = ok and type(data) == "table" and pending[data.id] or nil

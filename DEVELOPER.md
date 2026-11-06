@@ -817,9 +817,11 @@ modinfo 模型模式总开关 model_enabled 默认关闭，六个 model_pair_dig
 
 `my_friend_dialogue.lua` 决定何时说、对谁说、台词冷却和队列；`my_friend_speech.lua` 注册字符串表，将台词 key、索引和参数通过原版 talker chatter 传到客户端解析；`my_friend_voice.lua` 负责声音。
 
-当前游戏的talker会将镜头8单位内的NPC chatter设为silent，仅记历史而不通知即时聊天UI。模型ai_dynamic回复在Resolve阶段（原版调用OnChatterMessage之前）按ChatHistory实例安装一次包装；仅当前说话实体带my_friend标签且chatter实际key为ai_dynamic或角色/ai_dynamic时取消silent。沿用原OnChatterMessage，保留附近距离、NPC聊天开关/优先级及原版去重，不手工重复插入历史、不改其他NPC/普通台词、不增加网络变量。房主与远程客户端各自在本地处理，专服无HUD/ChatHistory时安全跳过。
+当前游戏的talker会将镜头8单位内的NPC chatter设为silent，仅记历史而不通知即时聊天UI。伙伴在Resolve阶段（原版调用OnChatterMessage之前）按ChatHistory实例安装一次包装；仅当前说话实体带my_friend标签且chatter实际key为ai_dynamic或角色/ai_dynamic时取消silent，普通台词保留原静默规则。伙伴附近聊天的icon/background统一为profileflair_yule_glommer/playericon_bg_none；非专服启动时幂等包装TEMPLATES.ChatterMessageBadge，仅此头像从原版images/profileflair.xml读取，其他NPC继续原图集，缺少贴图回退profileflair_none.tex。公开OnSay传同一profileflair，普通玩家的装扮不改。沿用原OnChatterMessage，保留附近距离、NPC聊天开关/优先级及原版去重，不手工重复插入历史、不增加网络变量。房主与远程客户端各自在本地处理，专服不加载UI模板，无HUD/ChatHistory时安全跳过。
 
-普通对白是附近聊天/气泡路径，入场、告别等部分消息可用世界公告。语音独立挂载在伙伴声音发射器上，公告文字是全服可见不意味着应该全服播放无衰减声音。
+普通对白保持附近聊天/气泡路径。入场、告别、换角色到来、变鬼求救和自行复活告知等原公告统一通过body_chat.Public/Broadcast发送带伙伴名字的公共聊天，复用BodyChatSpeech客户端与分片接收；无须模型连接或存活talker。BodyBridge关闭模型时仍按原顺序注册通用聊天展示处理器，模型请求和世界操作继续拒绝，RPC编号不变。AddSimPostInit在主模拟端包装原版GetNewDeathAnnouncementString/GetNewRezAnnouncementString：原函数生成的伙伴死亡/复活信息送公共聊天后返回空字符串，原版不再重复发公告；保留原死因/复活来源文案，去掉正文开头重复的发言者姓名。普通玩家及附身后已无伙伴标签的身体返回原文，原死亡/复活动作、存档和语音流程保持。语音独立挂载在伙伴声音发射器上，全服文字不改变声音空间衰减，不新增全服无衰减音频。
+
+2026-11-06头像与公告检查：核对当前游戏images.zip的格罗姆头像和默认回退贴图；用原版ChatterMessageBadge构造与死亡/复活文案函数、原版发送条件做本地定向检查，覆盖头像切换、其他NPC、模型关闭时的公共聊天、跨分片去重、普通玩家和非伙伴身体回退、鬼魂无talker及原语音队列。复用speech_chat/voice_queue/body_transport/body_shard_chat受影响检查，修改Lua语法与差异检查通过。未启动真实游戏或远程客户端，图形显示仍待进世界实测。
 
 中文/繁体自定义语音在 `my_friend_voice.PlayLine` 统一进入每个伙伴独立的先进先出队列，覆盖普通台词、直接回复和公告；文字仍按原入口即时显示，不等待语音。声音事件绑定 `my_friend_line` 通道；`my_friend_voice_durations.lua` 按固定 fn 编号提供音频银行采样数/采样率计算出的录音时长，首次播放自定义语音时加载一次，运行时直接按编号查询。当前录音按实际时长加 0.1 秒余量结束通道并接续队列，短音频不固定等待 7 秒；不使用 `PlayingSound` 持续等待，避免专用服务器或残留通道状态锁住队列。仅缺少时长记录的音频按 7 秒兜底，不丢弃后续请求。普通 `donetalking`/`ontalk` 只处理原角色循环声，不截断自定义音频。死亡、变鬼、实体移除清理播放和队列；延迟回调重验实体、伙伴身份及附身停放状态。仅播放/等待期间存在延迟任务，不做世界扫描；队列只存声音事件字符串、时长、时间和任务，不写存档或迁移数据。声音银行异常保留文字并继续后续队列，原角色声音回退最多持续 2 秒。英文/俄文及关闭自定义语音的路径沿用原规则，固定 fn 编号及音频资源不变。
 

@@ -168,18 +168,16 @@ function M.AnswerActivity(inst)
     return Speech.Random(inst, ActivityKey(inst), 7)
 end
 
--- Arrivals, departures and ghost rescue calls use the world announcement
--- channel; ordinary chatter stays local.
+-- Lifecycle lines use named public chat, even with the model disabled.
 function M.PublicSay(inst, kind, argument)
-    if inst == nil or not inst:IsValid() or TheNet == nil
-        or TheNet.Announce == nil then return M.Say(inst, kind) end
+    if inst == nil or not inst:IsValid() or TheWorld == nil or not TheWorld.ismastersim then return false end
     local count = Speech.CountFor(inst, kind)
     if count == 0 then return false end
     local index = math.random(count)
     local key = Speech.Key(inst, kind)
     local text = Speech.Text(key, index, argument)
     if text == nil then return false end
-    TheNet:Announce(text)
+    if not require("my_friend_body_chat").Public(inst, text) then return false end
     local voice = require("my_friend_voice")
     voice.Play(inst, {duration = 2})
     voice.PlayLine(inst, key, index)
