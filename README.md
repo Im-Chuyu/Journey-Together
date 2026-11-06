@@ -172,6 +172,12 @@ Windows 启动器会检查 Python/Tk，缺失时下载安装。语音可在“�
 
 配置、启动排错和数据位置见[助手说明](tools/companion_bridge/README.md)，接口参数、示例及各项验证边界见 [BODY_API.md](BODY_API.md)。更新 Lua 后需重新进入世界，更新助手后需重启；更新网页扩展时还需重载扩展并刷新模型页面。
 
+## 房间启动排错
+
+开启洞穴时需要同时查看 `master_server_log.txt`、`caves_server_log.txt` 和 `client_log.txt`。若出现 `login.kleientertainment.com` 的 `CURL ERROR (28)`、`Account Failed` 或 `ValidateGameSessionTokenResponse Network Failure (0)`，应检查服务器进程到 Klei 登录服务的连接；使用加速器时确认同时覆盖 `dontstarve_dedicated_server_nullrenderer_x64.exe`。末尾的 `No auth token could be found` 也可能是登录请求超时的结果，不能据此直接删除令牌或存档。
+
+若新建房间连续出现 `PANIC: missing required prefab`，表示地图缺少原版必需物件；先用中型地图和默认生成设置创建测试房间。聊天头像只显示原版图集，不需要为伙伴编织头像，也不参与登录授权。
+
 ## 开发与贡献
 
 - [DEVELOPER.md](DEVELOPER.md)：架构、行为规则、模块索引、扩展步骤、排错及验证原则。

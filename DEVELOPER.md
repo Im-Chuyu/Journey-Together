@@ -963,6 +963,8 @@ modinfo 模型模式总开关 model_enabled 默认关闭，六个 model_pair_dig
 | 工作后卡顿 | 实体查询调用次数 → 重复 GoToPoint/FindPath → 重装监听器 → 排序频率 → 无变化网络写入 |
 | 快速交换或自动保存客户端崩溃 | 客户端栈 → 旧组件监听器 → 会话阶段 → replica/库存恢复 → 身体专属关联 |
 | 开启洞穴后提示专服提前退出 | 对照客户端的分片就绪信号与 `caves_server_log.txt`、`master_server_log.txt` 的 Lua 栈。洞穴没有缓存伙伴时也会走 `FindFriend`，其中 `rawget`、`pcall` 通过 `GLOBAL` 访问 |
+| 授权失败、No auth token could be found | 区分分片首次登录和玩家加入时的二次验证；`login.kleientertainment.com` 的 CURL 28、`Account Failed` 或 `ValidateGameSessionTokenResponse Network Failure (0)` 表示验证请求未成功返回，不能仅凭末尾的 token 提示断定令牌丢失 |
+| 新建世界反复生成后启动失败 | 查地表日志的 `PANIC: missing required prefab` 和五次生成重试；先在新测试世界改用中型地图、默认生成设置，不跳过原版必需物件检查 |
 | 远处听见语音 | 实际 FEV 是否为 3D → 衰减类型/曲线 → 加载的银行版本 → 伙伴发射器挂载 |
 | 远距离读书无动作 | 是否维克巴顿 → 书架记录 → 分片/基地坐标 → 访问路线 → 失效记录清理 |
 | 角色/牛/背包重复或丢失 | 保存包装 → 源端清除 → 关联实体回调 → 目的端只恢复一次 |
@@ -1128,4 +1130,16 @@ companion_chat_icon提供当前原版profileflair.xml的246个条目及四种语
 
 settings.py将网页连接码迁移到当前用户JourneyTogether/companion_bridge/web-pairing.json，首次沿用当前模组副本已有值，后续各副本共用；游戏码/语音仍在模组.local/settings.json。显式修改网页码写回共享文件，更新和清理发布文件不得删除/迁走这些用户配置。MY_FRIEND_ASSISTANT_DATA_DIR继续隔离所有测试数据。扩展新增scripting权限，按保存的站点/标签页在启动和更新后恢复缺失脚本；注入前检查已有标志，并串行同一标签页的恢复，手动断开和切换配对仍优先。
 
-定向验证覆盖房主/远端客户端不同分片首次配对、真实身份快照、动作执行、同步回显一次、私聊拒绝、管理员错码/撤权、分片掉线/玩家移除、重连和云服无本地玩家的直接HTTP；复用既有transport/shard_chat及speech检查，网页DOM和自动恢复用例、隔离配置持久化及246个头像/四语言受限modinfo加载均通过。仅检查改动Lua/Python/JS语法与差异，不做全量测试或真实游戏/付费API验证。本次用户日志中的旧版开房失败为洞穴分片登录Klei超时后“No auth token could be found”，发生在模组加载前；另有本次新增modinfo使用ipairs的加载错误，已改数字循环并定向复核。
+定向验证覆盖房主/远端客户端不同分片首次配对、真实身份快照、动作执行、同步回显一次、私聊拒绝、管理员错码/撤权、分片掉线/玩家移除、重连和云服无本地玩家的直接HTTP；复用既有transport/shard_chat及speech检查，网页DOM和自动恢复用例、隔离配置持久化及246个头像/四语言受限modinfo加载均通过。仅检查改动Lua/Python/JS语法与差异，不做全量测试或真实游戏/付费API验证。本次用户日志中的旧版开房失败为洞穴分片登录Klei超时后“No auth token could be found”，发生在首次modmain加载完成之后、世界载入之前；另有本次新增modinfo使用ipairs的加载错误，已改数字循环并定向复核。
+
+### 2026-11-06：洞穴启动与加载兼容性核查
+
+核对当前游戏762172的原版加载器、模组沙箱、头像模板及地图生成校验。入口只有modinfo.lua和modmain.lua，API版本10、双端必需标记与运行方式一致；业务模块使用原版require解析，注册使用标准PostInit及Mod/Client/Shard RPC接口。modmain不直接访问沙箱缺失的pcall/rawget等全局；保存包装、聊天包装和组件兼容处理保留原方法。无自定义下载加载器、登录接口替换或modworldgenmain.lua；原版WorldSim只执行世界生成入口，不执行本模组的modmain。伙伴真实角色与存档包装prefab是运行/保存设计，不改变游戏登录验证。头像通过现成图集显示，没有调用编织、皮肤装备或所有权验证接口；专服不加载头像UI。助手HTTP仅在世界及合法玩家身份存在后运行，启动注册阶段不发配对请求。
+
+用户14:12:31启动的日志中两分片已连接并ready，随后玩家ValidateGameSessionToken请求向login.kleientertainment.com超时，被以ID_DST_GAME_SESSION_AUTH_FAILED断开；后续记录也有分片首次登录超时。14:31:03新建世界的地表日志则连续缺少monkeyqueen、sculpture_bishop、junk_pile_big等原版必需物件，五次生成重试失败，同次洞穴登录超时；该世界配置为small。不能将这两类问题一概记为Lua崩溃，也不能说认证必定发生在模组加载之前。
+
+结构检查覆盖模块引用、UTF-8入口、资源路径、受限配置环境和发布副本一致性，没有逐模块重审业务或运行全量测试。254个脚本/声音/入口及图标运行文件与发布目录一致，193个字面模块引用均能在模组或当前原版脚本包解析，四种语言的246项头像配置通过受限环境加载。
+
+另外使用发布目录my_friends，在tests/.local独立存储中启动实际游戏专服双分片；仅启用本模组，保留中文语音、model_enabled=true和格罗姆头像，采用当前新建房间的生成配置并将地图改为medium，离线模式不读取认证令牌或玩家存档。地表/洞穴均完成世界初始化，约30秒后双向连接并报告secondary shard LUA is now ready，继续运行12秒后通过控制台正常关闭，没有Lua错误。此项验证真实引擎的生成、资源加载及分片握手；没有图形客户端加入，不能代替在线登录、头像显示或助手跨分片会话实测。本次不改运行脚本来掩盖认证超时，也不绕过原版生成校验。
+
+随后按用户授权在Linux云端管理后台的既有安装和存档上验证。先集中备份Cluster_1与两份旧模组目录，保留AssistantAPI.json及助手.local数据，再通过后台同款SteamCMD流程将游戏从761239更新到762172；当前模组代码同步到后台UGC目录和游戏Workshop缓存，不发布创意工坊。沿后台原tmux会话和run-shard.sh启动原地表/洞穴，原有其他模组与配置保留。两片分别在15/16秒报告Account Communication Success，约31/32秒连通并ready，无Lua错误；随后记录到玩家在线验证及客户端初始化成功。只读控制台确认两片均加载body_shard和格罗姆头像配置，活动伙伴在地表，洞穴没有重复伙伴；部署Lua文件与本地当前源文件逐项一致。服务器继续运行供用户测试。另备份并同步本机订阅版的26个旧文件、补入2个新文件，客户端须重新进入房间加载完整新代码。该结果验证云端在线启动和旧存档恢复；不能由此声称本机超时已修复，头像画面和助手跨分片完整对话仍需实际操作验证。

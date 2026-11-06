@@ -171,6 +171,12 @@ Saving, rollback, pausing/resuming, kicking and banning require an explicit play
 
 See the [assistant guide](tools/companion_bridge/README.md) for setup, troubleshooting and data locations, and [BODY_API.md](BODY_API.md) for tool parameters, examples and verification limits. Re-enter the world after Lua updates and restart after assistant updates. Browser extension updates also require reloading the extension and refreshing the model page.
 
+## Room startup troubleshooting
+
+With caves enabled, check `master_server_log.txt`, `caves_server_log.txt` and `client_log.txt` together. A `CURL ERROR (28)` for `login.kleientertainment.com`, `Account Failed`, or `ValidateGameSessionTokenResponse Network Failure (0)` indicates a failed login-service connection. If using a game network accelerator, include `dontstarve_dedicated_server_nullrenderer_x64.exe`. The final `No auth token could be found` message can follow a timed-out login request; it does not by itself justify deleting tokens or saves.
+
+Repeated `PANIC: missing required prefab` messages while creating a room mean world generation could not place required native objects. Try a new test room with a medium map and default generation settings. Companion chat avatars display existing atlas textures; they do not require weaving and do not participate in login authentication.
+
 ## Development and contributions
 
 - [DEVELOPER.md](DEVELOPER.md): architecture, behaviour rules, module index, extension steps, troubleshooting and verification policy, in Chinese.
