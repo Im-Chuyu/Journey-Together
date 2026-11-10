@@ -1,5 +1,6 @@
 local M = {}
 local Policy = require("my_friend_policy")
+local FarmTiles = require("my_friend_farm_tiles")
 local EXCLUDE = {"INLIMBO", "FX", "DECOR"}
 local Forestry = require("my_friend_forestry")
 local RESOURCE = {
@@ -19,6 +20,7 @@ end
 local function Tiles(command)
     if command.hoe_tiles ~= nil then return command.hoe_tiles end
     local map, origin, tiles = TheWorld.Map, command.origin, {}
+    local spacing = FarmTiles.GridSpacing()
     local tx, tz = map:GetTileCoordsAtPoint(origin:Get())
     for ix = tx - 8, tx + 8 do
         for iz = tz - 8, tz + 8 do
@@ -29,7 +31,7 @@ local function Tiles(command)
                     attempts = {}, failures = {}, distance = (x-origin.x)^2 + (z-origin.z)^2}
                 for gx = -1, 1 do
                     for gz = -1, 1 do
-                        tile.points[#tile.points + 1] = Vector3(x + gx * 4/3, 0, z + gz * 4/3)
+                        tile.points[#tile.points + 1] = Vector3(x + gx * spacing, 0, z + gz * spacing)
                     end
                 end
                 local inrange = true
@@ -45,7 +47,7 @@ local function Tiles(command)
         return a.tx == b.tx and a.tz < b.tz or a.tx < b.tx
     end)
     -- Four touching tiles (square or straight line) whenever the ground allows.
-    command.hoe_tiles = require("my_friend_farm_tiles").Select(tiles, 4)
+    command.hoe_tiles = FarmTiles.Select(tiles, 4)
     return command.hoe_tiles
 end
 
@@ -61,7 +63,7 @@ end
 
 local function GridSlot(tile, entity)
     for i, point in ipairs(tile.points) do
-        if entity:GetDistanceSqToPoint(point) <= .12^2 then return i end
+        if FarmTiles.MatchesSlot(entity, point) then return i end
     end
 end
 
@@ -164,7 +166,7 @@ function M.Action(inst, command)
                 if not occupied[i] then
                     missing = true
                     if (tile.attempts[i] or 0) < 3
-                        and TheWorld.Map:CanTillSoilAtPoint(point.x, 0, point.z, false) then
+                        and FarmTiles.CanTill(point) then
                         local tool, preparation = work.Tool(inst, command, ACTIONS.TILL, "farm_hoe")
                         if preparation ~= nil then return preparation end
                         if tool == nil then work.Finish(inst, command, true) return end
@@ -174,7 +176,7 @@ function M.Action(inst, command)
                             return inst._my_friend_command == command
                                 and work.IsUsableTool(inst, tool, ACTIONS.TILL)
                                 and tool.components.inventoryitem:GetGrandOwner() == inst
-                                and TheWorld.Map:CanTillSoilAtPoint(point.x, 0, point.z, false)
+                                and FarmTiles.CanTill(point)
                         end
                         local function Attempt()
                             if not action._my_friend_cancelled then
@@ -214,7 +216,7 @@ function M.Action(inst, command)
             end
             for i, point in ipairs(tile.points) do
                 if not occupied[i] and (tile.attempts[i] or 0) < 3
-                    and TheWorld.Map:CanTillSoilAtPoint(point.x, 0, point.z, false) then
+                    and FarmTiles.CanTill(point) then
                     tile.finished, tile.rechecks, reopen = nil, 0, true
                 end
             end

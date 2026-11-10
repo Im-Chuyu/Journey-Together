@@ -109,7 +109,9 @@ function M.Finish(inst, job, status, result, reason)
         local recipe = job.recipe ~= nil and GetValidRecipe(job.recipe) or nil
         local item = job.item ~= nil and (Ents or {})[job.item] or nil
         result = result or {}
-        result.placement = sites.Details(inst, state, job.point, sites.Spacing(recipe, item))
+        local spacing = sites.Spacing(recipe, item)
+        result.placement = job.farm_till and sites.TillDetails(inst, state, job.point, spacing)
+            or sites.Details(inst, state, job.point, spacing, recipe)
     end
     if job.parent ~= nil then
         if job.parent.skill=="execute_sequence"then return require("my_friend_body_composition").FinishChild(inst,job,status,result,reason)end

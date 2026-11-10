@@ -1,10 +1,11 @@
 local Policy = require("my_friend_policy")
+local Navigation = require("my_friend_navigation")
+local BuildSite = require("my_friend_build_site")
 local Inventory = require("my_friend_inventory")
 local BaseAI = require("my_friend_base_ai")
 local Dialogue = require("my_friend_dialogue")
 local RecipeCooking = require("my_friend_recipe_cooking")
 local Books = require("my_friend_books")
-local BookStation = require("my_friend_bookstation")
 local Materials = require("my_friend_crafting_materials")
 local Devices = require("my_friend_device_deploy")
 local CraftingTech = require("my_friend_crafting_tech")
@@ -96,24 +97,42 @@ local function SpiceAction(inst, command)
     return Policy.GuardAction(inst, action)
 end
 
+local function CanPlaceAtCommandPoint(inst, command, recipe, point)
+    if Navigation.IsLand(point) and BuildSite.NativeValid(inst, recipe, point) then
+        return true
+    end
+    command.failure_reason = "placement_blocked"
+    return false
+end
+
 local function DirectRoleRecipeAction(inst, command, recipe)
     -- These commands are explicit role-specific companion features. Use the
     -- normal BUILD action after the shared material planner has finished,
     -- without unlocking or mutating the companion's recipe list.
-    local point = command.build_point or inst:GetPosition()
+    local point = command.build_point
+    if recipe.placer ~= nil and not CanPlaceAtCommandPoint(inst, command, recipe, point) then return end
     local action = BufferedAction(inst, nil,
-        ACTIONS.MY_FRIEND_BUILD or ACTIONS.BUILD, nil, point,
+        ACTIONS.MY_FRIEND_BUILD or ACTIONS.BUILD, nil, point or inst:GetPosition(),
         recipe.name, recipe.build_distance)
-    action.validfn = function()
+    action.validfn = function(act)
         return inst._my_friend_command == command
             and inst.components.builder ~= nil
             and inst.components.builder:HasIngredients(recipe)
+            and (recipe.placer == nil or CanPlaceAtCommandPoint(inst, command, recipe, act:GetActionPoint()))
     end
     action:AddSuccessAction(function()
         if inst._my_friend_command == command then
             require("my_friend_commands").Clear(inst)
         end
     end)
+    if recipe.placer ~= nil then
+        action:AddFailAction(function()
+            if not action._my_friend_cancelled
+                and (action.reason == "placement_blocked" or command.failure_reason == "placement_blocked") then
+                command.placement_failed = true
+            end
+        end)
+    end
     return Policy.GuardAction(inst, action)
 end
 
@@ -125,24 +144,14 @@ local function IsDirectRoleRecipe(inst, recipe_name)
                 or recipe_name == "pocketwatch_revive")
 end
 
-local function GetDirectRoleAction(inst, command, recipe)
-    if recipe.placer ~= nil then
-        local action, reason = BookStation.GetPrepareAction(inst, command, recipe)
-        if action ~= nil then return action end
-        if reason ~= nil then
-            command.waiting = reason == "waiting"
-            command.failure_reply = not command.waiting and reason or nil
-            return
-        end
-        return DirectRoleRecipeAction(inst, command, recipe)
-    end
-    return DirectRoleRecipeAction(inst, command, recipe)
-end
-
 local function BuildAction(inst, command)
     local recipe = GetValidRecipe(command.recipe)
     if recipe == nil then return end
-    command.waiting, command.failure_reply = nil, nil
+    command.waiting, command.failure_reply, command.failure_reason = nil, nil, nil
+    if command.placement_failed then
+        command.failure_reason = "placement_blocked"
+        return
+    end
     if Devices.IsRecipe(command.recipe) then
         local item = Devices.FindItem(inst, command.recipe)
         if item ~= nil then
@@ -171,13 +180,13 @@ local function BuildAction(inst, command)
     -- the sister urn recipe is deliberately outside her native skill tree.
     if IsDirectRoleRecipe(inst, command.recipe)
         and inst.components.builder:HasIngredients(recipe) then
-        return GetDirectRoleAction(inst, command, recipe)
+        return DirectRoleRecipeAction(inst, command, recipe)
     end
     local materials = Materials.Plan(inst, recipe)
     if materials == nil then return end
     if IsDirectRoleRecipe(inst, command.recipe) then
         if #materials > 0 then return Materials.GetAction(inst, materials) end
-        return GetDirectRoleAction(inst, command, recipe)
+        return DirectRoleRecipeAction(inst, command, recipe)
     end
     if not CraftingTech.CanBuild(inst, recipe) then
         local station, distance = CraftingTech.FindStation(inst, recipe)
@@ -193,15 +202,10 @@ local function BuildAction(inst, command)
         if not CraftingTech.Activate(inst, station, recipe) then return end
     end
     if #materials > 0 then return Materials.GetAction(inst, materials) end
-    if (command.recipe == "bookstation" or command.recipe == "sisturn")
-        and inst.components.builder:HasIngredients(recipe) then
-        local prepare, reason = BookStation.GetPrepareAction(inst, command, recipe)
-        if prepare ~= nil then return prepare end
-        if reason ~= nil then
-            command.waiting = reason == "waiting"
-            command.failure_reply = not command.waiting and reason or nil
-            return
-        end
+    if command.recipe == "bookstation" and inst.components.builder:HasIngredients(recipe)
+        and not CanPlaceAtCommandPoint(inst, command, recipe, command.build_point) then
+        command.failure_reply = "bookstation_blocked"
+        return
     end
     local action = BaseAI.GetRecipeAction(inst, command.recipe, command.build_point)
     if action ~= nil and action.action == (ACTIONS.MY_FRIEND_BUILD or ACTIONS.BUILD)
@@ -209,8 +213,7 @@ local function BuildAction(inst, command)
         local previous = action.validfn
         action.validfn = function(act)
             return inst._my_friend_command == command
-                and ((command.recipe ~= "bookstation" and command.recipe ~= "sisturn")
-                    or BookStation.IsClear(command))
+                and (command.recipe ~= "bookstation" or CanPlaceAtCommandPoint(inst, command, recipe, act:GetActionPoint()))
                 and (previous == nil or previous(act))
         end
         action:AddSuccessAction(function()

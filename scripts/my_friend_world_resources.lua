@@ -5,6 +5,7 @@ local FoodAI = require("my_friend_food_ai")
 local Navigation = require("my_friend_navigation")
 local Discovery = require("my_friend_discovery")
 local M = {}
+local WORLD_SCAN_INTERVAL = 3
 
 function M.RegionAtPoint(x, z)
     local map, topology = TheWorld.Map, TheWorld.topology
@@ -171,11 +172,18 @@ function M.Find(inst, needs, blocked, context)
             {"INLIMBO", "NOCLICK", "fire", "burnt", "outofreach"})
         for _, entity in ipairs(entities) do Consider(entity) end
     end
+    local scan_after = cache ~= nil and cache.scan_after or 0
+    local retry_at = Discovery.RetryAt(inst)
     if #candidates == 0 then
-        -- One fallback for a new search episode. Empty results persist until
-        -- the need, area, inventory, relevant resource or retry deadline changes.
-        for _, entity in pairs(Ents or {}) do
-            Consider(entity)
+        if now >= scan_after then
+            scan_after = now + WORLD_SCAN_INTERVAL
+            for _, entity in pairs(Ents or {}) do Consider(entity) end
+        else
+            -- Keep a still-usable destination while new events wait for the
+            -- next full search. Re-evaluate the live resource and current scope.
+            local previous = cache.target_guid ~= nil and Resolve(cache.target_guid) or nil
+            if previous ~= nil then Consider(previous) end
+            retry_at = math.min(retry_at, scan_after)
         end
     end
     table.sort(candidates, function(a, b) return scores[a] < scores[b] end)
@@ -190,7 +198,7 @@ function M.Find(inst, needs, blocked, context)
         references = setmetatable({home = inst._my_friend_home, base = inst._my_friend_base, leader = leader}, {__mode = "v"}),
         had_home = inst._my_friend_home ~= nil, had_base = inst._my_friend_base ~= nil, had_leader = leader ~= nil,
         x = x, z = z,
-        retry_at = Discovery.RetryAt(inst)}
+        retry_at = retry_at, scan_after = scan_after}
     local count = 0
     for _ in pairs(queries) do count = count + 1 end
     if count > 16 then

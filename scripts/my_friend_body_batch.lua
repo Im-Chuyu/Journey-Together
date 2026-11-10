@@ -43,9 +43,9 @@ function M.Prepare(inst, state, job)
     end)
     local filter = (a.filter or ""):lower()
     for _, target in ipairs(candidates) do
-        local name = tostring(target.GetDisplayName ~= nil and target:GetDisplayName() or ""):lower()
         if not seen[target.GUID] and Eligible(inst, job, target)
-            and ((target.prefab or ""):lower():find(filter, 1, true) or name:find(filter, 1, true)) then
+            and ((target.prefab or ""):lower():find(filter, 1, true)
+                or tostring(Observation.Name(target) or ""):lower():find(filter, 1, true)) then
             seen[target.GUID] = true
             if #job.queue == 100 then job.limited = true; break end
             job.queue[#job.queue + 1] = target.GUID

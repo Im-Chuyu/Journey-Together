@@ -1,6 +1,7 @@
 require "behaviours/doaction"
 local Navigation = require("my_friend_navigation")
 local Policy = require("my_friend_policy")
+local BuildSite = require("my_friend_build_site")
 
 local function PreserveIdleMovement(inst)
     local locomotor = inst.components.locomotor
@@ -54,6 +55,7 @@ function RouteAction:ClearRoute()
     Navigation.Cancel(self.search)
     DetachMovement(self.inst, self.walk)
     self.search, self.steps, self.walk = nil, nil, nil
+    self.clearance_player, self.clearance_until = nil, nil
     self.routing = false
     self.inst._my_friend_route_planning = nil
     if self.inst._my_friend_navigation_action == self.action then
@@ -131,7 +133,8 @@ function RouteAction:PushMovement(action)
         action:Fail()
         return
     end
-    self.inst.components.locomotor:PushAction(action, FunctionOrValue(self.shouldrun))
+    self.inst.components.locomotor:PushAction(action,
+        not action._my_friend_build_clearance and FunctionOrValue(self.shouldrun))
 end
 
 function RouteAction:ResumeMovement(action)
@@ -156,8 +159,71 @@ function RouteAction:ResumeMovement(action)
     return true
 end
 
+function RouteAction:FailBuildClearance()
+    self.action.reason = "placement_blocked"
+    self.action:Fail()
+    self.pendingstatus, self.status = FAILED, FAILED
+end
+
+function RouteAction:BeginBuildClearance(player, recipe, point)
+    local inst, action = self.inst, self.action
+    if not action:TestForStart() then
+        action:Fail()
+        return
+    end
+    inst._my_friend_navigation_action = action
+    local destination, distance
+    if self.clearance_tries < 2 then destination, distance = BuildSite.PushPoint(inst, recipe, point, player) end
+    if destination == nil then
+        self:ClearRoute()
+        self:FailBuildClearance()
+        return
+    end
+    self.clearance_tries = self.clearance_tries + 1
+    self.clearance_player, self.clearance_until = player, GetTime() + 3 + distance / 3
+    local walk = BufferedAction(inst, nil, ACTIONS.WALKTO, nil, destination)
+    walk.arrivedist = .05
+    walk._my_friend_build_clearance = true
+    walk.validfn = function() return action:IsValid() end
+    walk:AddSuccessAction(function() if self.walk == walk then self.walk_done = true end end)
+    walk:AddFailAction(function() if self.walk == walk then self.walk_failed = true end end)
+    self.walk, self.walk_done, self.walk_failed = walk, nil, nil
+    self.movement_resumes = 0
+    self:PushMovement(walk)
+end
+
+function RouteAction:VisitBuildClearance()
+    local inst, action = self.inst, self.action
+    if Policy.IsBusy(inst) then return end
+    local valid = action:IsValid()
+    local player = valid and BuildSite.ActionBlocker(action) or nil
+    if player == self.clearance_player and GetTime() < self.clearance_until
+        and not self.walk_done and not self.walk_failed then
+        action._my_friend_travel_until = GetTime() + 2
+        self:ResumeMovement(self.walk)
+        return
+    end
+    local previous = self.clearance_player
+    local locomotor = inst.components.locomotor
+    local moving = locomotor.bufferedaction == self.walk
+    self:ClearRoute()
+    if moving then locomotor:Stop() end
+    if not valid then
+        action:Fail()
+    elseif player ~= previous then
+        self:PushOriginal()
+    else
+        self:FailBuildClearance()
+    end
+end
+
 function RouteAction:PushOriginal()
     self:ClearRoute()
+    local player, recipe, point = BuildSite.ActionBlocker(self.action)
+    if player ~= nil then
+        self:BeginBuildClearance(player, recipe, point)
+        return
+    end
     self.time = GetTime()
     self.action._my_friend_travel_finished = self.time
     local kind, tool = self.action.action, self.action.invobject
@@ -224,7 +290,7 @@ function RouteAction:VisitRoute()
         or not self.action:IsValid()
         or not Navigation.InTravelRange(self.inst, self.inst:GetPosition())
         or not Navigation.InTravelRange(self.inst, self.goal) then
-        self.action._my_friend_cancelled = true
+        self.action._my_friend_cancelled = self.action.reason ~= "placement_blocked"
         self:ClearRoute()
         self.inst:ClearBufferedAction()
         self.inst.components.locomotor:Stop()
@@ -303,6 +369,7 @@ function RouteAction:Visit()
         Navigation.CancelSteering(self.inst)
         self.goal, self.replans, self.walk_failed, self.walk_done = nil, 0, nil, nil
         self.local_retries = 0
+        self.clearance_tries = 0
         self.failed_approaches = nil
         self.movement_resumes = 0
         self.stall_action, self.stall_position, self.stall_since = nil, nil, nil
@@ -339,9 +406,10 @@ function RouteAction:Visit()
             approach, direct = Navigation.Approach(self.inst, action, caps)
         end
         self.goal = approach
+        local approach_to_clear = distance > 5^2 and approach ~= nil and BuildSite.ActionBlocker(action) ~= nil
         if self.route_enabled
             and not self.inst:HasTag("playerghost") and point ~= nil
-            and (distance > 24^2 or approach == nil and distance > .5^2
+            and (approach_to_clear or distance > 24^2 or approach == nil and distance > .5^2
                 or approach ~= nil
                     and (approach.x - position.x)^2 + (approach.z - position.z)^2 > .25^2
                     and (not direct or not Navigation.IsWalkClear(self.inst, position, approach, caps)
@@ -361,6 +429,8 @@ function RouteAction:Visit()
             self:ClearRoute()
         elseif self.routing then
             self:VisitRoute()
+        elseif self.clearance_player ~= nil then
+            self:VisitBuildClearance()
         else
             DoAction.Visit(self)
             if self.status == RUNNING then self:ResumeMovement(self.action) end

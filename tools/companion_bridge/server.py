@@ -363,6 +363,7 @@ class Store:
         task_plan = {}
         memory_key = None
         turn_id = input_event.get("turn_id") if input_event else None
+        model_turn_id = turn_id or secrets.token_hex(12)
         speaker_id = (input_event["speaker"].get("userid") if input_event else None)
         try:
             for iteration in count():
@@ -397,6 +398,7 @@ class Store:
                         snapshot["can_work"] = can_work
                     allowed = (NAMES if can_work else PUBLIC) if source == "user" else AMBIENT if can_work else AMBIENT & PUBLIC
                     context = {"utterance": text, "snapshot": snapshot,
+                               "turn_id": model_turn_id, "turn_phase": "continuation" if iteration else "input",
                                "results": list(results), "results_limited": iteration > results.maxlen,
                                "history": list(self.history),
                                "tools": [tool for tool in TOOLS if tool["name"] in allowed],

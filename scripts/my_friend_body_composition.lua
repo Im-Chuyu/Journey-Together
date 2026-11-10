@@ -18,9 +18,11 @@ local function LimitScan(out,budget)
     local fields={handle=true,prefab=true,name=true,position=true,kind=true,count=true,
         accessible=true,capacity=true,cooking=true,pickable=true,carried=true,equipped=true,slot=true,can_store=true,
         container=true,location=true,backpack=true,delivery=true,cooking_tags=true,durability=true,freshness=true,food=true,
-        can_pick=true,pick_product=true,pick_count=true,work=true,work_left=true,tree=true,tool_actions=true,prototyper=true,interactions=true,
-        soil=true,plantable=true,deployable=true,terraformer=true,tendable=true,watersource=true,
-        burning=true,burnable=true,building=true,boss=true,alive=true,health=true,ghost=true,
+        can_pick=true,pick_product=true,pick_count=true,work=true,work_left=true,tree=true,tool_actions=true,farm_tiller=true,prototyper=true,interactions=true,
+        soil=true,plantable=true,deployable=true,terraformer=true,tendable=true,watersource=true,planting_action=true,
+        weed=true,plantable_hole=true,farm_debris=true,farm_plant=true,growth_stage=true,soil_moist=true,
+        physical=true,physics_radius=true,deploy_radius=true,ground_hole=true,ground_target_blocker=true,
+        burnt=true,burning=true,fire=true,burnable=true,building=true,boss=true,alive=true,health=true,ghost=true,
         distance=true,surface=true,platform=true,boat=true,shared_storage=true,reviver=true,
         contents=true,contents_limited=true,contents_matched=true,contents_offset=true,contents_next_offset=true,details_limited=true}
     for _,entity in ipairs(out.entities)do
@@ -55,6 +57,15 @@ local function Limit(value,budget)
     local out=Copy(value)
     local json=require("json")
     if out.entities~=nil and #json.encode(out)>budget then return LimitScan(out,budget)end
+    if out.scope == "farm" and out.tiles ~= nil then
+        while #json.encode(out) > budget do
+            if #out.tiles <= 1 then return nil end
+            table.remove(out.tiles)
+            out.next_offset = (out.offset or 0) + #out.tiles
+            out.limited, out.truncated = true, true
+        end
+        return out
+    end
     while #json.encode(out)>budget do
         local longest
         local protected={ingredients=true,sources=true,character_costs=true,technology_costs=true,actions=true}
@@ -140,8 +151,9 @@ function M.Validate(args)
     for _,step in ipairs(args.steps) do
         if type(step)~="table" then return false,"invalid_steps" end
         if step.for_each~=nil then
+            if not Array(step.for_each,40) then return false,"invalid_repeat_values" end
             if type(step.id)~="string" or not step.id:match("^[%w_]+$")
-                or not Array(step.for_each,40) or not Array(step.steps,12) then return false,"invalid_repeat" end
+                or not Array(step.steps,12) then return false,"invalid_repeat" end
             for n,value in ipairs(step.for_each) do
                 local names={}
                 for _,template in ipairs(step.steps) do

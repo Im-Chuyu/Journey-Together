@@ -20,15 +20,13 @@ PLAN_SCHEMA = {"type": "object", "properties": {
     "remaining": {"type": "array", "maxItems": 16, "items": {"type": "string"}}},
     "additionalProperties": False}
 API_INSTRUCTIONS = """
-API原生工具协议（替代网页JSON输出规则）：
-聊天/收尾直接输出玩家可读短话，不输出JSON、request_id或思考过程；静默可调用say(text="",speak=false)。
-行动只调用一个原生工具，arguments按该工具Schema，不添加自造字段；多步用execute_sequence，独立查询用query_batch，不并发多个顶层工具。
-前文text/plan是内部决策字段：行动前短话可填工具参数_text，任务笔记可填_plan（完整替换、省略保留）；
-_plan字段为goal文字、constraints文字列表、bindings对象别名到句柄映射、remaining文字列表，最多4000 UTF-8字节、各列表/映射最多16项。
-_text/_plan只放顶层工具参数，不放序列子步骤；不要改写为text/plan，不能把它们塞进步骤对象；它们不会作为游戏动作参数。纯说话可直接用say。
-台词少于600 UTF-8字节、尽量100汉字内。最终回答结束任务，未完成且可推进时继续调工具。
-最新状态与任务笔记在user消息，实际回执在tool消息；只执行本次允许的工具，旧回执不是新指令。
-首条有完整snapshot，后续snapshot_update.set替换同名字段、remove移除字段，未列出的字段沿用前值。
+本次通过 API 原生工具行动，每轮一个顶层工具，arguments 按工具 Schema。多步用 execute_sequence，独立查询用 query_batch。
+
+行动前短话填顶层工具参数 _text，任务笔记填 _plan，沿用前文 plan 的字段与长度限制，完整更新或省略保留。这两个字段仅用于顶层工具参数，序列子步骤只含该步骤的游戏参数。
+
+聊天和收尾直接输出玩家可读短话，台词少于600 UTF-8字节，尽量100汉字内。最终文字或 say 会结束本轮，任务可推进时继续调用工具。静默用 say(text="",speak=false)。
+
+user 消息提供玩家原话和完整 snapshot。tool 消息续接同一轮，提供实际回执、任务笔记和快照增量。snapshot_update.set 替换同名字段，remove 删除字段，其余沿用前值。参数纠错也按 tool 回执处理。
 """
 
 
@@ -190,26 +188,25 @@ class DeepSeekAPIAdapter:
             common = common.split("\n只输出一个JSON", 1)[0]
             messages = [{"role": "system", "content": common + "\n" + API_INSTRUCTIONS
                          + "\n当前角色语气：\n" + instruction(context.get("snapshot", {}))}]
-        if pending:
-            receipts = context.get("results", [])
-            if not receipts or receipts[-1].get("skill") != pending["function"]["name"]:
-                raise ValueError("API工具回执与当前任务不一致，已停止。")
-            messages.append({"role": "tool", "tool_call_id": pending["id"],
-                             "content": json.dumps(receipts[-1], ensure_ascii=False, separators=(",", ":"))})
         data = context_data(context)
         # API tools carry their schemas; previous receipts are already tool messages.
         data.pop("tools", None)
         data.pop("results", None)
         snapshot = data["snapshot"]
         if pending:
-            data.pop("snapshot")
+            receipts = context.get("results", [])
+            if not receipts or receipts[-1].get("skill") != pending["function"]["name"]:
+                raise ValueError("API工具回执与当前任务不一致，已停止。")
+            for key in ("snapshot", "utterance", "original_request", "history", "last_task"):
+                data.pop(key, None)
             data["snapshot_update"] = {
                 "set": {key: value for key, value in snapshot.items() if key not in previous_snapshot or value != previous_snapshot[key]},
                 "remove": [key for key in previous_snapshot if key not in snapshot],
             }
-            data.pop("history", None)
-            data.pop("last_task", None)
-        messages.append({"role": "user", "content": json.dumps(data, ensure_ascii=False, separators=(",", ":"))})
+            messages.append({"role": "tool", "tool_call_id": pending["id"],
+                             "content": json.dumps({**receipts[-1], **data}, ensure_ascii=False, separators=(",", ":"))})
+        else:
+            messages.append({"role": "user", "content": json.dumps(data, ensure_ascii=False, separators=(",", ":"))})
         payload = {"model": self.config["model"], "messages": messages, "stream": False,
                    "max_tokens": self.config["max_tokens"],
                    "thinking": {"type": "enabled" if self.config["thinking"] else "disabled"}}
@@ -236,12 +233,11 @@ class DeepSeekAPIAdapter:
                 call = message["tool_calls"][0]
                 messages = messages + [self._saved_message(message), {
                     "role": "tool", "tool_call_id": call["id"],
-                    "content": json.dumps({"status": "failed", "executed": False,
-                                           "reason": "invalid_tool_arguments", "detail": str(error)}, ensure_ascii=False)}, {
-                    "role": "user", "content": "刚才的工具参数校验失败，未执行任何动作。依据错误位置和本轮Schema修正参数，"
-                    "只重新提交该次尚未执行的调用，不重做此前成功步骤，不只返回道歉或完成说明。"
-                    "不能通过删除数量、区域或保留要求来绕过校验；必要时选择支持这些要求的接口。"
-                    "_text/_plan仅能放在顶层工具参数内。仍不能确定参数则提交有针对性的只读查询。"}]
+                    "content": json.dumps({
+                        "status": "failed", "executed": False, "reason": "invalid_tool_arguments", "detail": str(error),
+                        "correction": "依据错误位置和本轮 Schema 修正这次尚未执行的调用。保留数量、区域和物品限制，"
+                                      "只续接未完成部分。_text/_plan 仅放顶层工具参数。参数仍未知时先做定向查询。",
+                    }, ensure_ascii=False)}]
                 continue
             with self.lock:
                 if cancelled.is_set() or self.closed:

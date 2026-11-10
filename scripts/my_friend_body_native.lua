@@ -1,5 +1,6 @@
 -- Discover vanilla/mod component actions, rather than guessing from prefab names.
 local Observation = require("my_friend_body_observation")
+local FarmTiles = require("my_friend_farm_tiles")
 local M = {}
 local MODES = {INVENTORY=true, EQUIPPED=true, USEITEM=true, POINT=true, SCENE=true}
 local CONTAINER_MOVES={STORE=true,TAKEITEM=true,HARVEST=true,COOK=true}
@@ -7,6 +8,8 @@ local DEDICATED={PICKUP="pickup",EAT="eat",DROP="drop",EQUIP="equip",UNEQUIP="un
     CHOP="work",MINE="work",DIG="work",HAMMER="work"}
 local function Allowed(inst,c,action)
     if DEDICATED[action.id]~=nil then return false end
+    if action.id == "PLANTSOIL" and c.target ~= nil and c.target.prefab == "farm_soil"
+        and not FarmTiles.IsOpenHole(c.target) then return false end
     if c.target ~= nil and c.target:HasTag("playerghost")
         and (action.id == "GIVETOPLAYER" or action.id == "GIVEALLTOPLAYER" or action.id == "GIVE" or action.id == "FEEDPLAYER") then
         return false
@@ -63,10 +66,16 @@ local function Context(inst, state, args)
     end
     if item~=nil and item.prefab=="yellowstaff" and point~=nil
         and not require("my_friend_survival_ai").IsFireClearPoint(inst,point) then return nil,"unsafe_fire_position" end
-    if target == nil and point ~= nil and args.mode ~= "INVENTORY" then
+    local till = args.action == "TILL" or item ~= nil and item.components.farmtiller ~= nil
+        and (args.mode == nil or args.mode == "POINT")
+    local crop = item ~= nil and item.components.farmplantable ~= nil and args.mode ~= "POINT"
+        and (args.action == nil or args.action == "PLANTSOIL")
+    if target == nil and point ~= nil and args.mode ~= "INVENTORY" and not till then
         local best
         for _, entity in ipairs(TheSim:FindEntities(point.x,0,point.z,.6,nil,{"INLIMBO","FX","NOCLICK"})) do
-            if entity ~= inst and (entity.components.inventoryitem == nil or entity.components.inventoryitem.owner == nil) then
+            if entity ~= inst and (entity.components.inventoryitem == nil or entity.components.inventoryitem.owner == nil)
+                and (not crop or entity:HasTag("soil")
+                    and (entity.prefab ~= "farm_soil" or FarmTiles.IsOpenHole(entity))) then
                 local p=entity:GetPosition()
                 local d=(p.x-point.x)^2+(p.z-point.z)^2
                 if best == nil or d<best or d==best and entity.GUID<target.GUID then target,best=entity,d end
@@ -94,7 +103,13 @@ function M.Wrap(inst,job,action)
     action.Do=function(act,...)
         local ok,value,reason
         local target=job.native_hint_target~=nil and (Ents or {})[job.native_hint_target] or nil
-        job.effect_point=job.point or target~=nil and target:IsValid() and target:GetPosition() or inst:GetPosition()
+        local point = act:GetActionPoint()
+        if job.farm_till and point ~= nil and FarmTiles.BlockingHole(point, GetFarmTillSpacing()) ~= nil then
+            job.operation_error, act.reason = "placement_blocked", "placement_blocked"
+            act:Fail()
+            return false, act.reason
+        end
+        job.effect_point=point or target~=nil and target:IsValid() and target:GetPosition() or inst:GetPosition()
         job.effect_before={}
         for _,entity in ipairs(TheSim:FindEntities(job.effect_point.x,0,job.effect_point.z,2,nil,{"INLIMBO","FX"})) do
             job.effect_before[entity.GUID]=true
@@ -116,7 +131,9 @@ function M.Actions(inst,state,args)
         local ok,found=pcall(Collect,inst,c,mode)
         if not ok then return nil,"native_action_query_failed" end
         for _,action in ipairs(found) do
-            if type(action)=="table" and type(action.id)=="string" and type(action.fn)=="function" and #actions<40 and Allowed(inst,c,action) then
+            if type(action)=="table" and type(action.id)=="string" and type(action.fn)=="function" and #actions<40 and Allowed(inst,c,action)
+                and (action.id ~= "TILL" or mode ~= "POINT" or c.item.components.farmtiller == nil
+                    or FarmTiles.BlockingHole(c.point, GetFarmTillSpacing()) == nil) then
                 actions[#actions+1]={action=action,mode=mode}
             end
         end
@@ -151,6 +168,8 @@ function M.Prepare(inst,state,job)
     local sites = require("my_friend_body_sites")
     local deployment = c.point ~= nil and c.item ~= nil and c.item.components.deployable ~= nil
         and (job.args.mode == nil or job.args.mode == "POINT") and sites.IsDeployAction(job.args.action)
+    local farm_till = job.args.action == "TILL" and c.point ~= nil and c.item ~= nil
+        and c.item.components.farmtiller ~= nil and (job.args.mode == nil or job.args.mode == "POINT")
     if deployment and not c.item.components.deployable:CanDeploy(c.point,nil,inst,0) then
         return false, "placement_blocked", sites.Details(inst,state,c.point,sites.Spacing(nil,c.item))
     end
@@ -159,10 +178,19 @@ function M.Prepare(inst,state,job)
             job.native,job.native_mode,job.native_action=true,entry.mode,entry.action
             job.item=c.item~=nil and c.item.GUID or nil
             job.target=c.target~=nil and entry.mode~="POINT" and entry.mode~="INVENTORY" and c.target.GUID or nil
-            job.native_hint_target=c.target~=nil and c.target.GUID or nil
+            job.native_hint_target=not farm_till and c.target~=nil and c.target.GUID or nil
             job.point,job.right=c.point,c.right
+            job.farm_till = farm_till
+            job.farm_plant = entry.action.id == "PLANTSOIL" and c.item ~= nil and c.item.components.farmplantable ~= nil
+            if job.farm_plant then job.point = nil end
             job.native_deployment = deployment and entry.mode == "POINT"
             return true
+        end
+    end
+    if farm_till then
+        local spacing = sites.Spacing(nil, c.item)
+        if not FarmTiles.CanTill(c.point) or FarmTiles.BlockingHole(c.point, spacing) ~= nil then
+            return false, "placement_blocked", sites.TillDetails(inst, state, c.point, spacing)
         end
     end
     return false,"native_action_unavailable"
@@ -183,6 +211,7 @@ function M.Valid(inst,state,job)
     for _,action in ipairs(actions) do
         if action==job.native_action and Allowed(inst,{target=target},action) then return true end
     end
+    if job.farm_till and not FarmTiles.CanTill(job.point) then job.operation_error = "placement_blocked" end
     return false
 end
 return M

@@ -4,6 +4,7 @@ local Safety = require("my_friend_recovery_safety")
 
 local M = {}
 local EquipSlots = require("my_friend_equip_slots")
+local RECOVERY_IDLE_RECHECK = 2
 
 M.DEATH_DROP_TAG = "my_friend_death_drop"
 M.DEATH_DROP_RADIUS = 18
@@ -82,6 +83,7 @@ function M.ReleaseBelongings(inst)
     end
     inst._my_friend_owned_backpack = nil
     inst._my_friend_recover_death_drops = nil
+    inst._my_friend_recovery_check_after = nil
     inst._my_friend_death_sites = nil
     inst._my_friend_auto_recovery_point = nil
 end
@@ -257,6 +259,7 @@ local function OnRespawned(inst)
     inst._my_friend_recover_target = nil
     inst._my_friend_recovery_retry = {}
     inst._my_friend_recovery_empty_since = nil
+    inst._my_friend_recovery_check_after = nil
     MarkOwnRemains(inst)
 end
 
@@ -350,6 +353,7 @@ local function FinishRecovery(inst)
     inst._my_friend_death_sites = {}
     inst._my_friend_recovery_delivery = true
     inst._my_friend_recovery_retry = nil
+    inst._my_friend_recovery_check_after = nil
     inst._my_friend_existing_remains = nil
     inst._my_friend_death_point = nil
     inst._my_friend_death_name = nil
@@ -365,9 +369,11 @@ function M.GetRecoveryAction(inst)
         or inst._my_friend_container_action then return end
     local leader = Policy.GetLeader(inst)
     if leader ~= nil and not Policy.InRange(inst, inst) then return end
-    ExpireRemains(inst, GetTime())
+    local now = GetTime()
+    if now < (inst._my_friend_recovery_check_after or 0) then return end
+    ExpireRemains(inst, now)
     ClearRecoveredInventory(inst)
-    local now, candidates, outstanding = GetTime(), {}, false
+    local candidates, outstanding = {}, false
     local retry = inst._my_friend_recovery_retry or {}
     inst._my_friend_recovery_retry = retry
     for _, entity in pairs(Ents or {}) do
@@ -444,7 +450,9 @@ function M.GetRecoveryAction(inst)
     inst._my_friend_recover_target = nil
     if outstanding then
         inst._my_friend_recovery_empty_since = nil
-        if leader == nil then return require("my_friend_base_ai").GetRecoveryStoreAction(inst) end
+        local store = leader == nil and require("my_friend_base_ai").GetRecoveryStoreAction(inst) or nil
+        if store ~= nil then return store end
+        inst._my_friend_recovery_check_after = now + RECOVERY_IDLE_RECHECK
         return
     end
     -- Visit remembered sites once before retiring the job; old saves may not
@@ -481,9 +489,15 @@ function M.GetRecoveryAction(inst)
             end
         end
     end
-    if unvisited then return end
+    if unvisited then
+        inst._my_friend_recovery_check_after = now + RECOVERY_IDLE_RECHECK
+        return
+    end
     inst._my_friend_recovery_empty_since = inst._my_friend_recovery_empty_since or now
-    if now - inst._my_friend_recovery_empty_since < 2 then return end
+    if now - inst._my_friend_recovery_empty_since < 2 then
+        inst._my_friend_recovery_check_after = inst._my_friend_recovery_empty_since + 2
+        return
+    end
     FinishRecovery(inst)
 end
 
@@ -516,6 +530,7 @@ function M.OnSave(inst, data)
 end
 
 function M.OnLoad(inst, data)
+    inst._my_friend_recovery_check_after = nil
     local saved = data ~= nil and data.my_friend_revive or nil
     if saved ~= nil and type(saved.death_x) == "number"
         and type(saved.death_z) == "number" then

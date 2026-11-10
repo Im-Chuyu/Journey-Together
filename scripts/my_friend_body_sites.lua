@@ -1,13 +1,15 @@
 -- Explicit, bounded placement advice. Never reserves terrain or spawns items.
 local Observation = require("my_friend_body_observation")
+local BuildSite = require("my_friend_build_site")
+local FarmTiles = require("my_friend_farm_tiles")
 local M = {}
 local function Finite(n) return type(n) == "number" and n == n and math.abs(n) < 1000000 end
 function M.IsDeployAction(action)
     return action == "DEPLOY" or action == "DEPLOY_TILEARRIVE" or action == "DEPLOY_FLOATING"
 end
+
 function M.Valid(inst, recipe, point)
-    return TheWorld.Map ~= nil and TheWorld.Map.CanDeployRecipeAtPoint ~= nil
-        and TheWorld.Map:CanDeployRecipeAtPoint(point, recipe, 0, inst) == true
+    return BuildSite.NativeValid(inst, recipe, point)
 end
 
 function M.Snap(item, point)
@@ -26,12 +28,15 @@ function M.Spacing(recipe, item)
             and item.components.deployable:DeploySpacingRadius() or 1
 end
 
-function M.Details(inst, state, point, spacing)
+function M.Details(inst, state, point, spacing, recipe)
     local map = TheWorld.Map
     local surface = require("my_friend_platforms").Surface(point)
-    local radius = math.min(12, math.max(4, spacing + 2, DEPLOY_EXTRA_SPACING or 0))
+    local radius = math.min(12, math.max(4, spacing + 2))
     local result = {position = {x=point.x,z=point.z}, surface=surface, minimum_spacing=spacing,
         nearby_obstacles={}, obstacles_radius=radius, obstacles_matched=0, obstacles_limited=false}
+    if recipe ~= nil and surface == "land" then
+        result.player_occupies_site = BuildSite.Blocker(inst, recipe, point) ~= nil
+    end
     if map.GetTileAtPoint ~= nil then
         local id = map:GetTileAtPoint(point.x,0,point.z)
         result.tile = {id=id}
@@ -40,28 +45,36 @@ function M.Details(inst, state, point, spacing)
     if map.IsPassableAtPoint ~= nil then result.passable = map:IsPassableAtPoint(point.x,0,point.z) == true end
     if map.CanPlantAtPoint ~= nil then result.plantable = map:CanPlantAtPoint(point.x,0,point.z) == true end
     if map.IsGroundTargetBlocked ~= nil then result.ground_target_blocked = map:IsGroundTargetBlocked(point) == true end
-    local entities = TheSim:FindEntities(point.x, 0, point.z, radius, nil,
-        {"NOBLOCK", "player", "FX", "INLIMBO", "DECOR", "walkableplatform", "walkableperipheral", "isdead"})
+    local entities = {}
     local distances = {}
-    for _, entity in ipairs(entities) do distances[entity] = Observation.Distance(point, entity:GetPosition()) end
+    for _, entity in ipairs(TheSim:FindEntities(point.x, 0, point.z, radius, nil,
+        {"NOBLOCK", "player", "FX", "INLIMBO", "DECOR", "walkableplatform", "walkableperipheral", "isdead"})) do
+        if entity ~= inst and Observation.SceneVisible(entity) and entity.components.placer == nil then
+            entities[#entities + 1] = entity
+            distances[entity] = Observation.Distance(point, entity:GetPosition())
+        end
+    end
     table.sort(entities, function(a, b)
         return distances[a] == distances[b] and a.GUID < b.GUID or distances[a] < distances[b]
     end)
-    for _, entity in ipairs(entities) do
-        if entity ~= inst and entity.components.placer == nil
-            and (entity.entity == nil or entity.entity:IsVisible()
-                and (entity.entity:GetParent() == nil or entity:HasTag("childdeployblocker"))) then
-            result.obstacles_matched = result.obstacles_matched + 1
-            if #result.nearby_obstacles < 4 then
-                result.nearby_obstacles[#result.nearby_obstacles+1] = {handle=Observation.Handle(state,entity),
-                    prefab=entity.prefab, name=entity:GetDisplayName(), distance=distances[entity],
-                    position={x=entity:GetPosition().x,z=entity:GetPosition().z},
-                    deploy_radius=entity.deploy_smart_radius or entity.deploy_extra_spacing,
-                    physics_radius=entity.GetPhysicsRadius ~= nil and entity:GetPhysicsRadius(0) or nil}
-            end
-        end
+    result.obstacles_matched = #entities
+    for index = 1, math.min(4, #entities) do
+        local entity = entities[index]
+        local record = Observation.Describe(inst, state, entity, nil, true)
+        record.distance = distances[entity]
+        result.nearby_obstacles[#result.nearby_obstacles + 1] = record
     end
     result.obstacles_limited = result.obstacles_matched > #result.nearby_obstacles
+    return result
+end
+
+function M.TillDetails(inst, state, point, spacing)
+    local result = M.Details(inst, state, point, spacing)
+    result.farming_soil = TheWorld.Map:IsFarmableSoilAtPoint(point.x, 0, point.z)
+    local soil, same = FarmTiles.BlockingHole(point, spacing)
+    result.hole = soil ~= nil and Observation.Handle(state, soil) or nil
+    result.reason = not result.farming_soil and "not_farm_soil"
+        or soil ~= nil and (same and "already_tilled" or "near_existing_soil") or "native_position_blocked"
     return result
 end
 
@@ -81,8 +94,13 @@ function M.Query(inst, state, args)
         if item == nil or item.components.inventoryitem == nil
             or item.components.inventoryitem:GetGrandOwner() ~= inst then return nil, "item_not_deployable" end
     else return nil, "recipe_or_item_required" end
+    if args.action == "TILL" and (item == nil
+        or item.components.farmtiller == nil and item.components.quagmire_tiller == nil) then
+        return nil, "till_tool_required"
+    end
     local sites, checked, seen = {}, 0, {}
     local spacing = M.Spacing(recipe, item)
+    local till = item ~= nil and item.components.farmtiller ~= nil and (args.action == nil or args.action == "TILL")
     local layout=args.layout
     if args.exact ~= nil and type(args.exact) ~= "boolean" or args.exact == true and (args.position == nil or layout ~= nil) then
         return nil, "invalid_exact_site"
@@ -99,10 +117,22 @@ function M.Query(inst, state, args)
             or layout.spacing ~= nil and (not Finite(layout.spacing) or layout.spacing <= 0) then return nil, "invalid_layout" end
     end
     if layout~=nil and layout.tile==true then
-        local x,_,z=TheWorld.Map:GetTileCenterPoint(p.x,0,p.z);p={x=x,z=z}
+        local x,_,z=TheWorld.Map:GetTileCenterPoint(p.x,0,p.z)
+        if x == nil or z == nil then return nil, "invalid_position" end
+        p={x=x,z=z}
     end
+    local holes
     local function Valid(point)
         if recipe~=nil then return M.Valid(inst,recipe,point) end
+        if till then
+            if not TheWorld.Map:IsFarmableSoilAtPoint(point.x, 0, point.z) then return false, "not_farm_soil" end
+            holes = holes or FarmTiles.FindHoles(p.x, p.z, (args.exact and 0 or radius) + spacing)
+            local soil, same = FarmTiles.BlockingHole(point, spacing, holes)
+            if soil ~= nil then
+                return false, same and "already_tilled" or "near_existing_soil", Observation.Handle(state, soil)
+            end
+            return FarmTiles.CanTill(point), "native_position_blocked"
+        end
         if item.components.deployable~=nil and (args.action==nil or M.IsDeployAction(args.action)) then
             if not item.components.deployable:CanDeploy(point,nil,inst,0) then return false end
             if args.action==nil then return true end
@@ -114,17 +144,31 @@ function M.Query(inst, state, args)
         return false
     end
     if layout~=nil then
+        local farm_grid = till and layout.tile == true
         local gap=ring ~= nil and 2 * radius * math.sin(math.pi / ring)
-            or layout.spacing or (layout.tile==true and (TILE_SCALE or 4)/math.max(layout.rows,layout.columns) or spacing)
+            or layout.spacing or (farm_grid and FarmTiles.GridSpacing())
+            or (layout.tile==true and (TILE_SCALE or 4)/math.max(layout.rows,layout.columns) or spacing)
         local angle=(layout.rotation or 0)*math.pi/180
         local cells={}
+        local blocked_point
+        local collapse_spacing = till and gap == spacing and (ring ~= nil or layout.rows * layout.columns > 1)
         local function AddCell(x, z, cell)
             if (x-origin.x)^2+(z-origin.z)^2>32^2 or (x-p.x)^2+(z-p.z)^2>radius^2+.00001 then
                 return false
             end
-            local valid=gap>=spacing and Valid(Vector3(x,0,z))
+            local valid, reason, hole
+            if gap >= spacing and not collapse_spacing then
+                valid, reason, hole = Valid(Vector3(x,0,z))
+            else
+                valid, reason = false, collapse_spacing and "spacing_would_collapse_soil" or "spacing_below_native_minimum"
+            end
             cell.position, cell.valid = {x=x,z=z}, valid
-            if not valid then cell.reason = gap<spacing and "spacing_below_native_minimum" or "native_position_blocked" end
+            if not valid then
+                cell.reason, cell.hole = reason or "native_position_blocked", hole
+                if blocked_point == nil and cell.reason == "native_position_blocked" then
+                    blocked_point = Vector3(x, 0, z)
+                end
+            end
             cells[#cells+1]=cell
             if valid then sites[#sites+1]=cell end
             return true
@@ -137,13 +181,22 @@ function M.Query(inst, state, args)
                 end
             end
         else
+            -- Align two or more rows/columns with the first slots of the
+            -- native command's 3x3 grid. Longer runs extend into the next tile.
+            local x_anchor = farm_grid and layout.columns > 1 and 2 or (layout.columns + 1) / 2
+            local z_anchor = farm_grid and layout.rows > 1 and 2 or (layout.rows + 1) / 2
             for row=1,layout.rows do for column=1,layout.columns do
-                local dx,dz=(column-(layout.columns+1)/2)*gap,(row-(layout.rows+1)/2)*gap
+                local dx,dz=(column-x_anchor)*gap,(row-z_anchor)*gap
                 if not AddCell(p.x+dx*math.cos(angle)-dz*math.sin(angle), p.z+dx*math.sin(angle)+dz*math.cos(angle),
                     {row=row,column=column}) then return nil,"layout_out_of_range" end
             end end
         end
-        return {sites=sites,cells=cells,spacing=gap,minimum_spacing=spacing,layout=layout,
+        local blocked_site
+        if blocked_point ~= nil then
+            blocked_site = M.Details(inst, state, blocked_point, spacing, recipe)
+            blocked_site.valid, blocked_site.reason = false, "native_position_blocked"
+        end
+        return {sites=sites,cells=cells,spacing=gap,minimum_spacing=spacing,layout=layout,blocked_site=blocked_site,
             center=p,checked=#cells,limited=false,observed_at=GetTime(),
             partial=#sites<#cells,note="Blocked positions are retained. Recheck during execution."}
     end
@@ -151,10 +204,11 @@ function M.Query(inst, state, args)
     if args.position ~= nil then
         local point = M.Snap(item, Vector3(p.x,0,p.z))
         local in_range = (point.x-origin.x)^2+(point.z-origin.z)^2 <= 32^2
-        local valid = in_range and Valid(point)
-        requested = M.Details(inst,state,point,spacing)
+        local valid, reason, hole = false, "position_out_of_range"
+        if in_range then valid, reason, hole = Valid(point) end
+        requested = M.Details(inst,state,point,spacing,recipe)
         requested.valid = valid
-        if not valid then requested.reason = in_range and "placement_blocked" or "position_out_of_range" end
+        if not valid then requested.reason, requested.hole = reason or "placement_blocked", hole end
         if valid then sites[1] = {position=requested.position} end
         checked, seen[tostring(point.x)..":"..tostring(point.z)] = 1, true
         if args.exact then
@@ -176,7 +230,8 @@ function M.Query(inst, state, args)
                 local valid = Valid(point)
                 if valid then
                     for _, site in ipairs(sites) do
-                        if (site.position.x-point.x)^2+(site.position.z-point.z)^2 < spacing^2 then valid=false;break end
+                        local separation = (site.position.x-point.x)^2+(site.position.z-point.z)^2
+                        if separation < spacing^2 or till and separation == spacing^2 then valid=false;break end
                     end
                 end
                 if valid then

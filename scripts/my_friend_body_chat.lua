@@ -48,13 +48,7 @@ function M.Forward(player, text, source, whisper)
     if previous ~= nil and previous.text == text and previous.source ~= source and now - previous.time < 1 then return true end
     if previous ~= nil and now - previous.time < .5 then return false end
     player._my_friend_model_chat_forward = {text = text, source = source, time = now}
-    local c = player.components or {}
-    local speaker = {userid = player.userid, name = player:GetDisplayName(), kind = "player", same_shard = false,
-        character = {id = player.prefab, name = player:GetDisplayName()},
-        health = c.health ~= nil and c.health.currenthealth or nil,
-        health_max = c.health ~= nil and c.health.maxhealth or nil,
-        hunger = c.hunger ~= nil and c.hunger.current or nil, hunger_max = c.hunger ~= nil and c.hunger.max or nil,
-        sanity = c.sanity ~= nil and c.sanity.current or nil, sanity_max = c.sanity ~= nil and c.sanity.max or nil}
+    local speaker = require("my_friend_body_observation").PlayerProfile(player, false)
     serial = serial + 1
     Send("BodyChat", nil, {identity = Identity(player), id = tostring(player.GUID) .. ":" .. serial,
         text = text, speaker = speaker, world_control = require("my_friend_body_world").Status(player)})

@@ -79,7 +79,7 @@ c_myfriend_ai("stop")
 
 先查看助手日志是否出现`model_page_reply_received`、`model_response_received`、`game_action_queued`及`game_action_result`。网页只出现JSON，不代表已回传；模型输入中的request_id和返回值须属于同一轮，连续发送新话会让旧回复失效。`observe`仅扫描，通常先显示台词，再把扫描结果交回模型；它不会直接移动伙伴。
 
-扩展依次读取可见pre/code、普通p段落，以及包含本轮编号的div/span文本父节点，最后才回退整页文字末尾。普通JSON聊天回复不必是代码块，也不应因页面其他长内容被挤出末尾范围而漏读；排除脚本、编辑器及隐藏数据。仅在字符串外修正规范化空格，保留字符串内容、严格request_id及接口校验。等待计时器提前触发时重新安排，不能留下无法完成的等待。进度日志包括`preparing/waiting_reply/reply_detected`和代码块数量，报错带固定原因；不记录原始对话/JSON。
+网页提示要求把最终对象放进一个 `json` 代码块，避免步骤引用中的美元符号触发公式渲染。扩展依次读取可见pre/code、普通p段落，以及包含本轮编号的div/span文本父节点，最后才回退整页文字末尾。兼容旧的普通 JSON 回复，排除脚本、编辑器及隐藏数据。仅在字符串外修正规范化空格，保留字符串内容、严格request_id及接口校验。等待计时器提前触发时重新安排，不能留下无法完成的等待。进度日志包括`preparing/waiting_reply/reply_detected`和代码块数量，报错带固定原因。日志不记录原始对话或 JSON。
 
 本机`http://127.0.0.1:18766/health`提供只读web阶段和耗时，不返回提示、回复或认证信息，也不刷新心跳。修改助手/扩展后重启助手、在扩展页重新加载并F5刷新DeepSeek；仅改这些文件无须重进游戏。只发送一条测试请求，等待本轮结束后再发下一条。
 
@@ -176,7 +176,7 @@ requested:true只表示已安排原版操作，通常1秒后执行，不代表�
 | `cancel` | `{"action_id":"结果中的动作编号"}` | 请求取消；busy 动作完成当前安全动画边界后取消，不强停状态图 |
 | `get_action_status` | `{"action_id":"动作编号"}` | 查询实际状态、结果或失败原因 |
 
-`scope` 可取 `nearby/inventory/all/structures/creatures/players/containers/items/interactions/terrain/boats`；`filter` 匹配 prefab 或本地化名称。`interactions` 查找带座位/机器/激活组件的附近实体，包括没有普通建筑标签的模组实体，也包含于 nearby/all。`contents:true` 只返回可访问容器内容。未观察到不等于全世界不存在。地面拾取省略count拿整堆，容器取物默认一件，配方取料时显式指定份数；craft(count)原本已在游戏内做完整批后回报，中途缺料/科技失败会停止。批量扫描不自动吸收后来生成的掉落物；中断时保留实际进度，安全/忙碌边界不变。
+`scope` 可取 `nearby/inventory/all/structures/creatures/players/containers/items/interactions/terrain/farm/boats/scene`；`filter` 匹配 prefab 或本地化名称。`interactions` 查找带座位/机器/激活组件的附近实体，包括没有普通建筑标签的模组实体，也包含于 nearby/all。`contents:true` 只返回可访问容器内容。未观察到不等于全世界不存在。地面拾取省略count拿整堆，容器取物默认一件，配方取料时显式指定份数；craft(count)原本已在游戏内做完整批后回报，中途缺料/科技失败会停止。批量扫描不自动吸收后来生成的掉落物；中断时保留实际进度，安全/忙碌边界不变。
 
 实体的 `interactions` 列出当前接口认识的交互类型，`occupied`/`switched_on` 提供座位占用/开关状态，真正执行时仍检查目标、权限和组件条件。例如“去那边坐一下”可以由模型组合观察与 `interact(SITON)`，伙伴沿现有坐椅子行为靠近、坐下并休息，后续任务可接管。椅子占用、超出原坐椅子范围等会失败，不擅自换坐别的椅子。手持道具仍使用 `use_item` 的已支持动作；骑牛和其他模组自定义使用动作不因这个接口自动获得支持。
 
@@ -229,6 +229,8 @@ python -B -m tools.companion_bridge --adapter "D:\自己的配置\my_model.py"
 
 `decide` 返回最多一个技能及可选 text；动作结束后把真实结果送回。snapshot.action/pending/manual_task 区分执行、等待与游戏任务；revision 标记游戏新指令，旧版本回复失效。助手按输入轮次撤销旧模型规划，支持新话语接替上一轮；适配器可实现 cancel_pending() 来及时结束网络等待，不能取消的供应商请求返回后也不会执行旧回复。input_kind 为 user/ambient，ambient 按本轮tools与上述主动闲聊限制执行。同一玩家任务可连续调用多批工具，直到模型收尾或游戏控制权改变等终止条件。助手保留最近 32 个详细回执，早期回执滚出时标记 `results_limited`，任务笔记继续传递。
 
+适配器上下文中的 `turn_id` 标识同一条任务。首轮的 `turn_phase` 为 `input`，后续为 `continuation`。网页续接把玩家原话放在 `original_request`，供换对话恢复。API 续接把快照增量和任务笔记附在匹配 `tool_call_id` 的工具回执中。玩家再次主动发出相同文字时，会获得新的任务编号。
+
 例如 OpenAI Chat Completions 可将 `context["tools"]` 的条目包装为 `{"type":"function","function":tool}`，再将模型的函数名/JSON 参数映射回 `skill/arguments`。Responses 或其他供应商按其官方工具协议转换。严格 Schema 的可选/null 规则需要在适配层处理；本机助手会剔除参数中值为 null 的可选字段。参考 [OpenAI Function calling](https://developers.openai.com/api/docs/guides/function-calling)。
 
 适配器是用户明确指定的本地 Python 程序，不从网络响应下载或执行代码。模型只能选择技能和参数，不能返回 Lua/Python 让游戏执行。密钥、SDK、模型和费用由你选择并保存在助手侧，不内置密钥。网页登录不是 API 密钥；改用正式 API 可走此适配入口，费用和模型可用性需另行核实。
@@ -270,6 +272,8 @@ execute_sequence(steps)一次连续执行至多64个展开步骤，步骤包含i
 
 建筑 `craft` 在落地时需要 `position`，每步 `count=1`；多座建筑在一个 `execute_sequence` 中分别给不同坐标。便携物品仍支持 `craft(count)`。建筑在安排动作及实际执行校验时检查位置；`placement_required` / `distinct_placement_steps_required` / `placement_blocked` 区分缺少选址、批量同址及地点被占。已完成步骤不回滚；模型只补做失败及未执行部分，不重新取料或重复建筑。首次位置检查失败明确返回 `materials_consumed=false`；其他失败以真实库存及回执为准。
 
+陆地落点有人站着时，伙伴尝试通过自己的短程步行动作清场，随后复查原坐标。指定落点的 `query_sites` 与 `placement_blocked` 详情用 `player_occupies_site` 单独报告当前玩家占用。若仍被占用，可请玩家让开后重试原点。已准备的建筑保留，可用 `craft(mode="place")` 继续落地。
+
 提示词按扮演身份、游戏基础、接口协作、权限与行为细则、输出格式组织；强调批量依赖规划、制作地点与用途地点分开、无合适地点先询问。模型请求快照按名字、实体角色、饱食/理智/生命/温度/潮湿、世界、环境、库存、执行权限信息的顺序输出；保留权限和回执所需字段。世界增加日内 `time`，环境增加地面 `items` 与带 `boss=true` 的 `bosses`，沿用原有低频环境刷新及时间戳，非每帧扫描。
 
 网页扩展补充新建对话文字变体与快捷键标签，找不到可见入口时在同一站点公开首页续接；仍校验 pending nonce、自动新对话开关及两次换页上限。豆包兼容无 textbox/lexical 标记的富文本编辑器及编辑器外层发送控件，输入使用带 inputType 的事件；输入未清空且无上限提示时返回 `send_not_confirmed`，不把点击成功当发送成功，也不重复点击。更新后重启助手、重新加载扩展并刷新模型标签页。
@@ -289,7 +293,19 @@ execute_sequence(steps)一次连续执行至多64个展开步骤，步骤包含i
 
 `query_sites` 现在支持携带的部署物和原生坐标工具，可用action筛选原生动作。minimum_spacing从配方、部署组件或锄地原生规则读取，代替所有部署物固定间隔4。layout参数为rows/columns/spacing?/rotation?/tile?：返回固定行列cells、各点valid/reason、可用sites、间距及中心，不把阻塞格替换成散点；tile=true按包含该位置的地块中心对齐，默认间距为地块大小除以较大行列数。最多40格，所有点须在指定radius及伙伴32单位范围内，间距小于原生下限时保留阻塞原因。布局只读且不预留地图，原生自定义规则及计划内其他对象可能影响实际放置，执行仍重验。模型先分配种类、数量、比例、区域和统一行列，再按布局执行。
 
+#### 农田、土坑与杂草
+
+`observe(scope="farm")` 默认查 12 单位、最多 16 单位内的农田。按地块距离分页，每页最多 8 块。每块返回原生地块编号 `tx/tz`、`center/bounds`、可播种 `holes` 的句柄和世界坐标，以及 `weeds_matched/weed_prefabs`。每块最多列 16 个坑，`holes_matched` 是完整计数。按 `next_offset` 续查地块。杂草个体用 `observe(target_type="weed")`，加 `action="DIG"` 可只看当前可铲的目标。该过滤适用于所有品种，也可用于 `work_many`。若只处理指定田块，按 `bounds` 选择目标句柄。
+
+锄地以实际 `center` 调 `query_sites(item=锄头句柄,action="TILL",position=地块中心,layout={tile=true,rows=2,columns=3})`。使用内置 3×3 网格的两排。连续两块田可把 `columns` 改为 6，`rotation=90` 可换轴。每个坑都校验农田地皮与原版间距，`sites` 只含待锄坐标，`cells` 中 `already_tilled` 和 `near_existing_soil` 可带现有 `hole` 句柄。对 `sites` 的原坐标执行 `perform_action(TILL,POINT)`，成功回执里的 `soil.handle` 可直接引用。锄地执行前会复查附近新出现的坑，避免锄塌已有坑。
+
+指定 `action="TILL"` 时检查道具是否支持原生锄地。误传铲子等工具会返回 `till_tool_required`。
+
+普通种子和各作物专属种子在库存中标为 `planting_action="PLANTSOIL"`，用 `perform_action(PLANTSOIL,USEITEM)` 指定空坑句柄。树种及移栽物按各自原生部署动作处理，独立于农田锄地和播种。
+
 `execute_sequence` 上限为64个展开动作，原步骤形式继续兼容。重复块格式为 `{id,for_each:[值...],steps:[模板...]}`，值最多40、模板最多12，仅一层。模板参数可用`$each`/`$each.position`等取当前值；同一模板内的`$query.target`等引用自动按迭代命名，外部前步引用保留。未知each字段拒绝，超过64步拒绝；不支持代码、条件分支、嵌套重复、世界操作或角色委派。可一次表达多目标取放、按布局开坑/查询播种、施肥/浇水/交谈等原生动作链。首次失败即停，保留各步状态、实际产物和完成数量，仅恢复未完成部分。空动作列表不应盲取第一项，信息不足应返回模型选择。
+
+动态查询的候选数量由回执确定。先读 `sites`，再把选择的坐标逐项放进下一次调用的 `for_each` 数组，模板的 `position` 用 `$each`。用字符串引用整个列表会在序列执行前返回 `invalid_repeat_values`。
 
 普通容器存放现在对acceptsstacks=false按单件分槽连续执行，避免原生GiveItem整堆兜底只放入一件。完成回执count为累计实际数量，partial/remaining区分容量不足；不会用虚假的全部完成掩盖剩余。内部开关与原有中断清理沿用。
 
@@ -420,6 +436,8 @@ API参数纠错：被拒绝的工具不会交给游戏执行；同一模型决�
 
 `query_sites(exact=true,position=…)` 只检查指定点，地皮部署物仍按原生地块中心吸附；省略 `exact` 时会先检查指定中心，再搜索周围候选。`requested_site` 提供 `valid/reason`、地皮 `tile`、`surface/passable/plantable`（原版接口可用时）、`ground_target_blocked`、原生最小间距，以及最近四个 `nearby_obstacles` 的位置、距离、部署间距和物理半径。`obstacles_matched/obstacles_limited/obstacles_radius` 说明上下文边界；附近对象不一定是真正阻挡物，最终结论仍来自原版建筑/部署检查。执行前再次检查，`placement_blocked` 回执附现场信息；已拾取物和已预制作建筑保留供恢复。
 
+`observe(scope="scene",position={x=...,z=...},radius=6)` 查看目标坐标周围的可见对象，包括松散物品、作物、杂物、墙、地洞和其他物理对象。省略坐标时以伙伴为中心，默认半径 8，最大 16。实体仍须距伙伴不超过 32 单位，覆盖不足用 `area_clipped` 标记。结果按距查询中心排序，可用 `next_offset` 续页。实体返回已有的 `work/pickable` 和场景标记、物理半径及部署半径。建造、锄地或部署的布局遇到原生位置校验失败时，`blocked_site` 提供第一个受阻点和附近对象，后续可对该坐标查现场。场景对象是判断线索，实际可放置性由原版检查确定。
+
 句柄取消原来的 90 秒时间期限，同一连接内实体仍有效且未被缓存淘汰时可持续使用。缓存仍最多 2048 条；已接受序列固定所引用的有效身份，即使普通缓存淘汰也能在该序列中解析。实体移除、堆叠合并或重新连接仍可能使旧句柄失效；移动、位置变化和权限变化由每次动作重新校验，不会把旧句柄改指向附近另一件物品。句柄、固定身份和序列引用不进入存档。
 
 定向桩覆盖完整移植及缺掉落中止、拥挤场景找树、定量劳动及目标变化、精确落点和执行时受阻、长时间句柄及缓存淘汰、助手参数接受与纠错。未启动游戏、未调用真实模型 API；游戏动画、拥挤存档中的体验及模型是否遵循组合策略仍需实测。更新后重启助手并重新进入世界。
@@ -429,6 +447,8 @@ API参数纠错：被拒绝的工具不会交给游戏执行；同一模型决�
 
 同一房间内可从地表连接洞穴伙伴，或反过来，首次配对无需同分片。本机API/网页助手经真实玩家电脑中继；云服常规API由伙伴分片直接连接，在线玩家可全部位于另一分片；管理员客户端模式可跨分片，但持续验证管理员身份。两种模型方式共用游戏权限，不能借传输方式安排领队之外的工作。
 
-远端连接快照的owner.same_shard=false，来源分片只提供真实玩家身份和状态，不伪造玩家坐标或句柄。动作仍在伙伴分片执行；跨分片follow、直接递物和需本地玩家的能力仍会失败。助手请求附近私聊返回nearby_chat_other_shard，切换公共频道后可用。换分片结束旧任务，由原自动重连重新发现，旧模型计划不会自动重放。
+玩家发言时，网页和 API 的模型快照用 `speaker` 提供当次发言者的公屏名字、实际角色、鬼魂状态和生命、饱食、理智。同分片还提供位置和可查询句柄。名字优先取自服务器客户端名单，状态取自发言时的真实实体。伙伴本身的状态在快照顶层，领队在 `leader`。
+
+远端连接的传输快照用 `owner.same_shard=false`，远端发言用 `speaker.same_shard=false`。来源分片提供真实玩家身份和状态。动作仍在伙伴分片执行；跨分片follow、直接递物和需本地玩家的能力仍会失败。助手请求附近私聊返回nearby_chat_other_shard，切换公共频道后可用。换分片结束旧任务，由原自动重连重新发现，旧模型计划不会自动重放。
 
 网页码沿用旧设置后存入当前用户数据目录并跨模组副本复用；首次配对后扩展可恢复已选页面，更新时需允许新增scripting权限。头像配置支持当前246个原版聊天图标（含空头像），不改变Body工具参数或说话频道。

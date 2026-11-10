@@ -119,6 +119,8 @@ Dodging depends on enemy timing, traversable terrain and the companion's current
 
 ### Character-specific examples
 
+Bookcases, Sisturns, and other ground buildings keep their original placement point. If a player occupies the spot, the companion tries to walk them clear through ordinary collision. Construction stops if the spot stays blocked.
+
 - **Wortox** balances pocket souls with carried Soul Jars, aiming for 18 pocket souls and never transferring souls into backpacks. When hungry with more than 10 pocket souls, he eats souls first.
 - **Wortox player healing** responds to health changes within 10 units and checks the same area every 30 seconds as a fallback. Below 80% health, he approaches and drops one soul at a time, stopping at 80%. Target discovery does not repeatedly poll every player's health.
 - **Wickerbottom** remembers bookcase coordinates when a base is assigned, allowing reading and storage trips to distant recorded shelves. Each read request can refresh the base once if no usable book is found. Outside the base, or if the book is still unavailable, she searches once within 20 units of her current position. Shelves outside the base are remembered only for that request and are not saved. There are no periodic discovery scans.
@@ -146,7 +148,11 @@ Enable AI Model Mode in the mod settings and match the six-digit pairing code in
 - **Linux dedicated API assistant**: configure `AssistantAPI.json` and run `sh ./StartAssistantLinux.sh` with Python 3.10 or newer. The companion's shard pairs automatically when the companion and an online player are present.
 - **Dedicated server admin client**: select Dedicated Server AI Connection → Admin Client. An administrator can connect a local assistant from another shard using the pairing code. Relay access checks administrator status; public-chat work permissions still use the actual speaker's identity.
 
+The model can till rows on actual farm tiles, plant crop seeds in open holes, and count weeds by species. For two rows, you can specify the plot, holes per row, and direction.
+
 The Windows launcher checks for Python/Tk and installs it if needed. Assistant settings provide local Whisper setup and TTS voice, rate and volume controls. Hold the voice hotkey to speak and release it to recognize speech; the default is `F9`. Text input is also available.
+
+Local reading of companion replies is off by default.
 
 Disabling AI Model Mode skips the model API, HTTP transport and assistant shard-link modules, and creates no automatic pairing tasks; ordinary companion chat remains available. Manual disconnect stops automatic reconnection in the current world; an explicit pairing command resumes it. The assistant expires a session after 20 seconds without game traffic. The browser extension returns complete JSON with a matching request ID immediately, without waiting for stable text or generation to stop. Restart the assistant, reload the extension and refresh the model page after updating.
 

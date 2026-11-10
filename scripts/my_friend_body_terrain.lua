@@ -1,5 +1,6 @@
 -- Explicit local terrain query; no background scans or saved entity references.
 local M = {}
+local FarmTiles = require("my_friend_farm_tiles")
 local REGIONS={PigKingdom="pig_king_area",BeeClearing="bee_plains",BeeQueenBee="bee_queen_area",
     BGMarsh="marsh",Marsh="marsh",SpiderMarsh="marsh",ChessMarsh="marsh",BGSavanna="savanna",
     BGDeciduous="deciduous_forest",DeepDeciduous="deciduous_forest",MagicalDeciduous="deciduous_forest",
@@ -80,4 +81,69 @@ function M.Scan(inst, state, args)
     return {tiles=tiles,location=M.Location(inst),radius=radius,observed_at=GetTime(),limited=#tiles>=49,
         till_spacing=GetFarmTillSpacing ~= nil and GetFarmTillSpacing() or nil}
 end
+
+function M.Farm(inst, state, args)
+    local map, origin = TheWorld.Map, inst:GetPosition()
+    local radius, offset = math.min(16, args.radius or 12), args.offset or 0
+    local min_x, min_z = map:GetTileCoordsAtPoint(origin.x - radius, 0, origin.z - radius)
+    local max_x, max_z = map:GetTileCoordsAtPoint(origin.x + radius, 0, origin.z + radius)
+    local own_x, own_z = map:GetTileCoordsAtPoint(origin.x, 0, origin.z)
+    local candidates = {}
+    for tx = min_x, max_x do
+        for tz = min_z, max_z do
+            local x, _, z = map:GetTileCenterPoint(tx, tz)
+            if x ~= nil then
+                local distance = (x - origin.x)^2 + (z - origin.z)^2
+                if (distance <= radius^2 or tx == own_x and tz == own_z)
+                    and map:IsFarmableSoilAtPoint(x, 0, z) then
+                    candidates[#candidates + 1] = {tx = tx, tz = tz, x = x, z = z, distance = distance}
+                end
+            end
+        end
+    end
+    table.sort(candidates, function(a, b)
+        if a.distance ~= b.distance then return a.distance < b.distance end
+        return a.tx == b.tx and a.tz < b.tz or a.tx < b.tx
+    end)
+    local tiles, by_key = {}, {}
+    for i = offset + 1, math.min(#candidates, offset + 8) do
+        local cell = candidates[i]
+        local tile = M.At(cell.x, cell.z)
+        tile.tx, tile.tz, tile.holes, tile.holes_matched = cell.tx, cell.tz, {}, 0
+        tile.weeds_matched, tile.weed_prefabs = 0, {}
+        tiles[#tiles + 1], by_key[FarmTiles.Key(cell.tx, cell.tz)] = tile, tile
+    end
+    local limited = offset + #tiles < #candidates
+    if #tiles > 0 then
+        local Observation = require("my_friend_body_observation")
+        local entities = TheSim:FindEntities(origin.x, 0, origin.z, radius + (TILE_SCALE or 4) * math.sqrt(2),
+            nil, {"INLIMBO", "FX"}, {"soil", "weed"})
+        table.sort(entities, function(a, b)
+            local p, q = a:GetPosition(), b:GetPosition()
+            if p.z ~= q.z then return p.z < q.z end
+            return p.x == q.x and a.GUID < b.GUID or p.x < q.x
+        end)
+        for _, entity in ipairs(entities) do
+            local p = entity:GetPosition()
+            local tx, tz = map:GetTileCoordsAtPoint(p.x, 0, p.z)
+            local tile = by_key[FarmTiles.Key(tx, tz)]
+            if tile ~= nil and FarmTiles.IsOpenHole(entity) then
+                tile.holes_matched = tile.holes_matched + 1
+                if #tile.holes < 16 then
+                    tile.holes[#tile.holes + 1] = {handle = Observation.Handle(state, entity), position = {x = p.x, z = p.z}}
+                else
+                    tile.holes_limited = true
+                end
+            elseif tile ~= nil and FarmTiles.IsWeed(entity) then
+                local prefab = entity.prefab
+                tile.weeds_matched = tile.weeds_matched + 1
+                tile.weed_prefabs[prefab] = (tile.weed_prefabs[prefab] or 0) + 1
+            end
+        end
+    end
+    return {scope = "farm", tiles = tiles, position = {x = origin.x, z = origin.z}, radius = radius,
+        grid_spacing = FarmTiles.GridSpacing(), till_spacing = GetFarmTillSpacing(), observed_at = GetTime(),
+        offset = offset, matched = #candidates, next_offset = limited and offset + #tiles or nil, limited = limited}
+end
+
 return M

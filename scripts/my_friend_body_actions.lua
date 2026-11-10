@@ -181,7 +181,7 @@ local function Make(inst, job, target, kind, item, point, success, validate)
     action.validfn = function()
         return Current(inst, job) and (target == nil or target:IsValid())
             and (item == nil or ValidItem(item) and (job.skill == "pickup" or Owned(inst, item)))
-            and (validate == nil or validate())
+            and (validate == nil or validate(action))
     end
     action:AddSuccessAction(function()
         if not Current(inst, job) then return end
@@ -785,14 +785,16 @@ local function Craft(inst, state, job)
             end
         end
         Done(inst, job, result)
-    end, function()
-        if recipe.placer ~= nil and not require("my_friend_body_sites").Valid(inst, recipe, job.point) then
+    end, function(act)
+        if recipe.placer ~= nil and not require("my_friend_body_sites").Valid(inst, recipe, act:GetActionPoint()) then
+            act.reason = "placement_blocked"
             job.operation_error = "placement_blocked"; return false
         end
         if buffered then return builder:IsBuildBuffered(recipe.name) end
         return tech.CanBuild(inst, recipe) and builder:HasIngredients(recipe)
     end)
     action.recipe = recipe.name
+    if recipe.placer ~= nil then action.distance = recipe.build_distance end
     return action
 end
 local function Cook(inst, state, job)
@@ -883,7 +885,7 @@ function M.GetAction(inst, state, job)
     end
     if job.native then
         local native=require("my_friend_body_native")
-        if not native.Valid(inst,state,job) then Fail(inst,job,"native_action_unavailable"); return end
+        if not native.Valid(inst,state,job) then Fail(inst,job,job.operation_error or "native_action_unavailable"); return end
         local target,item=Resolve(job,"target"),Resolve(job,"item")
         local slot=native.EquipSlot(job,item)
         if slot~=nil and inst.components.inventory:GetEquippedItem(slot)~=item then
@@ -895,17 +897,29 @@ function M.GetAction(inst, state, job)
         local action=Make(inst,job,target,job.native_action,item,job.point,function()
             effect_point=job.effect_point or effect_point
             previous_entities=job.effect_before or previous_entities
-            local created={}
+            local created, soil = {}, nil
+            local farm = job.native_action.id == "TILL" and require("my_friend_farm_tiles") or nil
             for _,entity in ipairs(TheSim:FindEntities(effect_point.x,0,effect_point.z,2,nil,{"INLIMBO","FX"})) do
-                if not previous_entities[entity.GUID] and #created<12 then created[#created+1]=Observation.Describe(inst,state,entity) end
+                if not previous_entities[entity.GUID] then
+                    local hole = farm ~= nil and farm.IsOpenHole(entity) and farm.MatchesSlot(entity, effect_point)
+                    if hole or #created < 12 then
+                        local record = Observation.Describe(inst, state, entity)
+                        if hole then soil = record end
+                        if #created < 12 then created[#created+1] = record end
+                    end
+                end
             end
             Done(inst,job,{action=job.native_action.id,mode=job.native_mode,executed=true,
-                position={x=effect_point.x,z=effect_point.z},entities=created,
+                position={x=effect_point.x,z=effect_point.z},entities=created,soil=soil,
                 target=target~=nil and target:IsValid() and Observation.Describe(inst,state,target) or nil,
                 consumed=item~=nil and math.max(0,before-Count(inst,item.prefab)) or nil})
-        end,function() return native.Valid(inst,state,job) end)
+        end,function(act)
+            if native.Valid(inst,state,job) then return true end
+            if job.operation_error == "placement_blocked" then act.reason = job.operation_error end
+            return false
+        end)
         action.rmb=job.right
-        action._my_friend_native_range=true
+        action._my_friend_native_range=not (job.farm_till or job.farm_plant)
         -- Real BufferedActions capture the baseline in Do, after routing.
         if action.Do==nil then
             for _,entity in ipairs(TheSim:FindEntities(effect_point.x,0,effect_point.z,2,nil,{"INLIMBO","FX"})) do

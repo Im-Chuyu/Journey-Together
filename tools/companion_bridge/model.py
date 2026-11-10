@@ -44,21 +44,28 @@ def execution_summary(results, keep_arguments=True):
 
 
 def context_data(context, request_id=None):
-    # Stable reading order: identity, six basic stats, world, surroundings,
-    # supplies, then execution/permission metadata. Keep all authoritative data.
-    snapshot = context.get("snapshot", {})
-    order = ("name", "character", "prefab", "hunger", "sanity", "health", "chat_channel", "temperature", "moisture",
-             "world", "location", "base", "mobility", "speaker", "environment", "position", "inventory", "prepared_builds")
+    snapshot = dict(context.get("snapshot", {}))
+    # The bridge keeps transport metadata internally. Present one current
+    # speaker to the model even when another player is relaying the request.
+    snapshot.pop("transport_owner", None)
+    if snapshot.get("speaker") is not None:
+        snapshot.pop("owner", None)
+    order = ("speaker", "name", "character", "prefab", "hunger", "sanity", "health", "chat_channel", "temperature", "moisture",
+             "world", "location", "base", "mobility", "environment", "position", "inventory", "prepared_builds")
     ordered = {key: snapshot[key] for key in order if key in snapshot}
     ordered.update({key: value for key, value in snapshot.items() if key not in ordered})
+    turn_phase = context.get("turn_phase") or ("continuation" if context.get("results") else "input")
+    text_field = "original_request" if turn_phase == "continuation" else "utterance"
     data = {"request_id": request_id, "input_kind": context.get("input_kind"),
-            "utterance": context.get("utterance"), "snapshot": ordered,
+            "turn_phase": turn_phase, text_field: context.get("utterance"), "snapshot": ordered,
             "task_plan": context.get("task_plan", {}),
             "results": context.get("results", []), "history": [{**{k: v for k, v in entry.items() if k != "speaker"},
                          "speaker": {k: v for k, v in (entry.get("speaker") or {}).items() if k in ("name", "userid", "same_shard")}}
                         for entry in context.get("history", [])
                         if entry.get("kind") != "ambient" or entry.get("assistant")],
             "tools": context.get("tools", [])}
+    if context.get("turn_id") is not None:
+        data["turn_id"] = context["turn_id"]
     if context.get("last_task"):
         data["last_task"] = context["last_task"]
     data["execution"] = execution_summary(context.get("results", []))
@@ -73,9 +80,11 @@ def context_data(context, request_id=None):
 def prompt(context, request_id):
     instructions = Path(__file__).with_name("model_instructions.md").read_text(encoding="utf-8")
     data = context_data(context, request_id)
-    return (instructions + "\n\n当前角色语气：\n" + instruction(context.get("snapshot", {}))
+    prefix = "助手回执，续接原任务。\n\n" if data["turn_phase"] == "continuation" else ""
+    return (prefix + instructions + "\n\n当前角色语气：\n" + instruction(context.get("snapshot", {}))
             + "\n\n本次请求数据（JSON）：\n" + json.dumps(data, ensure_ascii=False, separators=(",", ":"))
-            + '\n\n请输出最终 JSON，并在对象中原样附加 request_id。')
+            + "\n\n请输出一个标记为 json 的代码块，内含最终 JSON 对象和原样复制的 request_id。"
+              r"请求数据中的 \u0024 是美元符号的 JSON 转义。").replace("$", r"\u0024")
 
 
 def parse_decision(raw, request_id):

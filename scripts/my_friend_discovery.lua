@@ -97,7 +97,7 @@ local function MarkAt(state, entity, x, z, previous)
     end
 end
 
-function M.Touch(entity)
+function M.Touch(entity, local_only)
     if entity == nil or entity.components == nil
         or TheWorld ~= nil and not TheWorld.ismastersim then return end
     local state = State()
@@ -116,13 +116,15 @@ function M.Touch(entity)
     MarkAt(state, entity, x, z, record ~= nil and record.kinds or nil)
     local keys = ResourceKeys(entity)
     for prefab in pairs(record ~= nil and record.keys or {}) do keys[prefab] = true end
-    for prefab in pairs(keys) do state.resources[prefab] = (state.resources[prefab] or 0) + 1 end
+    if not local_only then
+        for prefab in pairs(keys) do state.resources[prefab] = (state.resources[prefab] or 0) + 1 end
+    end
     if record ~= nil then record.x, record.z, record.keys, record.kinds = x, z, keys, KindMask(entity) end
     local ii = entity.components.inventoryitem
     local owner = ii ~= nil and ii.owner or nil
     if owner ~= nil and owner ~= entity and owner.components ~= nil then
         if owner.components.inventory ~= nil then M.InventoryChanged(owner) end
-        if owner.components.container ~= nil then M.Touch(owner) end
+        if owner.components.container ~= nil then M.Touch(owner, local_only) end
     end
     state.touching[entity] = nil
 end
@@ -165,8 +167,11 @@ for _, event in ipairs({"onremove", "burnt", "onburnt", "onignite", "onextinguis
     "onopen", "onclose", "ondropped", "onputininventory", "stacksizechange", "percentusedchange",
     "perishchange", "onbuilt", "itemplanted", "picked", "worked", "workfinished"}) do EVENTS[event] = true end
 
-local function Changed(entity, ...)
-    M.Touch(entity)
+local function Changed(entity, event, ...)
+    local item = event == "perishchange" and entity.components ~= nil and entity.components.inventoryitem or nil
+    -- Carried food can affect local supply, but cannot become a world pickup
+    -- from a freshness change. Drops still invalidate world searches.
+    M.Touch(entity, item ~= nil and item.owner ~= nil)
     return ...
 end
 
@@ -176,7 +181,7 @@ local function WrapMethods(class, names)
         local original = class[name]
         if type(original) == "function" and not class._my_friend_discovery_methods[name] then
             class._my_friend_discovery_methods[name] = true
-            class[name] = function(self, ...) return Changed(self.inst, original(self, ...)) end
+            class[name] = function(self, ...) return Changed(self.inst, nil, original(self, ...)) end
         end
     end
 end
@@ -186,7 +191,7 @@ function M.Install(entity_script, components)
         entity_script._my_friend_discovery_events = true
         local original = entity_script.PushEvent_Internal
         entity_script.PushEvent_Internal = function(self, event, ...)
-            if EVENTS[event] then return Changed(self, original(self, event, ...)) end
+            if EVENTS[event] then return Changed(self, event, original(self, event, ...)) end
             return original(self, event, ...)
         end
     end

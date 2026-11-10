@@ -988,7 +988,12 @@ local function CreateBuildAction(inst, recipe_name, point, track_pending)
         point = recipe.placer ~= nil and FindBuildPoint(inst, recipe_name) or nil
         if recipe.placer == nil then point = inst:GetPosition() end
     end
-    if point == nil then return end
+    if point == nil then
+        if recipe_name == "researchlab" then
+            retry[recipe_name] = GetTime() + M.BASE_SITE_RETRY_DELAY
+        end
+        return
+    end
     local action = BufferedAction(inst, nil, ACTIONS.MY_FRIEND_BUILD or ACTIONS.BUILD,
         nil, point, recipe.name, recipe.build_distance)
     M.SetTask(inst, "正在制作"..(RECIPE_NAMES[recipe_name] or recipe_name))

@@ -226,7 +226,7 @@ local function IsFriendInventoryItem(doer, item)
 end
 
 local FriendBuildAction = AddAction("MY_FRIEND_BUILD", Text("制作", "Build"), function(act)
-    return _G.ACTIONS.BUILD.fn(act)
+    return require("my_friend_build_site").Build(act)
 end)
 local FriendBodyAction = AddAction("MY_FRIEND_BODY", Text("操作", "Interact"),
     function(act) return require("my_friend_body_actions").Operate(act) end)
@@ -243,11 +243,6 @@ local FriendMakeHeart = AddAction("MY_FRIEND_MAKE_HEART", Text("制作双尾心"
 FriendMakeHeart.mount_valid = true
 FriendMakeHeart.do_not_locomote = true
 AddStategraphActionHandler("wilson", _G.ActionHandler(FriendMakeHeart, "dolongaction"))
-
-local FriendMakeRoom = AddAction("MY_FRIEND_MAKE_ROOM", Text("让出位置", "Make room"), function(act)
-    return require("my_friend_bookstation").MakeRoom(act)
-end)
-AddStategraphActionHandler("wilson", _G.ActionHandler(FriendMakeRoom, "doshortaction"))
 
 local FriendDropSurplus = AddAction("MY_FRIEND_DROP_SURPLUS", Text("放下", "Drop"), function(act)
     local item = act.invobject

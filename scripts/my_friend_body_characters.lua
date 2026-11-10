@@ -103,8 +103,12 @@ function M.Prepare(inst, state, job)
             job.command, job.opened = nil, nil
         end
         local ok = pcall(function()
-            if kind == "read_book" then require("my_friend_books").PrepareCommand(inst, command)
-            elseif command.recipe == "bookstation" or command.recipe == "sisturn" then require("my_friend_bookstation").PrepareCommand(command) end
+            if kind == "read_book" then
+                require("my_friend_books").PrepareCommand(inst, command)
+            elseif command.recipe == "bookstation" or command.recipe == "sisturn" then
+                require("my_friend_bookstation").PrepareCommand(command)
+                job.recipe, job.point = command.recipe, command.build_point
+            end
         end)
         if not ok then job.cleanup(); job.cleanup = nil; return false, "character_setup_failed" end
     end
@@ -145,7 +149,8 @@ function M.GetAction(inst, job)
     if action == nil then
         if job.command ~= nil and job.command.waiting and inst._my_friend_command == job.command then job.stage = "waiting_character_action"; return end
         Finish(inst, job, job.command ~= nil and not job.command.reported and TerminalEffect(job),
-            kind == "read_book" and "book_not_read" or job.command ~= nil and job.command.failure_reply or nil); return
+            kind == "read_book" and "book_not_read"
+            or job.command ~= nil and (job.command.failure_reason or job.command.failure_reply) or nil); return
     end
     local previous = action.validfn
     job.stage = action.action.id
@@ -156,7 +161,13 @@ function M.GetAction(inst, job)
     local product = kind == "spice_food" and action.action == ACTIONS.HARVEST and action.target ~= nil
         and action.target.components.stewer ~= nil and action.target.components.stewer.product or nil
     action._my_friend_body_action, action._body_job = job.id, job
-    action.validfn = function(act) return Current(inst, job) and (previous == nil or previous(act)) end
+    action.validfn = function(act)
+        if not Current(inst, job) then return false end
+        if previous == nil or previous(act) then return true end
+        job.operation_error = job.command ~= nil and job.command.failure_reason or nil
+        if job.operation_error ~= nil then act.reason = job.operation_error end
+        return false
+    end
     action:AddSuccessAction(function()
         if not Current(inst, job) then return end
         job.action = nil
@@ -177,7 +188,8 @@ function M.GetAction(inst, job)
         if kind == "lightning_spear" and job.command.spear_phase == "charge" and inst._my_friend_command == job.command then return end
         job.failed_action = action.action.id
         Finish(inst, job, false, action._my_friend_path_failed and "unreachable"
-            or action._my_friend_cancelled and "preempted" or job.command ~= nil and job.command.failure_reply or "character_action_failed")
+            or action._my_friend_cancelled and "preempted" or job.operation_error or action.reason
+            or job.command ~= nil and job.command.failure_reply or "character_action_failed")
     end)
     job.action = action
     return action

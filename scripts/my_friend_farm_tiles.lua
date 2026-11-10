@@ -6,6 +6,52 @@
 local M = {}
 
 M.LIMIT = 4
+M.SLOT_TOLERANCE = .12
+
+function M.GridSpacing()
+    return (TILE_SCALE or 4) / 3
+end
+
+function M.IsOpenHole(entity)
+    return entity.prefab == "farm_soil" and entity:IsValid() and entity._plow == nil
+        and entity:HasTag("soil") and not entity:HasAnyTag("NOCLICK", "NOBLOCK", "INLIMBO")
+end
+
+function M.IsWeed(entity)
+    return entity:HasTag("weed") or entity.weed_def ~= nil
+end
+
+function M.FindHoles(x, z, radius)
+    local holes = {}
+    for _, entity in ipairs(TheSim:FindEntities(x, 0, z, radius, {"soil"}, {"NOCLICK", "NOBLOCK", "INLIMBO"})) do
+        if M.IsOpenHole(entity) then holes[#holes + 1] = entity end
+    end
+    return holes
+end
+
+local function DistanceSq(entity, point)
+    local p = entity:GetPosition()
+    return (p.x - point.x)^2 + (p.z - point.z)^2
+end
+
+function M.MatchesSlot(entity, point)
+    return DistanceSq(entity, point) <= M.SLOT_TOLERANCE^2
+end
+
+function M.BlockingHole(point, spacing, holes)
+    local best, distance
+    for _, soil in ipairs(holes or M.FindHoles(point.x, point.z, spacing)) do
+        local d = DistanceSq(soil, point)
+        if d <= spacing^2 and (distance == nil or d < distance or d == distance and soil.GUID < best.GUID) then
+            best, distance = soil, d
+        end
+    end
+    return best, distance ~= nil and distance <= M.SLOT_TOLERANCE^2
+end
+
+function M.CanTill(point)
+    return TheWorld.Map:CanTillSoilAtPoint(point.x, 0, point.z, false)
+end
 
 -- Offsets are {column, row}. Squares first, then lines, then shorter runs.
 local SHAPES = {

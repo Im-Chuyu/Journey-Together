@@ -28,14 +28,8 @@ local function Send(shards, data)
     return true
 end
 local function Capture(player)
-    local c = player.components or {}
     return {userid = player.userid, identity = require("my_friend_body_chat").Identity(player),
-        speaker = {userid = player.userid, name = player:GetDisplayName(), prefab = player.prefab,
-            character = {id = player.prefab, name = player:GetDisplayName()}, kind = "player", same_shard = false,
-            ghost = player:HasTag("playerghost"), health = c.health ~= nil and c.health.currenthealth or nil,
-            health_max = c.health ~= nil and c.health.maxhealth or nil,
-            hunger = c.hunger ~= nil and c.hunger.current or nil, hunger_max = c.hunger ~= nil and c.hunger.max or nil,
-            sanity = c.sanity ~= nil and c.sanity.current or nil, sanity_max = c.sanity ~= nil and c.sanity.max or nil},
+        speaker = require("my_friend_body_observation").PlayerProfile(player, false),
         admin = require("my_friend_body_world").IsAdmin(player),
         world_control = require("my_friend_body_world").Status(player)}
 end

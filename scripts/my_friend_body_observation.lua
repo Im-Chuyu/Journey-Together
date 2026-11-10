@@ -2,6 +2,7 @@
 local Discovery = require("my_friend_discovery")
 local Inventory = require("my_friend_inventory")
 local Platforms = require("my_friend_platforms")
+local FarmTiles = require("my_friend_farm_tiles")
 local M = {}
 local MAX_HANDLES = 2048
 function M.Handle(state, entity)
@@ -54,29 +55,44 @@ function M.Distance(a, b)
     end
 end
 
-function M.Describe(inst, state, entity, opening)
+function M.Name(entity)
+    -- Vanilla farm soil's display name depends on the local controller.
+    if entity.prefab == "farm_soil" or entity.prefab == "quagmire_soil" then return entity.prefab end
+    return entity.GetDisplayName ~= nil and entity:GetDisplayName() or entity.prefab
+end
+
+function M.PlayerProfile(player, same_shard)
+    local c = player.components or {}
+    local client = type(player.userid) == "string" and TheNet ~= nil and TheNet.GetClientTableForUser ~= nil
+        and TheNet:GetClientTableForUser(player.userid) or nil
+    local name = client ~= nil and client.name or nil
+    if type(name) ~= "string" or name == "" then name = M.Name(player) end
+    local character_name = STRINGS.NAMES ~= nil and STRINGS.NAMES[string.upper(player.prefab)] or player.prefab
+    return {userid = player.userid, name = name, prefab = player.prefab, kind = "player", same_shard = same_shard,
+        character = {id = player.prefab, name = character_name}, ghost = player:HasTag("playerghost"),
+        health = c.health ~= nil and c.health.currenthealth or nil,
+        health_max = c.health ~= nil and c.health.maxhealth or nil,
+        hunger = c.hunger ~= nil and c.hunger.current or nil, hunger_max = c.hunger ~= nil and c.hunger.max or nil,
+        sanity = c.sanity ~= nil and c.sanity.current or nil, sanity_max = c.sanity ~= nil and c.sanity.max or nil}
+end
+
+local function HasPhysics(entity)
+    return entity.Physics ~= nil and entity.Physics:IsActive()
+end
+
+function M.Describe(inst, state, entity, opening, scene)
     local c = entity.components or {}
     local location = opening or entity
     local p = location.Transform ~= nil and location:GetPosition() or nil
     local item = c.inventoryitem
-    local record = {handle = M.Handle(state, entity), prefab = entity.prefab,
-        name = entity.GetDisplayName ~= nil and entity:GetDisplayName() or entity.prefab,
-        position = p ~= nil and {x = p.x, z = p.z} or nil,
-        kind = item ~= nil and "item" or entity.isplayer and "player"
+    local record = entity.isplayer and M.PlayerProfile(entity) or {prefab = entity.prefab, name = M.Name(entity),
+        kind = item ~= nil and "item"
             or c.container ~= nil and "container" or c.health ~= nil and "creature" or "structure"}
+    record.handle = M.Handle(state, entity)
+    record.position = p ~= nil and {x = p.x, z = p.z} or nil
     if c.health ~= nil then record.alive, record.health = not c.health:IsDead(), c.health.currenthealth end
     if entity:HasTag("epic") then record.boss = true end
     if entity:HasTag("heavy") then record.heavy=true end
-    if entity.isplayer then
-        record.userid = entity.userid
-        record.ghost = entity:HasTag("playerghost")
-        record.character = {id = entity.prefab, name = record.name}
-        record.health_max = c.health ~= nil and c.health.maxhealth or nil
-        record.hunger = c.hunger ~= nil and c.hunger.current or nil
-        record.hunger_max = c.hunger ~= nil and c.hunger.max or nil
-        record.sanity = c.sanity ~= nil and c.sanity.current or nil
-        record.sanity_max = c.sanity ~= nil and c.sanity.max or nil
-    end
     if item ~= nil then
         record.count = M.Size(entity)
         record.carried = item:GetGrandOwner() == inst
@@ -126,6 +142,9 @@ function M.Describe(inst, state, entity, opening)
     end
     if c.deployable~=nil then record.deployable=true end
     if c.farmplantable~=nil or c.plantable~=nil then record.plantable=true end
+    record.planting_action = c.farmplantable ~= nil and "PLANTSOIL" or c.plantable ~= nil and "PLANT"
+        or c.deployable ~= nil and entity:HasAnyTag("treeseed", "deployedplant") and "DEPLOY" or nil
+    if c.farmtiller ~= nil then record.farm_tiller = true end
     if c.terraformer~=nil then record.terraformer=true end
     if entity:HasTag("watersource") then record.watersource=true end
     record.burnable = c.burnable ~= nil or entity:HasTag("canlight")
@@ -147,6 +166,8 @@ function M.Describe(inst, state, entity, opening)
             infinite_stacks=container.infinitestacksize == true}
     end
     if entity:HasTag("soil") then record.soil = true end
+    if entity.prefab == "farm_soil" then record.plantable_hole = FarmTiles.IsOpenHole(entity) end
+    if FarmTiles.IsWeed(entity) then record.weed = true end
     if c.farmplanttendable ~= nil then record.tendable=c.farmplanttendable.tendable == true end
     if c.growable ~= nil then record.growth_stage=c.growable.stage end
     if c.farmsoildrinker ~= nil and TheWorld.components~=nil and TheWorld.components.farming_manager ~= nil then
@@ -203,6 +224,17 @@ function M.Describe(inst, state, entity, opening)
         record.work_left = c.workable.workleft
     end
     if entity:HasTag("tree") then record.tree = true end
+    if scene then
+        record.physical = HasPhysics(entity) or nil
+        record.physics_radius = entity.GetPhysicsRadius ~= nil and entity:GetPhysicsRadius(0) or nil
+        record.deploy_radius = entity.deploy_smart_radius or entity.deploy_extra_spacing
+        record.ground_hole = entity:HasTag("groundhole") or nil
+        record.ground_target_blocker = entity:HasTag("groundtargetblocker") or nil
+        record.farm_debris = entity:HasTag("farm_debris") or nil
+        record.farm_plant = entity:HasTag("farm_plant") or nil
+        record.burnt = entity:HasTag("burnt") or nil
+        record.fire = entity:HasTag("fire") or nil
+    end
     return record
 end
 function M.Snapshot(inst, state)
@@ -283,12 +315,28 @@ function M.Snapshot(inst, state)
     end
     return out
 end
-local function SortNearby(inst, entities)
+local function DistanceSq(a, b)
+    return (a.x - b.x)^2 + (a.z - b.z)^2
+end
+
+local function SortNearby(inst, entities, center)
     local distances = {}
-    for _, entity in ipairs(entities) do distances[entity] = inst:GetDistanceSqToInst(entity) end
+    for _, entity in ipairs(entities) do
+        distances[entity] = center ~= nil and DistanceSq(center, entity:GetPosition()) or inst:GetDistanceSqToInst(entity)
+    end
     table.sort(entities, function(a, b)
         return distances[a] == distances[b] and a.GUID < b.GUID or distances[a] < distances[b]
     end)
+end
+
+local SCENE_EXCLUDE = {"INLIMBO", "FX", "CLASSIFIED"}
+
+function M.SceneVisible(entity)
+    if not entity:IsValid() or entity.components == nil
+        or entity:HasAnyTag("INLIMBO", "FX", "CLASSIFIED") then return false end
+    local item = entity.components.inventoryitem
+    return (item == nil or item.owner == nil) and (entity.entity == nil or entity.entity:IsVisible()
+        and (entity.entity:GetParent() == nil or entity:HasTag("childdeployblocker")))
 end
 
 local function Visible(inst, e, radius_sq)
@@ -319,7 +367,7 @@ end
 local function Interactive(e)
     local c = e.components
     return c.sittable ~= nil or c.machine ~= nil or c.activatable ~= nil
-        or e:HasTag("soil") or c.farmplanttendable ~= nil or c.farmsoildrinker ~= nil
+        or e:HasTag("soil") or FarmTiles.IsWeed(e) or c.farmplanttendable ~= nil or c.farmsoildrinker ~= nil
         or c.watersource ~= nil or e:HasTag("watersource")
         or c.heater ~= nil or c.burnable ~= nil or c.fueled ~= nil
 end
@@ -341,10 +389,27 @@ local function InScope(e, scope)
     return Discovery.Matches(e, scope)
 end
 
+local function SceneNearby(inst, center, radius, cache)
+    local key = string.format("scene:%.17g:%.17g:%.17g", center.x, center.z, radius)
+    if cache ~= nil and cache[key] ~= nil then return cache[key] end
+    local entities = {}
+    for _, entity in ipairs(TheSim:FindEntities(center.x, 0, center.z, radius, nil, SCENE_EXCLUDE)) do
+        if entity ~= inst and M.SceneVisible(entity) and inst:GetDistanceSqToInst(entity) <= 32^2
+            and (InScope(entity, "nearby") or HasPhysics(entity)
+                or entity.deploy_smart_radius ~= nil or entity.deploy_extra_spacing ~= nil
+                or entity:HasAnyTag("groundhole", "groundtargetblocker", "farm_debris", "farm_plant", "wall", "burnt", "fire")) then
+            entities[#entities + 1] = entity
+        end
+    end
+    SortNearby(inst, entities, center)
+    if cache ~= nil then cache[key] = entities end
+    return entities
+end
+
 function M.RefreshEnvironment(inst, state)
     local p = inst:GetPosition()
     local out = {items = {}, bosses = {}, buildings = {}, containers = {}, creatures = {}, players = {},
-        position = {x = p.x, z = p.z}, observed_at = GetTime(), radius = 20, limited = false}
+        position = {x = p.x, z = p.z}, observed_at = GetTime(), radius = 20, summary = true, limited = false}
     for _, e in ipairs(M.Nearby(inst, out.radius)) do
         local record
         local function Add(group)
@@ -373,16 +438,18 @@ function M.RefreshEnvironment(inst, state)
     state.environment = out
 end
 
-local SCOPES = {nearby = true, inventory = true, all = true, structures = true, creatures = true,
+local SCOPES = {nearby = true, inventory = true, all = true, structures = true, creatures = true, farm = true, scene = true,
     players = true, containers = true, items = true, terrain = true, interactions = true, boats = true}
 local WORK = {CHOP=true, MINE=true, DIG=true, HAMMER=true, PICK=true, HARVEST=true}
 
 function M.ValidWork(action, target_type)
-    return (action == nil or WORK[action] == true) and (target_type == nil or target_type == "tree")
+    return (action == nil or WORK[action] == true)
+        and (target_type == nil or target_type == "tree" or target_type == "weed")
 end
 
 function M.MatchesWork(entity, action, target_type)
     if target_type == "tree" and not entity:HasTag("tree") then return false end
+    if target_type == "weed" and not FarmTiles.IsWeed(entity) then return false end
     if action == nil then return true end
     local c = entity.components
     if action == "PICK" then return c.pickable ~= nil and c.pickable:CanBePicked() end
@@ -395,12 +462,17 @@ local function Offset(value)
 end
 
 function M.ValidScan(args)
+    local p = args.position
     return (args.scope == nil or SCOPES[args.scope] == true)
         and M.ValidWork(args.action, args.target_type)
         and (args.action == nil and args.target_type == nil or args.target == nil and args.container == nil
-            and (args.scope == nil or args.scope == "nearby" or args.scope == "all"))
+            and (args.scope == nil or args.scope == "nearby" or args.scope == "all" or args.scope == "scene"))
         and (args.filter == nil or type(args.filter) == "string" and #args.filter <= 120)
         and (args.radius == nil or type(args.radius) == "number" and args.radius >= 1 and args.radius <= 32)
+        and (args.scope ~= "scene" or args.radius == nil or args.radius <= 16)
+        and (p == nil or args.scope == "scene" and type(p) == "table"
+            and type(p.x) == "number" and math.abs(p.x) < 1000000
+            and type(p.z) == "number" and math.abs(p.z) < 1000000)
         and Offset(args.offset) and Offset(args.contents_offset)
         and (args.target == nil or type(args.target) == "string" and #args.target <= 32
             and args.scope == nil and args.container == nil and args.contents == nil
@@ -412,8 +484,9 @@ end
 function M.Scan(inst, state, args, cache)
     local storage = require("my_friend_body_storage")
     local scope, filter = args.scope or "nearby", (args.filter or ""):lower()
+    local scene = scope == "scene"
     local targeted_work = args.action ~= nil or args.target_type ~= nil
-    local radius = math.min(32, math.max(1, args.radius or 32))
+    local radius = math.min(32, math.max(1, args.radius or (scene and 8 or 32)))
     local entities, seen, found = {}, {}, {}
     local offset=args.offset or 0
     local target = args.container ~= nil and M.Resolve(state, args.container) or nil
@@ -421,7 +494,8 @@ function M.Scan(inst, state, args, cache)
     if args.target ~= nil then
         target = M.Resolve(state, args.target)
         if target == nil then return nil, "unknown_handle:target" end
-        if not Visible(inst, target, radius^2) then return nil, "target_out_of_view" end
+        if target == inst or not M.SceneVisible(target)
+            or inst:GetDistanceSqToInst(target) > radius^2 then return nil, "target_out_of_view" end
     end
     local function Add(e)
         if e:IsValid() and not seen[e.GUID] then
@@ -429,26 +503,33 @@ function M.Scan(inst, state, args, cache)
         end
     end
     local p = inst:GetPosition()
+    local center = args.position or p
+    local center_distance = scene and DistanceSq(p, center) or 0
+    if center_distance > 32^2 then return nil, "position_out_of_view" end
+    local area_clipped = scene and math.sqrt(center_distance) + radius > 32
     if scope == "terrain" then return require("my_friend_body_terrain").Scan(inst,state,args) end
+    if scope == "farm" then return require("my_friend_body_terrain").Farm(inst, state, args) end
     if scope == "inventory" or scope == "all" then for _, e in ipairs(M.Items(inst)) do Add(e) end end
     if target ~= nil then
-        if Visible(inst, target, radius^2) then Add(target) end
+        if args.target ~= nil or Visible(inst, target, radius^2) then Add(target) end
     elseif scope ~= "inventory" then
-        for _, e in ipairs(M.Nearby(inst, radius, cache)) do
-            if targeted_work and M.MatchesWork(e, args.action, args.target_type)
+        local nearby = scene and SceneNearby(inst, center, radius, cache) or M.Nearby(inst, radius, cache)
+        for _, e in ipairs(nearby) do
+            if scene or targeted_work and M.MatchesWork(e, args.action, args.target_type)
                 or not targeted_work and InScope(e, scope) then Add(e) end
         end
     end
     if scope == "inventory" or scope == "all" then SortNearby(inst, entities) end
     local content_count,matched,contents_limited = 0,0,false
     for _, e in ipairs(entities) do
-        local name = tostring(e.GetDisplayName ~= nil and e:GetDisplayName() or "")
         if e ~= inst and (not targeted_work or M.MatchesWork(e, args.action, args.target_type))
             and (scope ~= "items" or e.components.inventoryitem ~= nil and e.components.inventoryitem.owner == nil)
-            and ((e.prefab or ""):lower():find(filter, 1, true) or name:lower():find(filter, 1, true)) then
+            and ((e.prefab or ""):lower():find(filter, 1, true)
+                or tostring(M.Name(e) or ""):lower():find(filter, 1, true)) then
             matched=matched+1
             if matched>offset and #found<40 then
-                local record = M.Describe(inst, state, e)
+                local record = M.Describe(inst, state, e, nil, scene or args.target ~= nil)
+                if scene then record.distance = M.Distance(center, e:GetPosition()) end
                 if args.contents == true and record.accessible then
                     local items = storage.Resolve(e):GetAllItems()
                     table.sort(items, function(a, b) return a.GUID < b.GUID end)
@@ -469,8 +550,8 @@ function M.Scan(inst, state, args, cache)
     end
     local more=matched>offset+#found
     return {entities=found,scope=scope,filter=args.filter,action=args.action,target_type=args.target_type,
-        position={x=p.x,z=p.z},radius=radius,observed_at=GetTime(),
+        position={x=center.x,z=center.z},radius=radius,observed_at=GetTime(),area_clipped=area_clipped or nil,
         offset=offset,matched=matched,returned=#found,next_offset=more and offset+#found or nil,
-        entities_limited=more,contents_limited=contents_limited,limited=more or contents_limited}
+        entities_limited=more,contents_limited=contents_limited,limited=more or contents_limited or area_clipped}
 end
 return M
