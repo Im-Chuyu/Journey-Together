@@ -182,6 +182,7 @@ local RECIPE_NAMES = {
     hambat = "火腿棒",
     umbrella = "雨伞",
     sewing_kit = "针线包",
+    heatrock = "暖石",
     boards = "木板",
     cutstone = "石砖",
     transistor = "电子元件",
@@ -378,7 +379,7 @@ local function FindStructures(inst, prefab)
     if base == nil then return {} end
     local result = {}
     local manual = Home.Mode(inst) == "base"
-    local range = manual and Home.WANDER_RADIUS or M.BASE_STRUCTURE_RANGE
+    local range = manual and Home.MANUAL_BASE_RADIUS or M.BASE_STRUCTURE_RANGE
     local entities = manual and Home.Facilities(inst)
         or Discovery.Query(inst, "base_structures", "structures", base.x, base.y, base.z,
             range, nil, { "INLIMBO", "burnt" })
@@ -678,7 +679,7 @@ end
 
 -- Distance at which the companion decides it has strayed from home.
 function M.GetBaseReturnDistance(inst)
-    return Home.Get(inst) ~= nil and Home.RETURN_DISTANCE or M.BASE_RETURN_DISTANCE
+    return Home.Get(inst) ~= nil and Home.ReturnDistance(inst) or M.BASE_RETURN_DISTANCE
 end
 
 function M.EnsureBase(inst)
@@ -738,7 +739,10 @@ function M.ShouldReturnToBase(inst)
     -- A player chosen home is always walked back to, whatever the season.
     if Home.IsStrict(inst) then return true end
     if not M.IsComplete(inst) then return false end
-    if M.IsExtremeSeason(inst) then return true end
+    if M.IsExtremeSeason(inst) then
+        return DistanceSqToPoint(inst, base) > Home.WANDER_RADIUS^2
+            or not require("my_friend_survival_ai").IsUnderRememberedShade(inst)
+    end
     return IsInventoryNearlyFull(inst) and #FindOwnedChests(inst) > 0
         and HasStorableInventory ~= nil and HasStorableInventory(inst)
 end
@@ -2920,19 +2924,34 @@ local function FindFuelItem(inst, source)
     for _, prefab in ipairs({"log", "charcoal", "twigs", "cutgrass"}) do
         local item = inst.components.inventory:FindItem(function(candidate)
             return candidate.prefab == prefab
+                and candidate.components.inventoryitem ~= nil
+                and not candidate.components.inventoryitem.islockedinslot
+                and (candidate.components.fuel ~= nil or candidate.components.fueler ~= nil)
                 and source.components.fueled:CanAcceptFuelItem(candidate)
         end)
         if item ~= nil then return item end
     end
 end
 
-local function CreateFuelAction(inst, source)
+function M.GetFireFuelAction(inst, source, inventory_only, fuel_limit)
     if IsBlocked(inst, source) then return end
     local fuel = FindFuelItem(inst, source)
     if fuel ~= nil then
         M.SetTask(inst, "正在使用基地火坑")
-        return TimedAction(inst, source, ACTIONS.ADDFUEL, fuel)
+        local action = TimedAction(inst, source, ACTIONS.ADDFUEL, fuel)
+        local valid = action.validfn
+        action.validfn = function(act)
+            if not valid(act) or not fuel:IsValid() then return false end
+            local fueled = source.components.fueled
+            local item = fuel.components.inventoryitem
+            return fueled ~= nil and fueled:GetPercent() < (fuel_limit or 1)
+                and item ~= nil and not item.islockedinslot and item:GetGrandOwner() == inst
+                and (fuel.components.fuel ~= nil or fuel.components.fueler ~= nil)
+                and fueled:CanAcceptFuelItem(fuel)
+        end
+        return action
     end
+    if inventory_only then return end
     for _, prefab in ipairs({"log", "charcoal", "twigs", "cutgrass"}) do
         local action = GetWithdrawAction(inst, {[prefab] = 1})
         if action ~= nil then return action end
@@ -2953,7 +2972,7 @@ local function GetFuelAction(inst)
         end
         return
     end
-    return CreateFuelAction(inst, source)
+    return M.GetFireFuelAction(inst, source)
 end
 
 function M.GetBaseFirePrefab(environment_dark, current_temperature)
@@ -2995,7 +3014,7 @@ function M.GetBaseFireAction(inst)
     local firepit = world_dark and FindNightBaseFire(inst) or nil
     if firepit ~= nil and firepit.components.fueled ~= nil then
         if firepit.components.fueled:GetPercent() < .35 then
-            local fuel = CreateFuelAction(inst, firepit)
+            local fuel = M.GetFireFuelAction(inst, firepit)
             if fuel ~= nil then return fuel end
         end
         if prefer_fire and not firepit.components.fueled:IsEmpty()
@@ -3050,7 +3069,7 @@ end
 
 local function IsEssentialCarriedItem(inst, item, equipment)
     if item == nil then return true end
-    if equipment[item] ~= nil then return true end
+    if equipment ~= nil and equipment[item] ~= nil then return true end
     if item.prefab == "beefalofeed" and require("my_friend_riding").GetBoundBeefalo(inst) ~= nil then
         return true
     end
@@ -3069,7 +3088,7 @@ local function IsStorableItem(inst, item, equipment)
         and item.components.inventoryitem or nil
     if inventoryitem == nil or inventoryitem.islockedinslot then return false end
     if require("my_friend_inventory").IsPlayerProtected(item) then return false end
-    if equipment[item] ~= nil or IsEquippedItem(inst, item) then return false end
+    if (equipment[item] or 0) >= StackSize(item) or IsEquippedItem(inst, item) then return false end
     if Storage.IsCargo(inst, item) then return false end
     if item:HasTag("irreplaceable") or item:HasTag("heavy") then return false end
     if Garden.IsFertilizer(item) then return true end
@@ -3090,7 +3109,7 @@ local function IsStorableItem(inst, item, equipment)
         end
         return true
     end
-    if IsEssentialCarriedItem(inst, item, equipment) then return false end
+    if IsEssentialCarriedItem(inst, item) then return false end
     local transplant_needed = (item.prefab == "dug_grass"
             and (inst._my_friend_base.planted_grass or 0) < M.TRANSPLANT_TARGET)
         or (item.prefab == "dug_sapling"
@@ -3131,7 +3150,7 @@ local function GetStoreAction(inst)
                         remaining_by_prefab[item.prefab] = math.max(0,
                             CountCarriedForStorage(inst, item.prefab) - (protected[item.prefab] or 0))
                     end
-                    local count = math.min(StackSize(item), remaining_by_prefab[item.prefab],
+                    local count = math.min(StackSize(item) - (equipment[item] or 0), remaining_by_prefab[item.prefab],
                         container:CanAcceptCount(item))
                     if count > 0 then
                         candidate_plan[#candidate_plan + 1] = {item = item, count = count}
@@ -3290,6 +3309,11 @@ function M.GetInventoryReliefAction(inst)
     end
     local action = BufferedAction(inst, nil, ACTIONS.DROP, best, point)
     action.options.wholestack = true
+    action.validfn = function()
+        return best:IsValid() and best.components.inventoryitem ~= nil
+            and best.components.inventoryitem:GetGrandOwner() == inst
+            and EquipmentReserves.GetKeep(inst)[best] == nil
+    end
     return action
 end
 
@@ -3981,12 +4005,17 @@ function M.GetWanderPoint(inst, avoid_points)
     local center = base
     local radius = vigil ~= nil and M.VIGIL_RADIUS
         or M.IsExtremeSeason(inst) and 3
-        or manual ~= nil and Home.WANDER_RADIUS or M.BASE_WANDER_RADIUS
+        or manual ~= nil and Home.Radius(inst) or M.BASE_WANDER_RADIUS
+    local survival = require("my_friend_survival_ai")
+    local in_shade = vigil == nil and TheWorld.state.issummer
+        and survival.IsUnderRememberedShade(inst)
     local fire = M.ShouldPreferBaseFire(inst) and FindNightBaseFire(inst) or nil
     local near_fire = fire ~= nil and fire.components.fueled ~= nil
         and not fire.components.fueled:IsEmpty()
     if near_fire then
         center, radius = fire:GetPosition(), 2.5
+    elseif in_shade then
+        center = inst:GetPosition()
     end
     local origin_domain = M.GetTerrainDomainAtPoint(center.x, center.y, center.z)
     if origin_domain == "blocked" then origin_domain = "land" end
@@ -4005,6 +4034,10 @@ function M.GetWanderPoint(inst, avoid_points)
             local valid_domain = M.GetTerrainDomainAtPoint(point.x, point.y, point.z)
             if valid_domain == origin_domain
                 and IsPassable(point)
+                and (not in_shade or near_fire
+                    or Home.IsPointInRange(inst, point)
+                        and (point.x - base.x)^2 + (point.z - base.z)^2 <= Home.Radius(inst)^2
+                        and survival.IsUnderRememberedShade(inst, point))
                 and (not near_fire or LightAI.IsPointExternallyLit(inst, point)
                     and Navigation.IsWalkClear(inst, point, point, Navigation.Caps(inst))) then
                 local score = DistanceSqToPoint(inst, point) * .02

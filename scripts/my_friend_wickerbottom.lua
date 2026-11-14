@@ -11,8 +11,8 @@ local function Key(point)
     return string.format("%.2f:%.2f", point.x, point.z)
 end
 
-local function InBase(base, point)
-    return (point.x - base.x)^2 + (point.z - base.z)^2 <= Home.WANDER_RADIUS^2
+local function InBase(inst, base, point)
+    return (point.x - base.x)^2 + (point.z - base.z)^2 <= Home.Radius(inst)^2
 end
 
 local function Observe(inst, base, stations)
@@ -21,7 +21,7 @@ local function Observe(inst, base, stations)
     for _, station in ipairs(stations) do
         if IsStation(station) then
             local point = station:GetPosition()
-            if InBase(base, point) then
+            if InBase(inst, base, point) then
                 memory[Key(point)] = {x = point.x, z = point.z, entity = station}
             end
         end
@@ -55,7 +55,7 @@ end
 
 function M.IsAtBase(inst)
     local base = SyncBase(inst)
-    return base ~= nil and InBase(base, inst:GetPosition())
+    return base ~= nil and InBase(inst, base, inst:GetPosition())
 end
 
 function M.Prune(inst)
@@ -63,7 +63,7 @@ function M.Prune(inst)
     local base = SyncBase(inst)
     if base == nil then return end
     for key, record in pairs(inst._my_friend_bookstations or {}) do
-        if not InBase(base, record) or record.entity ~= nil
+        if not InBase(inst, base, record) or record.entity ~= nil
             and (not IsStation(record.entity) or Key(record.entity:GetPosition()) ~= key) then
             inst._my_friend_bookstations[key] = nil
         end
@@ -76,7 +76,7 @@ function M.Scan(inst)
     if base == nil then return end
     -- Explicit discovery only. A read request may refresh the base once if
     -- remembered shelves do not provide its book; idle/store never scan.
-    Observe(inst, base, TheSim:FindEntities(base.x, 0, base.z, Home.WANDER_RADIUS,
+    Observe(inst, base, TheSim:FindEntities(base.x, 0, base.z, Home.Radius(inst),
         {"structure"}, {"INLIMBO", "burnt", "fire"}))
 end
 
@@ -144,7 +144,7 @@ function M.IsRemembered(inst, station)
     if inst.prefab ~= "wickerbottom" or not IsStation(station) then return false end
     local point = station:GetPosition()
     local record = (inst._my_friend_bookstations or {})[Key(point)]
-    if base ~= nil and record ~= nil and record.entity == station and InBase(base, point) then return true end
+    if base ~= nil and record ~= nil and record.entity == station and InBase(inst, base, point) then return true end
     record = NearbyRecords(inst)[Key(point)]
     return record ~= nil and record.entity == station
 end
@@ -152,7 +152,7 @@ end
 function M.InTravelRange(inst, action, point)
     if not M.IsActionValid(inst, action) then return false end
     local base = inst._my_friend_book_base
-    if base ~= nil and InBase(base, point) then return true end
+    if base ~= nil and InBase(inst, base, point) then return true end
     local origin = action._my_friend_book_origin
     local target = action._my_friend_bookstation
     local record = (inst._my_friend_bookstations or {})[action._my_friend_book_visit]
@@ -264,7 +264,7 @@ function M.Load(inst, data)
     if type(saved) ~= "table" or not Valid(saved.base) then return end
     inst._my_friend_book_base = {x = saved.base.x, z = saved.base.z}
     for _, point in ipairs(type(saved.stations) == "table" and saved.stations or {}) do
-        if Valid(point) and InBase(saved.base, point) then
+        if Valid(point) and InBase(inst, saved.base, point) then
             inst._my_friend_bookstations[Key(point)] = {x = point.x, z = point.z}
         end
     end

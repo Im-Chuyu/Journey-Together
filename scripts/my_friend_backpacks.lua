@@ -255,8 +255,9 @@ local function StartOwnedRecovery(friend)
     local owned = M.FindOwned(friend)
     if owned == nil then return end
     local slot = owned.components.equippable.equipslot
-    if not require("my_friend_equipment").Allowed(friend, slot)
-        or slot == EQUIPSLOTS.BODY and friend._my_friend_temperature_body_equipped then return end
+    local equipment = require("my_friend_equipment")
+    if not equipment.Allowed(friend, slot)
+        or equipment.WantsChilledAmulet(friend, inventory:GetEquippedItem(slot)) then return end
     local retry = friend._my_friend_backpack_retry
     if retry ~= nil and retry.target == owned then
         if DistanceSq(friend, owned) > 20^2 then retry.left = true end

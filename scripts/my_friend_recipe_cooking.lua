@@ -6,6 +6,8 @@ local Pot = require("my_friend_cookpot")
 local Cooking = require("cooking")
 local Storage = require("my_friend_food_storage")
 local Cleanup = require("my_friend_cookpot_cleanup")
+local Container = require("my_friend_container_ai")
+local Home = require("my_friend_home")
 local M = {}
 
 local function CookCommand(inst)
@@ -13,21 +15,46 @@ local function CookCommand(inst)
     return command ~= nil and command.special == "cook" and command or nil
 end
 
+local function ManualBase(inst)
+    return Policy.GetLeader(inst) == nil and Home.Mode(inst) == "base" and Home.Get(inst) or nil
+end
+
 local function Accessible(inst, pot)
     local command = CookCommand(inst)
-    return (command == nil or pot ~= nil and pot.prefab == "portablecookpot")
-        and Pot.Accessible(inst, pot, command ~= nil and command.cooking_origin or nil)
+    if command ~= nil then
+        return pot ~= nil and pot.prefab == "portablecookpot"
+            and Pot.Accessible(inst, pot, command.cooking_origin)
+    end
+    local base = ManualBase(inst)
+    return Pot.Accessible(inst, pot, base, base ~= nil and Home.Radius(inst) or nil)
 end
 
 local function HasReadyMeal(inst)
+    local stats = Food.GetStats(inst)
     for _, item in ipairs(Storage.ReferenceItems(inst)) do
-        if item:HasTag("preparedfood") and item.components.edible ~= nil
-            and inst.components.eater:CanEat(item)
-            and inst.components.eater:PrefersToEat(item) then
+        if Container.IsReadyMeal(inst, item)
+            and Food.MealMatchesRecovery(inst, item, stats) then
             return true
         end
     end
     return false
+end
+
+local function PreferExistingMeals(inst)
+    return CookCommand(inst) == nil and inst._my_friend_recipe_requested == nil
+        and (HasReadyMeal(inst) or Container.HasStoredMeal(inst))
+end
+
+local function NeedsHealingPlan(inst)
+    return Food.GetMealHealthDeficit(inst) ~= nil
+end
+
+local function CanContinuePot(inst, pot, healing_needed)
+    local stewer = pot.components.stewer
+    local job = pot._my_friend_recipe_job
+    return stewer:IsCooking() or stewer:IsDone() or next(pot.components.container:GetAllItems()) ~= nil
+        or (CookCommand(inst) ~= nil or (job.healing_needed == true) == healing_needed)
+            and not PreferExistingMeals(inst)
 end
 
 local function CanPlan(inst)
@@ -59,7 +86,8 @@ local function FridgeAvailable(inst, fridge, origin)
             or fridge.prefab == "saltbox" or fridge.prefab == "dragonflychest")
         or fridge:HasAnyTag("INLIMBO", "burnt", "fire") then return false end
     return Inventory.CanWithdrawFrom(inst, fridge)
-        and Policy.InRange(inst, fridge) and (origin or inst):GetDistanceSqToInst(fridge) <= Pot.RANGE^2
+        and Policy.InRange(inst, fridge) and Home.IsPointInRange(inst, fridge:GetPosition())
+        and (origin or inst):GetDistanceSqToInst(fridge) <= Pot.RANGE^2
         and inst:GetCurrentPlatform() == fridge:GetCurrentPlatform()
 end
 
@@ -124,7 +152,7 @@ local function GroundIngredient(inst, entity)
         and inventoryitem.canbepickedup and entity:HasTag("_inventoryitem")
         and Cooking.IsCookingIngredient(entity.prefab)
         and entity:GetCurrentPlatform() == inst:GetCurrentPlatform()
-        and Policy.InRange(inst, entity)
+        and Policy.InRange(inst, entity) and Home.IsPointInRange(inst, entity:GetPosition())
 end
 
 local function Nearby(inst, origin)
@@ -134,11 +162,19 @@ local function Nearby(inst, origin)
         local point = command.cooking_origin
         x, y, z = point.x, point.y, point.z
     end
+    local base = origin == nil and command == nil and ManualBase(inst) or nil
+    if base ~= nil then x, y, z = base.x, 0, base.z end
     local pots, fridges, grounds = {}, {}, {}
     local requested_cooker = inst._my_friend_recipe_cooker
-    for _, entity in ipairs(TheSim:FindEntities(x, y, z, Pot.RANGE, nil, {"INLIMBO", "burnt", "fire"})) do
-        if Accessible(inst, entity) and (requested_cooker == nil
-            or entity.prefab == requested_cooker) then pots[#pots + 1] = entity
+    local cant = {"INLIMBO", "burnt", "fire"}
+    local entities = base ~= nil and require("my_friend_discovery").Query(inst, "base_cookpots",
+        "containers", x, y, z, Home.Radius(inst), {"structure"}, cant)
+        or TheSim:FindEntities(x, y, z, Pot.RANGE, nil, cant)
+    for _, entity in ipairs(entities) do
+        if origin == nil then
+            if Accessible(inst, entity) and (requested_cooker == nil or entity.prefab == requested_cooker) then
+                pots[#pots + 1] = entity
+            end
         elseif FridgeAvailable(inst, entity, origin) then
             fridges[#fridges + 1] = entity
         elseif GroundIngredient(inst, entity) then
@@ -188,15 +224,27 @@ local function SelectOwnedPot(inst, pots)
 end
 
 local function GetPlan(inst)
+    local health_deficit = CookCommand(inst) == nil and Food.GetMealHealthDeficit(inst) or nil
+    local healing_needed = health_deficit ~= nil
     if CookCommand(inst) == nil then
         local current = inst._my_friend_recipe_pot
-        if Owned(inst, current) and Accessible(inst, current) then return current, current._my_friend_recipe_job end
+        if Owned(inst, current) and Accessible(inst, current) then
+            if CanContinuePot(inst, current, healing_needed) then return current, current._my_friend_recipe_job end
+            Forget(inst, current)
+        end
         local cache = inst._my_friend_recipe_cache
-        if cache ~= nil and GetTime() < cache.untiltime then return cache.pot, cache.plan end
+        if cache ~= nil and cache.healing_needed == healing_needed and GetTime() < cache.untiltime
+            and (cache.plan == nil or cache.plan.cleanup or not PreferExistingMeals(inst)) then
+            return cache.pot, cache.plan
+        end
     end
     local pots = Nearby(inst)
     local owned, cooking = SelectOwnedPot(inst, pots)
     if owned ~= nil then
+        if not CanContinuePot(inst, owned, healing_needed) then
+            Forget(inst, owned)
+            return
+        end
         inst._my_friend_recipe_pot = owned
         local command = CookCommand(inst)
         if command ~= nil and owned._my_friend_recipe_job.recipe ~= command.recipe
@@ -204,19 +252,17 @@ local function GetPlan(inst)
         return owned, owned._my_friend_recipe_job
     end
     local wanted = inst._my_friend_recipe_requested
-    -- Automatic cooking supplies the companion; once a usable meal already
-    -- exists, do not consume every remaining ingredient just because a pot is
-    -- nearby. Explicit cook commands still pass through.
-    if wanted == nil and not Food.NeedsFoodSupply(inst) and HasReadyMeal(inst)
-        and not Food.NeedsRecipeRecovery(inst) then
-        inst._my_friend_recipe_cache = {pot = nil, plan = nil, untiltime = GetTime() + 10}
+    -- An existing meal takes precedence over opening a new pot.
+    if wanted == nil and PreferExistingMeals(inst) then
+        inst._my_friend_recipe_cache = nil
         return
     end
     local chosen, plan = nil, nil
     for _, pot in ipairs(pots) do
         local c, s = pot.components.container, pot.components.stewer
         if pot._my_friend_recipe_job == nil and pot._my_friend_beefalo_chef == nil
-            and not s:IsCooking() and not s:IsDone() and c:CanOpen() then
+            and not s:IsCooking() and not s:IsDone() and c:CanOpen()
+            and not require("my_friend_navigation").IsBlocked(inst, pot:GetPosition()) then
             if Cleanup.CanClean(inst, pot) then return pot, {cleanup = true} end
             if next(c:GetAllItems()) == nil then
                 -- Keep the pantry centred on the pot while walking between sources.
@@ -224,20 +270,23 @@ local function GetPlan(inst)
                 local pool = Planner.Pool(inst, fridges, grounds)
                 local candidate, searching = Planner.Find(inst, pot.prefab, pool, wanted)
                 if searching then return nil, nil, "waiting" end
-                if candidate ~= nil then chosen, plan = pot, candidate break end
+                if candidate ~= nil and (plan == nil or healing_needed
+                    and (candidate.healing or 0) > (plan.healing or 0)) then
+                    chosen, plan = pot, candidate
+                    if not healing_needed or (candidate.healing or 0) > 0 then break end
+                end
             end
         end
     end
-    inst._my_friend_recipe_cache = {pot = chosen, plan = plan, untiltime = GetTime() + 5}
+    if plan ~= nil and wanted == nil then plan.healing_needed = healing_needed end
+    inst._my_friend_recipe_cache = {pot = chosen, plan = plan,
+        healing_needed = healing_needed, untiltime = GetTime() + 5}
     return chosen, plan, chosen == nil and cooking and "waiting" or nil
 end
 
 local function FindIngredients(inst, pot, remaining)
     local _, fridges, grounds = Nearby(inst, pot)
-    local requested = inst._my_friend_recipe_requested ~= nil
-    local pool = Planner.Pool(inst, (Owned(inst, pot) or Food.NeedsFoodSupply(inst)
-        or Food.NeedsRecipeRecovery(inst) or not HasReadyMeal(inst) or requested)
-        and fridges or {}, grounds)
+    local pool = Planner.Pool(inst, fridges, grounds)
     local available, carried, stored, ground, stale = {}, nil, nil, nil, nil
     for _, group in ipairs(pool) do
         available[group.prefab] = group.count
@@ -279,8 +328,9 @@ function M.Score(inst, context)
     if not CanPlan(inst) or context ~= nil and (context.threat or context.dark
         or context.thermal and not context.thermal_shade
         or context.hurt or context.hurt_evade) then return 0 end
-    local pot = GetPlan(inst)
+    local pot, plan = GetPlan(inst)
     if pot == nil or not Accessible(inst, pot) or pot.components.stewer:IsCooking() then return 0 end
+    if (plan.healing or 0) > 0 and NeedsHealingPlan(inst) then return 111 end
     return Owned(inst, pot) and 102 or Food.NeedsFoodSupply(inst) and 99 or 68
 end
 
@@ -394,17 +444,20 @@ function M.GetAction(inst)
         Forget(inst, pot)
         return nil, "paused"
     end
-    local function Unchanged()
-        return not s:IsCooking() and not s:IsDone() and Remaining(pot, plan.prefabs) ~= nil
+    local function Unchanged(needed)
+        return not s:IsCooking() and not s:IsDone() and (needed or Remaining(pot, plan.prefabs)) ~= nil
             and (Owned(inst, pot) or pot._my_friend_recipe_job == nil
                 and pot._my_friend_beefalo_chef == nil and next(c:GetAllItems()) == nil)
+            and (next(c:GetAllItems()) ~= nil or (CookCommand(inst) ~= nil
+                or (plan.healing_needed == true) == NeedsHealingPlan(inst)) and not PreferExistingMeals(inst))
     end
     if not Owned(inst, pot) then
         local action = BufferedAction(inst, pot, ACTIONS.MY_FRIEND_OPEN)
         action.arrivedist = Inventory.ContainerReach(inst, pot)
         action:AddSuccessAction(function()
             pot._my_friend_recipe_job = {owner = Pot.OwnerID(inst), prefabs = plan.prefabs,
-                recipe = inst._my_friend_recipe_requested}
+                recipe = inst._my_friend_recipe_requested, healing = plan.healing,
+                healing_needed = plan.healing_needed}
             inst._my_friend_recipe_pot = pot
         end)
         return Guard(inst, pot, action, Unchanged)
@@ -421,11 +474,18 @@ function M.GetAction(inst)
         end
         if not FridgeAvailable(inst, source, pot) then return end
         local action = BufferedAction(inst, source, ACTIONS.MY_FRIEND_WITHDRAW, item)
-        action._my_friend_withdraw_count = math.min(remaining[item.prefab], Planner.Size(item),
-            inst.components.inventory:CanAcceptCount(item, remaining[item.prefab]))
+        local function WithdrawalCount(needed)
+            return math.min(needed, Planner.Size(item), inst.components.inventory:CanAcceptCount(item, needed))
+        end
+        action._my_friend_withdraw_count = WithdrawalCount(remaining[item.prefab])
         return Guard(inst, pot, action, function()
-            return Unchanged() and FridgeAvailable(inst, source, pot)
-                and Planner.Available(inst, item) and item.components.inventoryitem.owner == source
+            local current = Remaining(pot, plan.prefabs)
+            local needed = current ~= nil and current[item.prefab] or 0
+            if needed == 0 or not Unchanged(current) or not FridgeAvailable(inst, source, pot)
+                or not Planner.Available(inst, item)
+                or item.components.inventoryitem.owner ~= source then return false end
+            action._my_friend_withdraw_count = WithdrawalCount(needed)
+            return action._my_friend_withdraw_count > 0
         end)
     elseif not c:IsOpenedBy(inst) then
         local action = BufferedAction(inst, pot, ACTIONS.MY_FRIEND_OPEN)

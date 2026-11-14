@@ -22,9 +22,10 @@ python -B -m tools.companion_bridge
 
 | 配置项 | 默认值 | 含义 |
 | --- | --- | --- |
-| `provider` | `auto` | 填Key自动用API，未填保留网页模式；`deepseek-api`强制API（缺Key报错），`web`强制网页 |
+| `provider` | `auto` | Windows 桌面有 Key 时用 API，否则用网页。Linux 启动脚本的 `auto` 使用 DeepSeek API。也可显式指定 `deepseek-api`、`web`、`deepseek-web`、`doubao-web` 或 `demo` |
 | `api_key` | 空 | 自己的Key；为空时也可读取环境变量`DEEPSEEK_API_KEY` |
 | `model` | `deepseek-flash` | 可改为官方支持的模型ID，如`deepseek-v4-pro` |
+| `pair_code` | 空 | 六位数字字符串，须与游戏配对码一致。留空沿用助手原设置，首次默认为 `321151` |
 | `thinking` | `true` | 启用思考模式 |
 | `reasoning_effort` | `low` | `low`、`high`或`max`，仅思考模式使用 |
 | `max_tokens` | `8192` | 每次回复（含推理）的输出上限，允许512～32768；出现截断可提高 |
@@ -78,7 +79,24 @@ DeepSeek 首页首次发送后可能进入新会话，旧输入框或当前输�
 
 ### Linux 云服公屏模式
 
-在专服所在的 Linux 环境安装 Python 3.10+。在该模组根目录的 `AssistantAPI.json` 填写 DeepSeek API Key，并在专服模组配置中开启「AI 大模型模式」。运行 `sh ./StartAssistantLinux.sh` 启动无界面 API 助手。助手在云服监听 `127.0.0.1:18766`，可传 `--pair-code 123456` 设置与游戏配置一致的六位配对码。默认配对码为 `321151`。
+专服所在的 Linux 环境需要 Python 3.10+。在模组根目录编辑 `AssistantAPI.json`。文件不存在时可从 `AssistantAPI.example.json` 复制，也可先运行一次启动脚本生成默认文件。
+
+```json
+{
+  "provider": "deepseek-api",
+  "api_key": "填写自己的 DeepSeek API Key",
+  "model": "deepseek-flash",
+  "pair_code": "321151"
+}
+```
+
+在专服的地面和洞穴配置里开启「AI 大模型模式」，将「专服模型连接方式」选为「常规配对」，并填入同样的六位码。之后在模组目录运行：
+
+```sh
+sh ./StartAssistantLinux.sh
+```
+
+脚本从配置读取方式、模型和配对码，在 `127.0.0.1:18766` 启动无界面助手，API 模式无需浏览器、Tkinter 或额外 Python 包。Key 留空可由服务器环境的 `DEEPSEEK_API_KEY` 提供。若需把配置放在会被更新覆盖的目录之外，可传入 `--config /绝对路径/AssistantAPI.json`，或设置 `MY_FRIEND_ASSISTANT_CONFIG` 环境变量后继续运行同一条命令。命令行的 `--config` 优先于环境变量，`--pair-code` 仍可覆盖配置。运行 `sh ./StartAssistantLinux.sh --check-config` 可离线检查格式及 Key 是否已填写。
 
 有活动伙伴和在线玩家时，专服会从伙伴所在分片自动配对，无需先跟随。配对成功后，玩家在公屏喊伙伴名字即可交互。助手与专服需要能访问同一个回环地址。助手尚未启动或会话断开时专服会重试；配对码不一致时停止当前分片的自动配对。对齐配对码后重启该分片，或在伙伴所在分片的专服控制台用实际六位码执行 `c_myfriend_ai("start", "321151")` 恢复配对。
 

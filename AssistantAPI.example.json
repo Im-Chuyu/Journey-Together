@@ -2,6 +2,7 @@
   "provider": "auto",
   "api_key": "",
   "model": "deepseek-flash",
+  "pair_code": "",
   "thinking": true,
   "reasoning_effort": "low",
   "max_tokens": 8192,

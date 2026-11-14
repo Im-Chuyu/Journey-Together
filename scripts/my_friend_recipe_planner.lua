@@ -8,6 +8,24 @@ local M = {}
 local ALIASES = {cookedsmallmeat = "smallmeat_cooked",
     cookedmonstermeat = "monstermeat_cooked", cookedmeat = "meat_cooked"}
 local RESERVES = {twigs = 20, cutgrass = 20, log = 20}
+local MONSTER_MEAT = {monstermeat = true, monstermeat_cooked = true, monstermeat_dried = true}
+
+local function IsMonsterMeat(prefab)
+    return MONSTER_MEAT[ALIASES[prefab] or prefab] == true
+end
+
+local function MeatballsPreference(prefabs)
+    local monster, othermeat = false, 0
+    for _, prefab in ipairs(prefabs) do
+        local ingredient = Cooking.ingredients[ALIASES[prefab] or prefab]
+        if IsMonsterMeat(prefab) then
+            monster = true
+        elseif ingredient ~= nil and (ingredient.tags.meat or 0) > 0 then
+            othermeat = othermeat + 1
+        end
+    end
+    return (monster and 350 or 0) - 100 * othermeat
+end
 
 function M.Size(item)
     return item ~= nil and item:IsValid()
@@ -35,7 +53,7 @@ local function AcceptsType(types, foodtype)
     return false
 end
 
-function M.RecipeValue(inst, recipe)
+function M.RecipeValue(inst, recipe, stats, health_deficit)
     if recipe == nil or recipe.name == "wetgoop" or recipe.name == "beefalofeed"
         or recipe.foodtype == nil then return end
     local h, f, s = recipe.health or 0, recipe.hunger or 0, recipe.sanity or 0
@@ -44,27 +62,25 @@ function M.RecipeValue(inst, recipe)
     local eater = inst.components.eater
     if eater == nil or not AcceptsType(eater.caneat, recipe.foodtype)
         or not AcceptsType(eater.preferseating, recipe.foodtype) then return end
-    local value = M.NutritionValue(inst, h, f, s)
-    if inst.prefab == "wathgrithr" then
-        if recipe.name == "meatballs" then value = value + 10000
-        elseif recipe.name == "bonestew" then value = value * .01 end
+    local healing = 0
+    if health_deficit ~= nil then
+        local memory = inst.components.foodmemory
+        local multiplier = memory ~= nil and memory:GetFoodMultiplier(recipe.name) or 1
+        healing = math.min(health_deficit, h * (eater.healthabsorption or 1) * multiplier)
     end
-    return value
+    return M.NutritionValue(inst, h, f, s, stats), healing
 end
 
--- Recipe value follows the current deficit instead of treating every meal as
--- a fixed hunger/healing bundle. This keeps high-sanity meals ahead of stew
--- when sanity is the missing stat, and high-health meals ahead when health is
--- dangerous. The fallback preserves the old useful ordering for fixtures or
--- characters whose stats are temporarily unavailable.
-function M.NutritionValue(inst, health, hunger, sanity)
-    local stats = Food.GetStats ~= nil and Food.GetStats(inst) or nil
+-- Score nutrition and ingredient cost against the same current deficits.
+function M.NutritionValue(inst, health, hunger, sanity, stats, explicit)
+    stats = stats or (Food.GetStats ~= nil and Food.GetStats(inst) or nil)
     local hw, fw, sw = 3, 1, 2
     if stats ~= nil then
+        local needs_health = not explicit and Food.GetMealHealthDeficit(inst, stats) ~= nil
         local lowhealth = stats.healthpercent < .35
-        local all_low = stats.healthpercent < .35 and stats.hungerpercent < .35
-            and stats.sanitypercent < .35
-        if lowhealth or all_low then
+        if needs_health then
+            hw, fw, sw = 12, 3, 3
+        elseif lowhealth then
             hw, fw, sw = 12, 6, 3
         elseif stats.sanitypercent < .60 then
             hw, fw, sw = 2, 3, 12
@@ -74,7 +90,7 @@ function M.NutritionValue(inst, health, hunger, sanity)
             -- With all three stats healthy, stock the most useful calories.
             hw, fw, sw = 1, 8, 2
         end
-        local deficit_mode = lowhealth or stats.hungerpercent < .65 or stats.sanitypercent < .60
+        local deficit_mode = needs_health or lowhealth or stats.hungerpercent < .65 or stats.sanitypercent < .60
         if deficit_mode then
             health = math.min(math.max(0, health or 0), math.max(0, stats.healthmax - stats.health))
             hunger = math.min(math.max(0, hunger or 0), math.max(0, stats.hungermax - stats.hunger))
@@ -87,7 +103,7 @@ end
 
 -- Evaluate every equally likely top-priority result, without consuming RNG.
 -- A mix which can also produce harmful food is not a safe meal plan.
-function M.Evaluate(inst, cooker, prefabs, stale_meat)
+function M.Evaluate(inst, cooker, prefabs, stale_meat, stats, health_deficit)
     if not Rules.AllowsMix(prefabs, stale_meat) then return end
     local names, tags = {}, {}
     for _, prefab in ipairs(prefabs) do
@@ -97,21 +113,24 @@ function M.Evaluate(inst, cooker, prefabs, stale_meat)
         if data == nil then return end
         for tag, value in pairs(data.tags) do tags[tag] = (tags[tag] or 0) + value end
     end
-    local priority, value, valid, duration
+    local priority, value, valid, duration, product, healing
     for _, recipe in pairs(Cooking.recipes[cooker] or {}) do
         local p = recipe.priority or 0
         if (priority == nil or p >= priority) and recipe.test(cooker, names, tags) then
-            local score = M.RecipeValue(inst, recipe)
+            local score, recovery = M.RecipeValue(inst, recipe, stats, health_deficit)
             if priority == nil or p > priority then
                 priority, value, valid, duration = p, score, score ~= nil, recipe.cooktime or 1
+                product, healing = recipe.name, recovery
             else
+                product = nil
                 valid = valid and score ~= nil
                 if score ~= nil then value = math.min(value or score, score) end
+                if recovery ~= nil then healing = math.min(healing or recovery, recovery) end
                 duration = math.max(duration, recipe.cooktime or 1)
             end
         end
     end
-    if valid then return value, duration end
+    if valid then return value, duration, product, healing end
 end
 
 function M.EvaluateSpecific(inst, cooker, prefabs, wanted, stale_meat)
@@ -136,7 +155,7 @@ function M.EvaluateSpecific(inst, cooker, prefabs, wanted, stale_meat)
     if not Food.CanHealWithFood(inst) then health = 0 end
     local hunger = recipe.hunger or 0
     local sanity = recipe.sanity or 0
-    local value = M.NutritionValue(inst, health, hunger, sanity)
+    local value = M.NutritionValue(inst, health, hunger, sanity, nil, true)
     return value, recipe.cooktime or 1
 end
 
@@ -189,6 +208,8 @@ function M.Pool(inst, fridges, grounds)
     local pool = {}
     for _, group in pairs(groups) do pool[#pool + 1] = group end
     table.sort(pool, function(a, b)
+        local am, bm = IsMonsterMeat(a.prefab), IsMonsterMeat(b.prefab)
+        if am ~= bm then return am end
         return a.value == b.value and a.prefab < b.prefab or a.value < b.value
     end)
     return pool
@@ -204,7 +225,12 @@ local function StaleInMix(prefabs, pool)
 end
 
 local function FindAutomatic(inst, cooker, pool)
-    local selected, used, best, bestgain = {}, {}, nil, 0
+    local stats = Food.GetStats(inst)
+    local health_deficit = Food.GetMealHealthDeficit(inst, stats)
+    local healing_target = health_deficit ~= nil and math.min(20, health_deficit) or nil
+    local needs_only_health = healing_target ~= nil and stats.hungerpercent >= .65 and stats.sanitypercent >= .60
+    local selected, used, best, bestscore, best_meatballs, best_meatballs_score = {}, {}, nil, 0, nil, 0
+    local best_healing
     local checked = 0
     local function Search(first, rawvalue)
         if checked >= 2048 then return end
@@ -212,11 +238,32 @@ local function FindAutomatic(inst, cooker, pool)
             checked = checked + 1
             local prefabs = {}
             for _, group in ipairs(selected) do prefabs[#prefabs + 1] = group.prefab end
-            local value, duration = M.Evaluate(inst, cooker, prefabs, StaleInMix(prefabs, pool))
-            local gain = value ~= nil and value - rawvalue or 0
-            if gain > bestgain + 1 then
-                bestgain = gain
-                best = {prefabs = prefabs, duration = duration, gain = gain}
+            local value, duration, product, healing = M.Evaluate(inst, cooker, prefabs,
+                StaleInMix(prefabs, pool), stats, health_deficit)
+            if value == nil then return end
+            local gain = value - rawvalue
+            if healing_target ~= nil and healing >= healing_target and (best_healing == nil
+                or healing > best_healing.healing or healing == best_healing.healing and gain > best_healing.gain) then
+                best_healing = {prefabs = prefabs, duration = duration, gain = gain, product = product, healing = healing}
+            end
+            local score = gain
+            -- Stew is a fallback when its expensive meat has no better use.
+            -- Monster meat is safe here only after native recipe resolution.
+            if health_deficit ~= nil then
+                if needs_only_health then return end
+            elseif product == "bonestew" then
+                score = gain * .2
+            elseif product == "meatballs" then
+                score = gain + 200 + MeatballsPreference(prefabs)
+                    + (inst.prefab == "wathgrithr" and 10000 or 0)
+                if score > best_meatballs_score + 1 then
+                    best_meatballs_score = score
+                    best_meatballs = {prefabs = prefabs, duration = duration, gain = gain}
+                end
+            end
+            if score > bestscore + 1 then
+                bestscore = score
+                best = {prefabs = prefabs, duration = duration, gain = gain, product = product}
             end
             return
         end
@@ -231,6 +278,10 @@ local function FindAutomatic(inst, cooker, pool)
         end
     end
     Search(1, 0)
+    if best_healing ~= nil then return best_healing end
+    if health_deficit == nil and best ~= nil and best.product == "bonestew" and best_meatballs ~= nil then
+        return best_meatballs
+    end
     return best
 end
 
@@ -247,7 +298,7 @@ local function SpecificSearch(inst, cooker, pool, wanted)
             portions = math.min(portions, math.floor(counts[name] / count))
             cost = cost + count / counts[name]
         end
-        return portions, cost
+        return wanted == "meatballs" and MeatballsPreference(prefabs) or 0, portions, cost
     end
     local function Evaluate(prefabs)
         checked = checked + 1
@@ -257,7 +308,7 @@ local function SpecificSearch(inst, cooker, pool, wanted)
     local function Conserve(prefabs)
         -- Improve fillers without hard-coding recipe requirements: prefer mixes
         -- that can be repeated more often, then lower use of scarce materials.
-        local portions, cost = BatchValue(prefabs)
+        local preference, portions, cost = BatchValue(prefabs)
         local improved = true
         while improved do
             improved = false
@@ -265,10 +316,11 @@ local function SpecificSearch(inst, cooker, pool, wanted)
                 local previous = prefabs[slot]
                 for _, group in ipairs(pool) do
                     prefabs[slot] = group.prefab
-                    local nextportions, nextcost = BatchValue(prefabs)
-                    if (nextportions > portions or nextportions == portions and nextcost < cost - .000001)
+                    local nextpreference, nextportions, nextcost = BatchValue(prefabs)
+                    if (nextpreference > preference or nextpreference == preference
+                        and (nextportions > portions or nextportions == portions and nextcost < cost - .000001))
                         and Evaluate(prefabs) ~= nil then
-                        previous, portions, cost = group.prefab, nextportions, nextcost
+                        previous, preference, portions, cost = group.prefab, nextpreference, nextportions, nextcost
                         improved = true
                     end
                 end

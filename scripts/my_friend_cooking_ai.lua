@@ -86,6 +86,10 @@ function M.GetAction(inst)
     if not require("my_friend_food_rules").CanCook(inst)
         or Policy.IsBusy(inst) or inst._my_friend_container_action
         or inst._my_friend_storage_action then return end
+    if require("my_friend_container_ai").HasStoredMeal(inst) then
+        inst._my_friend_cook_until, inst._my_friend_cooking_source = nil, nil
+        return
+    end
     local inventory = inst.components.inventory
     local food = inventory:FindItem(function(item)
         return item.components.edible ~= nil and inst.components.eater:CanEat(item)
@@ -113,6 +117,7 @@ function M.GetAction(inst)
             local action = BufferedAction(inst, best, ACTIONS.COOK, food)
             action.validfn = function()
                 return require("my_friend_food_rules").CanCook(inst)
+                    and not require("my_friend_container_ai").HasStoredMeal(inst)
                     and food:IsValid() and require("my_friend_food_rules").NeedsRoasting(inst, food)
                     and food.components.inventoryitem:GetGrandOwner() == inst
                     and not food.components.inventoryitem.islockedinslot
@@ -144,6 +149,9 @@ function M.GetAction(inst)
             end
             if fuel ~= nil then
                 local action = BufferedAction(inst, best, ACTIONS.ADDFUEL, fuel)
+                action.validfn = function()
+                    return not require("my_friend_container_ai").HasStoredMeal(inst)
+                end
                 action:AddSuccessAction(function()
                     inst._my_friend_cook_until = GetTime() + 30
                 end)

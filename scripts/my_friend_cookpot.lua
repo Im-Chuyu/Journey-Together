@@ -18,7 +18,7 @@ function M.OwnerID(inst)
     return inst._my_friend_id or tostring(inst.GUID)
 end
 
-function M.Accessible(inst, pot, origin)
+function M.Accessible(inst, pot, origin, radius)
     if pot == nil or not pot:IsValid() or not M.PREFABS[pot.prefab]
         or not M.IsAllowed(inst, pot)
         or pot:HasAnyTag("INLIMBO", "burnt", "fire") then return false end
@@ -27,7 +27,7 @@ function M.Accessible(inst, pot, origin)
         and not c.readonlycontainer and not c:IsRestricted(inst)
         and not c:IsOpenedByOthers(inst) and Policy.InRange(inst, pot)
         and (origin ~= nil and pot:GetDistanceSqToPoint(origin)
-            or inst:GetDistanceSqToInst(pot)) <= M.RANGE^2
+            or inst:GetDistanceSqToInst(pot)) <= (radius or M.RANGE)^2
         and inst:GetCurrentPlatform() == pot:GetCurrentPlatform()
 end
 

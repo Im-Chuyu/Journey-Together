@@ -4,18 +4,19 @@ from tkinter import ttk
 
 from . import api_config
 
-PROVIDERS = {"自动选择（填Key用API）": "auto", "DeepSeek API": "deepseek-api", "模型网页": "web"}
+PROVIDERS = {"自动选择（填Key用API）": "auto", "DeepSeek API": "deepseek-api", "模型网页": "web",
+             "DeepSeek 网页": "deepseek-web", "豆包网页": "doubao-web", "离线演示": "demo"}
 EFFORTS = {"低（low）": "low", "高（high）": "high", "最高（max）": "max"}
 
 
-def show(parent):
+def show(parent, path=None):
     window = tk.Toplevel(parent)
     window.title("大模型设置")
     window.transient(parent)
     window.resizable(False, False)
     try:
         # Do not reveal or accidentally persist an environment-only credential.
-        config = api_config.load(resolve_env=False)
+        config = api_config.load(path, resolve_env=False)
     except (ValueError, OSError) as error:
         ttk.Label(window, text=str(error), wraplength=480).pack(padx=16, pady=16)
         return window
@@ -75,10 +76,10 @@ def show(parent):
                 values = {name: int(variable.get()) for name, variable in numbers.items()}
             except ValueError:
                 raise ValueError("输出上限、超时和重试次数必须填写整数。") from None
-            values.update(provider=PROVIDERS[provider.get()], api_key=key.get().strip(),
+            values.update(pair_code=config["pair_code"], provider=PROVIDERS[provider.get()], api_key=key.get().strip(),
                           model=model.get().strip(), thinking=thinking.get(),
                           reasoning_effort=EFFORTS[effort.get()], ambient_enabled=ambient.get())
-            api_config.save(values)
+            api_config.save(values, path)
             hint.configure(text="已保存，重启助手后生效；当前任务继续使用原参数。")
         except (ValueError, OSError) as error:
             hint.configure(text=str(error))

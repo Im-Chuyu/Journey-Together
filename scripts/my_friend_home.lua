@@ -6,6 +6,7 @@ local M = {}
 
 M.WANDER_RADIUS = 32
 M.RETURN_DISTANCE = 30
+M.MANUAL_BASE_RADIUS = 48
 M.AUTO_BASE_STRUCTURE_RANGE = 34
 M.AUTO_BASE_RETURN_DISTANCE = 12
 M.LATE_JOIN_DAY = 200
@@ -34,6 +35,14 @@ function M.Mode(inst)
     return home ~= nil and home.mode or nil
 end
 
+function M.Radius(inst)
+    return M.Mode(inst) == "base" and M.MANUAL_BASE_RADIUS or M.WANDER_RADIUS
+end
+
+function M.ReturnDistance(inst)
+    return M.Radius(inst) - (M.WANDER_RADIUS - M.RETURN_DISTANCE)
+end
+
 -- "hold" and "base" were chosen by a player: the companion must stay inside
 -- its home circle. "roam" is the automatic home of a late joiner, which may
 -- still leave to look for food when there is none around.
@@ -45,7 +54,7 @@ end
 -- Manual bases use the exact selected circle. Preserve the legacy margin
 -- for "wait here", whose behaviour is independent of setting a base.
 function M.TravelLimit(inst)
-    return M.WANDER_RADIUS + (M.Mode(inst) == "base" and 0 or 8)
+    return M.Radius(inst) + (M.Mode(inst) == "base" and 0 or 8)
 end
 
 function M.IsPointInRange(inst, point)
@@ -65,18 +74,19 @@ function M.Status(inst)
     local home = {known=point~=nil}
     if point~=nil then
         local distance=math.sqrt((position.x-point.x)^2+(position.z-point.z)^2)
-        home={known=true,mode=mode,position={x=point.x,z=point.z},radius=M.WANDER_RADIUS,
-            distance=distance,within_range=distance<=M.WANDER_RADIUS,strict=M.IsStrict(inst)}
+        local radius = M.Radius(inst)
+        home={known=true,mode=mode,position={x=point.x,z=point.z},radius=radius,
+            distance=distance,within_range=distance<=radius,strict=M.IsStrict(inst)}
     end
     local manual = mode=="base" and point~=nil
     local automatic = point==nil and base~=nil and type(base.x)=="number" and type(base.z)=="number"
     if not manual and not automatic then return {known=false},home end
     local centre=manual and point or base
-    local radius=manual and M.WANDER_RADIUS or M.AUTO_BASE_STRUCTURE_RANGE
+    local radius=manual and M.MANUAL_BASE_RADIUS or M.AUTO_BASE_STRUCTURE_RANGE
     local distance=math.sqrt((position.x-centre.x)^2+(position.z-centre.z)^2)
     return {known=true,source=manual and "manual" or "automatic",position={x=centre.x,z=centre.z},
         radius=radius,distance=distance,at_base=distance<=radius,
-        return_distance=point~=nil and M.RETURN_DISTANCE or M.AUTO_BASE_RETURN_DISTANCE,
+        return_distance=point~=nil and M.ReturnDistance(inst) or M.AUTO_BASE_RETURN_DISTANCE,
         phase=base~=nil and base.phase or nil,complete=base~=nil and base.complete==true},home
 end
 
@@ -103,13 +113,14 @@ end
 function M.Facilities(inst)
     local home = M.Get(inst)
     if home == nil then return {} end
+    local radius = M.Radius(inst)
     local entities = require("my_friend_discovery").Query(inst, "home_facilities", "structures",
-        home.x, 0, home.z, M.WANDER_RADIUS, {"structure"}, {"INLIMBO", "burnt", "fire"})
+        home.x, 0, home.z, radius, {"structure"}, {"INLIMBO", "burnt", "fire"})
     local result = {}
     for _, entity in ipairs(entities) do
         if entity:IsValid() and not entity:HasAnyTag("INLIMBO", "burnt", "fire") then
             local point = entity:GetPosition()
-            if (point.x - home.x)^2 + (point.z - home.z)^2 <= M.WANDER_RADIUS^2 then
+            if (point.x - home.x)^2 + (point.z - home.z)^2 <= radius^2 then
                 result[#result + 1] = entity
             end
         end

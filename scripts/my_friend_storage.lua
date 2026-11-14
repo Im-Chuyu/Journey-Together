@@ -1,6 +1,7 @@
 local Inventory = require("my_friend_inventory")
 local Navigation = require("my_friend_navigation")
 local Policy = require("my_friend_policy")
+local EquipmentReserves = require("my_friend_equipment_reserves")
 local M = {}
 
 function M.Cancel(inst, action)
@@ -112,6 +113,7 @@ local function FindTransfer(inst, chests)
                     for slot = 1, source.components.container:GetNumSlots() do
                         local item = source.components.container:GetItemInSlot(slot)
                         if item ~= nil and item.components.stackable ~= nil
+                            and not EquipmentReserves.IsCharacterEquipment(inst, item)
                             and not item.components.inventoryitem.islockedinslot then
                             local room = MergeRoom(destination.components.container, item)
                             if room > 0 and EmptySlot(inst, item) ~= nil
@@ -158,6 +160,10 @@ function M.Deposit(inst, action)
     if job ~= inst._my_friend_chest_transfer or job.stage ~= "deliver"
         or not IsCarried(inst, job.item) then return false end
     local item, c = job.item, action.target.components.container
+    if EquipmentReserves.IsCharacterEquipment(inst, item) then
+        inst._my_friend_chest_transfer = nil
+        return false
+    end
     local count = math.min(job.count, item.components.stackable:StackSize(), c:CanAcceptCount(item, job.count))
     if count <= 0 then return false end
     local moved = count < item.components.stackable:StackSize()

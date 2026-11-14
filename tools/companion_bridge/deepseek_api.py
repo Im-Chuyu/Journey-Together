@@ -110,7 +110,7 @@ class DeepSeekAPIAdapter:
 
     def __init__(self, config):
         if not config.get("api_key"):
-            raise ValueError("请在模组根目录 AssistantAPI.json 填写 api_key 后重启助手。")
+            raise ValueError("请在 AssistantAPI.json（或指定的配置文件）填写 api_key，或设置 DEEPSEEK_API_KEY。")
         self.config = dict(config)
         self.label = "DeepSeek API · " + config["model"]
         self.ambient_enabled = config["ambient_enabled"]

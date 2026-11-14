@@ -4,6 +4,7 @@ local FoodAI = require("my_friend_food_ai")
 local Navigation = require("my_friend_navigation")
 local Home = require("my_friend_home")
 local Reserves = require("my_friend_resource_reserves")
+local SpDamage = require("components/spdamageutil")
 
 M.RESOURCE_MIN = 10
 M.RESOURCE_MAX = 40
@@ -531,15 +532,18 @@ local function GetContactHazard(inst)
                 ClearHazard(inst)
                 return
             end
-            local aura = source.components.aura
-            if aura ~= nil and aura.active then
+            local cause, aura = inst._my_friend_hazard_cause, source.components.aura
+            if cause == "hot" and source.components.temperatureoverrider == nil then
+                local radius = require("my_friend_survival_ai").GetHotHeaterDangerRadius(inst, source)
+                if radius > 0 then return source:GetPosition(), radius end
+            elseif aura ~= nil and aura.active then
                 for _, tag in ipairs(aura.auraexcludetags or {}) do
                     if inst:HasTag(tag) then ClearHazard(inst) return end
                 end
                 return source:GetPosition(), aura.radius
             elseif aura == nil then
                 local radius = require("my_friend_survival_ai").GetTemperatureDangerRadius(inst, source,
-                    inst._my_friend_hazard_cause == "cold" or inst._my_friend_hazard_cause == "freezing")
+                    cause == "cold" or cause == "freezing")
                 if radius > 0 then return source:GetPosition(), radius end
             end
         end
@@ -611,7 +615,7 @@ local function RememberHazard(inst, source, cause, centre, distance, observed_or
     end
     inst._my_friend_hazard_position = Vector3(point.x, 0, point.z)
     inst._my_friend_hazard_radius = radius
-    inst._my_friend_hazard_source = (observed_origin ~= nil
+    inst._my_friend_hazard_source = (observed_origin ~= nil or cause == "hot"
         or centre == nil and (aura ~= nil or override ~= nil)) and source or nil
     inst._my_friend_hazard_observed_origin = observed_origin
     inst._my_friend_hazard_ground = nil
@@ -639,15 +643,30 @@ function M.OnHeatDamage(inst)
     local now = GetTime()
     if now < (inst._my_friend_heat_check_after or 0) then return end
     inst._my_friend_heat_check_after = now + 1
-    local override = require("my_friend_survival_ai").FindDamagingTemperatureSource(inst, false)
-    if override ~= nil then
-        RememberHazard(inst, override, "hot")
-        return
+    local temperature = inst.components.temperature
+    local survival = require("my_friend_survival_ai")
+    if temperature ~= nil and (temperature.rate or 0) > 0 then
+        local override = survival.FindDamagingTemperatureSource(inst, false)
+        if override ~= nil then
+            RememberHazard(inst, override, "hot")
+            return
+        end
+        local source, radius = survival.FindDamagingHeatSource(inst)
+        if source ~= nil then
+            RememberHazard(inst, source, "hot", source:GetPosition(), radius)
+            return
+        end
     end
-    local source = require("my_friend_survival_ai").FindDamagingHeatSource(inst)
-    if source ~= nil then
-        local radius = math.max(M.HAZARD_RETREAT_RADIUS, math.sqrt(DistanceSq(inst, source)) + 2)
-        RememberHazard(inst, source, "hot", source:GetPosition(), radius)
+    if temperature ~= nil and not inst._my_friend_heat_damage_pending
+        and not M.IsHazardRetreatActive(inst) then
+        -- Wake ordinary survival decisions once on the way into overheating.
+        -- Native healthdelta keeps arriving even as body temperature falls.
+        inst._my_friend_heat_damage_pending = true
+        local action = inst._my_friend_navigation_action
+        if (action == nil or not action._my_friend_temperature_action)
+            and (inst._my_friend_decision == nil or inst._my_friend_decision.task ~= "thermal_wait") then
+            inst._my_friend_replan_requested = true
+        end
     end
 end
 
@@ -971,17 +990,34 @@ local function IsActiveLight(item)
         or item.HasAnyTag ~= nil and item:HasAnyTag("light", "nightvision"))
 end
 
+local function DamageAfterSpecialDefense(target, damage, special)
+    if type(damage) ~= "number" then return end
+    if target ~= nil and special ~= nil then
+        local inventory = target.components ~= nil and target.components.inventory or nil
+        if inventory ~= nil and inventory.equipslots ~= nil then
+            for kind, amount in pairs(special) do
+                for _, equipped in pairs(inventory.equipslots) do
+                    amount = amount - SpDamage.GetSpDefenseForType(equipped, kind)
+                end
+                special[kind] = math.max(0, amount)
+            end
+        end
+        if target.components ~= nil then special = SpDamage.ApplySpDefense(target, special) end
+    end
+    return damage + SpDamage.CalcTotalDamage(special)
+end
+
 local function WeaponDamage(inst, target, item)
     if not IsAlive(inst) or target ~= nil and not IsAlive(target) then return end
     local weapon = item ~= nil and item:IsValid() and item.components ~= nil and item.components.weapon or nil
     if weapon == nil then return end
     if inst.components.combat ~= nil and inst.components.combat.CalcDamage ~= nil
         and target ~= nil and target.HasTag ~= nil then
-        local damage = inst.components.combat:CalcDamage(target, item)
-        return type(damage) == "number" and damage or nil
+        local damage, special = inst.components.combat:CalcDamage(target, item)
+        return DamageAfterSpecialDefense(target, damage, special)
     end
-    local damage = weapon:GetDamage(inst, target)
-    return type(damage) == "number" and damage or nil
+    local damage, special = weapon:GetDamage(inst, target)
+    return DamageAfterSpecialDefense(target, damage, special)
 end
 
 local function IsWeaponBroken(item)
@@ -1003,6 +1039,7 @@ local function UsableCombatWeapon(inst, item)
     local eq = c ~= nil and c.equippable or nil
     local ii = c ~= nil and c.inventoryitem or nil
     return eq ~= nil and eq.equipslot == EQUIPSLOTS.HANDS
+        and c.weapon ~= nil
         and (eq.IsRestricted == nil or not eq:IsRestricted(inst))
         and ii ~= nil and not ii.islockedinslot and ii:GetGrandOwner() == inst
         and not M.IsTorchWeapon(item) and not IsWeaponBroken(item)
@@ -1034,7 +1071,7 @@ end
 local function GetArmorValue(inst, item, slot, attacker, weapon)
     if attacker ~= nil and not IsAlive(attacker) then return end
     if weapon ~= nil and not weapon:IsValid() then weapon = nil end
-    if not HasWorkingArmor(item) then return end
+    if item == nil or not item:IsValid() or item.components == nil then return end
     local equippable = item.components.equippable
     local inventoryitem = item.components.inventoryitem
     if equippable == nil or equippable.equipslot ~= slot
@@ -1044,16 +1081,21 @@ local function GetArmorValue(inst, item, slot, attacker, weapon)
         return
     end
     local armor = item.components.armor
+    if armor ~= nil and not HasWorkingArmor(item) then return end
+    local defense = SpDamage.GetSpDefenseForType(item, "planar")
     local absorption
-    if armor.GetAbsorption ~= nil then
+    if armor == nil then
+        absorption = 0
+    elseif armor.GetAbsorption ~= nil then
         absorption = armor:GetAbsorption(attacker, weapon)
     else
         absorption = armor.absorb_percent or .6
     end
-    if type(absorption) ~= "number" or absorption <= 0 then return end
-    local condition = armor.indestructible and math.huge
+    absorption = type(absorption) == "number" and absorption or 0
+    if absorption <= 0 and defense <= 0 then return end
+    local condition = armor == nil and 0 or armor.indestructible and math.huge
         or math.max(0, armor.condition or 0)
-    return absorption, condition
+    return absorption, condition, defense
 end
 
 function M.ShouldRetreatUnequipped(inst, target)
@@ -1072,7 +1114,7 @@ function M.ShouldRetreatUnequipped(inst, target)
     if cached ~= nil and cached.target_guid == (target ~= nil and target.GUID or nil) and cached.version == version
         and cached.hand_guid == (hand ~= nil and hand.GUID or nil) and now < cached.until_time
         and (cached.armor_guid == nil or cachedarmor ~= nil
-            and GetArmorValue(inst, cachedarmor, cached.armor_slot, target, enemyweapon) ~= nil)
+            and (GetArmorValue(inst, cachedarmor, cached.armor_slot, target, enemyweapon) or 0) > 0)
         and (cached.weapon_guid == nil or UsableCombatWeapon(inst, cachedweapon)) then return cached.retreat end
     local items = inventory:ReferenceAllItems()
     local active = inventory:GetActiveItem()
@@ -1083,7 +1125,10 @@ function M.ShouldRetreatUnequipped(inst, target)
         for _, item in ipairs(items) do
             local eq = item:IsValid() and item.components ~= nil and item.components.equippable or nil
             if eq ~= nil and eq.equipslot ~= EQUIPSLOTS.HANDS
-                and GetArmorValue(inst, item, eq.equipslot, target, enemyweapon) ~= nil then armor = item break end
+                and (GetArmorValue(inst, item, eq.equipslot, target, enemyweapon) or 0) > 0 then
+                armor = item
+                break
+            end
         end
     end
     local retreat = (damage or 0) < 25 and armor == nil
@@ -1100,35 +1145,32 @@ function M.GetThermalInsulation(item, need)
         and require("my_friend_survival_ai").GetInsulationValue(item, need) ~= nil
 end
 
-local function IsBetterArmor(absorption, utility, condition,
-        bestabsorption, bestutility, bestcondition)
-    return bestabsorption == nil or absorption > bestabsorption
-        or absorption == bestabsorption and (utility > bestutility
-            or utility == bestutility and condition > bestcondition)
-end
-
-function M.FindBestCombatArmor(inst, slot, attacker, weapon, thermal_need, items)
+function M.FindBestCombatArmor(inst, slot, attacker, weapon, thermal_need, items, incoming, planar)
     local inventory = inst.components.inventory
     if inventory == nil then return end
+    incoming = type(incoming) == "number" and math.max(0, incoming) or 100
+    planar = planar or 0
     local equipment = require("my_friend_equipment")
-    local best = inventory:GetEquippedItem(slot)
-    local bestabsorption, bestcondition =
-        GetArmorValue(inst, best, slot, attacker, weapon)
-    if bestabsorption == nil then best = nil end
-    local bestutility = best ~= nil
-        and equipment.GetCombatUtilityScore(inst, best, thermal_need) or 0
+    local best, bestabsorption, bestcondition, bestprotection, bestplanar, bestutility
+    local function Consider(item)
+        local absorption, condition, defense = GetArmorValue(inst, item, slot, attacker, weapon)
+        if absorption == nil then return end
+        local protection = incoming * absorption + math.min(planar, defense)
+        if protection <= 0 then return end
+        local utility = equipment.GetCombatUtilityScore(inst, item, thermal_need)
+        if best == nil or protection > bestprotection
+            or protection == bestprotection and (defense > bestplanar
+                or defense == bestplanar and (utility > bestutility
+                    or utility == bestutility and condition > bestcondition)) then
+            best, bestabsorption, bestcondition = item, absorption, condition
+            bestprotection, bestplanar, bestutility = protection, defense, utility
+        end
+    end
+    local current = inventory:GetEquippedItem(slot)
+    Consider(current)
     if inventory.ReferenceAllItems ~= nil then
         for _, item in ipairs(items or inventory:ReferenceAllItems()) do
-            local absorption, condition =
-                GetArmorValue(inst, item, slot, attacker, weapon)
-            if absorption ~= nil then
-                local utility = equipment.GetCombatUtilityScore(inst, item, thermal_need)
-                if IsBetterArmor(absorption, utility, condition,
-                    bestabsorption, bestutility, bestcondition) then
-                    best, bestabsorption, bestutility, bestcondition =
-                        item, absorption, utility, condition
-                end
-            end
+            if item ~= current then Consider(item) end
         end
     end
     return best, bestabsorption, bestcondition
@@ -1136,19 +1178,37 @@ end
 
 function M.EquipBestCombatArmor(inst, attacker, weapon)
     local inventory = inst.components.inventory
-    if inventory == nil or inventory.Equip == nil then return end
+    if inventory == nil or inventory.Equip == nil or not IsAlive(inst)
+        or attacker ~= nil and not IsAlive(attacker) then return end
+    if weapon ~= nil and not weapon:IsValid() then weapon = nil end
     -- All usable armour competes by protection, then active utility and
     -- durability. Other capabilities never turn a helmet into non-armour.
     local thermal_need = require("my_friend_survival_ai").GetThermalNeed(inst)
     local items = inventory.ReferenceAllItems ~= nil and inventory:ReferenceAllItems() or {}
+    local active = inventory.GetActiveItem ~= nil and inventory:GetActiveItem() or nil
+    if active ~= nil then items[#items + 1] = active end
+    local combat = attacker ~= nil and attacker.components ~= nil and attacker.components.combat or nil
+    local incoming, special
+    if combat ~= nil and combat.CalcDamage ~= nil then
+        incoming, special = combat:CalcDamage(inst, weapon)
+    end
+    local planar = special ~= nil and special.planar or 0
+    local slots = require("my_friend_equip_slots").All()
     local preferred_head = require("my_friend_equipment").PreferredHead(inst, items)
-    for _, slot in ipairs(require("my_friend_equip_slots").All()) do
+    for _, slot in ipairs(slots) do
         if not IsAlive(inst) or attacker ~= nil and not IsAlive(attacker) then return end
         if weapon ~= nil and not weapon:IsValid() then weapon = nil end
         if slot ~= EQUIPSLOTS.HANDS then
             local current = inventory:GetEquippedItem(slot)
+            local remaining = planar
+            if remaining > 0 then
+                for _, other in ipairs(slots) do
+                    local worn = other ~= slot and inventory:GetEquippedItem(other) or nil
+                    if worn ~= nil then remaining = remaining - SpDamage.GetSpDefenseForType(worn, "planar") end
+                end
+            end
             local best = M.FindBestCombatArmor(inst, slot, attacker, weapon,
-                thermal_need, items)
+                thermal_need, items, incoming, math.max(0, remaining))
             -- Daily head preferences are a fallback only when no usable
             -- armour protects this slot against the current attack.
             if best == nil and slot == EQUIPSLOTS.HEAD then
@@ -1197,20 +1257,22 @@ local function GetArmorStats(inventory, attacker, weapon)
 end
 
 function M.EstimateFight(friendhealth, enemyhealth, outgoing, incoming,
-        friendperiod, enemyperiod, absorption, armorcondition)
+        friendperiod, enemyperiod, absorption, armorcondition, special)
     if type(friendhealth) ~= "number" or type(enemyhealth) ~= "number"
         or type(outgoing) ~= "number" or outgoing <= 0 or friendhealth <= 0 then
         return false
     end
     local attacks_to_win = math.max(1, math.ceil(enemyhealth / outgoing))
-    if type(incoming) ~= "number" or incoming <= 0 then return true end
+    incoming = type(incoming) == "number" and math.max(0, incoming) or 0
+    special = special or 0
+    if incoming + special <= 0 then return true end
 
     local health = friendhealth
     local armor = math.max(0, armorcondition or 0)
     local hits_survived = 0
     while health > 0 and hits_survived < 1000 do
         local absorbed = armor > 0 and incoming * math.max(0, math.min(1, absorption or 0)) or 0
-        health = health - (incoming - absorbed)
+        health = health - (incoming - absorbed + special)
         armor = math.max(0, armor - absorbed)
         hits_survived = hits_survived + 1
     end
@@ -1320,11 +1382,12 @@ function M.CanCounterAttack(inst, target, instructed)
     if enemycombat == nil or enemyhealth == nil or health == nil then return true end
     if health.GetPercent ~= nil and health:GetPercent() < .15 then return false end
 
-    local incoming = enemycombat.CalcDamage ~= nil
-        and enemycombat:CalcDamage(inst, enemyweapon) or enemycombat.defaultdamage
+    local incoming, special = enemycombat.defaultdamage, nil
+    if enemycombat.CalcDamage ~= nil then incoming, special = enemycombat:CalcDamage(inst, enemyweapon) end
+    local planar_incoming = DamageAfterSpecialDefense(inst, 0, special)
     return M.EstimateFight(health.currenthealth, enemyhealth.currenthealth,
         damage, incoming, inst.components.combat.min_attack_period,
-        enemycombat.min_attack_period, absorption, armorcondition)
+        enemycombat.min_attack_period, absorption, armorcondition, planar_incoming)
 end
 
 -- Frame-level dodge monitoring needs a cheap combat eligibility check. Keep

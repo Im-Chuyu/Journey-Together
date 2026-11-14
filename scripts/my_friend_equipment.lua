@@ -161,6 +161,8 @@ M.RAIN_RELEASE = 20
 local INSULATION_SCALE = 240
 -- A cane is 1.25, which is the practical ceiling for a hand item.
 local SPEED_SCALE = .5
+local AMULET_START = 60
+local AMULET_RELEASE = 50
 
 local survival_module, light_module
 local function Survival()
@@ -216,6 +218,20 @@ local function IsTravelling(inst)
     if node ~= nil and node.routing then return true end
     return inst.sg ~= nil and (inst.sg:HasStateTag("moving")
         or inst.sg:HasStateTag("my_friend_walk"))
+end
+
+function M.WantsChilledAmulet(inst, item)
+    if item == nil or item.prefab ~= "blueamulet" or not item:IsValid() then return false end
+    local c = item.components
+    local temperature = inst.components.temperature
+    local inventoryitem = c.inventoryitem
+    return temperature ~= nil and c.heater ~= nil and c.equippable ~= nil
+        and not c.equippable:IsRestricted(inst)
+        and inventoryitem ~= nil and not inventoryitem.islockedinslot
+        and inventoryitem:GetGrandOwner() == inst
+        and not item:HasTag("broken") and not Survival().IsWornOut(item)
+        and (temperature.current >= AMULET_START
+            or c.equippable:IsEquipped() and temperature.current > AMULET_RELEASE)
 end
 
 local function ActiveNeeds(inst)
@@ -310,6 +326,9 @@ local function Score(inst, item, needs)
         if insulation ~= nil then
             score = score + NEED_WEIGHT.thermal * Clamp01(insulation / INSULATION_SCALE)
         end
+    end
+    if not needs.combat and M.WantsChilledAmulet(inst, item) then
+        score = score + NEED_WEIGHT.thermal * 2
     end
     if needs.rain and components.waterproofer ~= nil then
         -- Score only the protection missing WITHOUT this slot. This applies
@@ -409,7 +428,7 @@ local function IsDisposable(slot, item)
     local components = item ~= nil and item.components or nil
     if components == nil then return false end
     return slot == EQUIPSLOTS.HEAD or components.waterproofer ~= nil
-        or components.armor ~= nil or components.insulator ~= nil
+        or components.armor ~= nil or components.insulator ~= nil or item.prefab == "blueamulet"
 end
 
 local function Timers(inst, key)
@@ -724,14 +743,6 @@ function M.UpdateLoadout(inst)
     local preferred_head = M.PreferredHead(inst, items)
     local hold, idle = Timers(inst, "_my_friend_loadout_hold"),
         Timers(inst, "_my_friend_loadout_idle")
-    -- Deliberately left false, which is what the pass this replaced always set
-    -- it to: its loop only ever covered HEAD and HANDS, so the guard reading it
-    -- in Backpacks.StartOwnedRecovery has never once fired. Setting it honestly
-    -- would silently switch that guard on and stop the companion fetching its
-    -- backpack for most of winter -- a behaviour change that has nothing to do
-    -- with fixing the swap loop.
-    inst._my_friend_temperature_body_equipped = false
-
     for _, slot in ipairs(LoadoutSlots(inst, items, needs, preferred_head)) do
         local current = inventory:GetEquippedItem(slot)
         if not IsSlotLocked(inst, slot, current, preferred_head) then
@@ -751,6 +762,7 @@ function M.UpdateLoadout(inst)
             -- An unmet temperature need is worth breaking the cooldown for; a
             -- slightly better umbrella is not.
             local urgent = currentscore == 0 and bestscore >= NEED_WEIGHT.thermal
+                and best.prefab ~= "blueamulet"
             local settled = now >= (hold[slot] or 0)
 
             if best ~= current and bestscore > 0 and (settled or urgent)
@@ -769,17 +781,17 @@ function M.UpdateLoadout(inst)
                             needs.thermal == "cold" and "cold" or "hot")
                     end
                 end
-            elseif current ~= nil and bestscore <= 0 and settled
+            elseif current ~= nil and bestscore <= 0 and (settled or current.prefab == "blueamulet")
                 and IsDisposable(slot, current)
                 and now >= (current._my_friend_player_equipped_until or 0)
-                and (slot == EQUIPSLOTS.HEAD or inst._my_friend_command == nil) then
+                and (slot == EQUIPSLOTS.HEAD or inst._my_friend_command == nil or current.prefab == "blueamulet") then
                 -- Worn out gear comes off at once, so it survives to be sewn
                 -- or refuelled. Anything else gets a while before being stowed,
                 -- so a need that flickers on and off does not strip and
                 -- re-dress the companion each time.
                 local worn = Survival().IsWornOut(current)
                 idle[slot] = idle[slot] or now
-                if (worn or now - idle[slot] >= M.IDLE_RELEASE)
+                if (worn or current.prefab == "blueamulet" or now - idle[slot] >= M.IDLE_RELEASE)
                     and inventory:CanAcceptCount(current, 1) > 0 then
                     local removed = inventory:Unequip(slot)
                     if removed ~= nil then

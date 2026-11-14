@@ -9,13 +9,7 @@ local RECOVERY_IDLE_RECHECK = 2
 M.DEATH_DROP_TAG = "my_friend_death_drop"
 M.DEATH_DROP_RADIUS = 18
 M.DEATH_POINT_ARRIVE_DISTANCE = 3
-M.PORTAL_ACTION_TIMEOUT = 300
 M.REMAINS_TIMEOUT = 120
-
-local VALID_PORTALS = {
-    multiplayer_portal = true,
-    multiplayer_portal_moonrock = true,
-}
 
 local function IsValid(inst)
     return inst ~= nil and inst:IsValid()
@@ -29,10 +23,6 @@ local function IsAlive(inst)
     return IsValid(inst) and not inst:HasTag("playerghost")
         and inst.components ~= nil and inst.components.health ~= nil
         and not inst.components.health:IsDead()
-end
-
-function M.IsPortalPrefab(prefab)
-    return VALID_PORTALS[prefab] == true
 end
 
 function M.ShouldRecover(isghost, isdead, pending)
@@ -176,8 +166,6 @@ local function OnDeath(inst)
         if entity.SetSkeletonDescription ~= nil then inst._my_friend_existing_remains[entity.GUID] = true end
     end
     ReleasePendingWork(inst)
-    inst._my_friend_portal_revive_requested = nil
-    inst._my_friend_portal_target = nil
     inst._my_friend_recover_death_drops = nil
     inst._my_friend_recovery_delivery = nil
     MarkInventory(inst)
@@ -235,9 +223,7 @@ local function OnRespawned(inst)
     ResetBrain(inst)
     ReleasePendingWork(inst)
     require("my_friend_ghost_commands").OnRespawned(inst)
-    -- Player revives do not pass through GhostCommands.OnRespawned's
-    -- automatic-portal branch, but they still need the same independent
-    -- return-to-death-site phase to recover dropped lighting and equipment.
+    -- Recover dropped lighting and equipment regardless of the revival source.
     local point = inst._my_friend_death_point
     if point ~= nil then
         inst._my_friend_auto_recovery_point = Vector3(point.x, 0, point.z)
@@ -252,8 +238,6 @@ local function OnRespawned(inst)
     inst._my_friend_external_light_since = nil
     inst._my_friend_dark_state = nil
     inst._my_friend_death_handled = nil
-    inst._my_friend_portal_revive_requested = nil
-    inst._my_friend_portal_target = nil
     inst._my_friend_recover_death_drops = inst._my_friend_death_point ~= nil
     inst._my_friend_recover_arrived = nil
     inst._my_friend_recover_target = nil
@@ -279,61 +263,11 @@ function M.Configure(inst)
     inst:ListenForEvent("onremove", function() require("my_friend_ghost_help").Stop(inst) end)
 end
 
-local function IsUsablePortal(portal)
-    return IsValid(portal) and M.IsPortalPrefab(portal.prefab)
-        and not portal:IsInLimbo() and portal.components ~= nil
-        and portal.components.hauntable ~= nil and portal:HasTag("resurrector")
-end
-
 local function DistanceSq(inst, target)
     local x, _, z = inst.Transform:GetWorldPosition()
     local tx, _, tz = target.Transform:GetWorldPosition()
     local dx, dz = tx - x, tz - z
     return dx * dx + dz * dz
-end
-
-local function FindPortal(inst)
-    local closest, closest_distance
-    for _, portal in pairs(Ents or {}) do
-        if IsUsablePortal(portal) then
-            local distance = DistanceSq(inst, portal)
-            if closest_distance == nil or distance < closest_distance then
-                closest, closest_distance = portal, distance
-            end
-        end
-    end
-    return closest
-end
-
-function M.RequestPortalRevive(inst)
-    if not IsGhost(inst) then return false end
-    inst._my_friend_portal_revive_requested = true
-    inst._my_friend_portal_target = nil
-    return true
-end
-
-function M.GetPortalAction(inst)
-    if not IsGhost(inst) or not inst._my_friend_portal_revive_requested
-        or inst.sg ~= nil and inst.sg:HasStateTag("busy") then return end
-    local target = inst._my_friend_portal_target
-    if not IsUsablePortal(target) then
-        target = FindPortal(inst)
-        inst._my_friend_portal_target = target
-    end
-    if target == nil then return end
-    local action = BufferedAction(inst, target, ACTIONS.HAUNT)
-    action.validfn = function()
-        return IsGhost(inst) and inst._my_friend_portal_revive_requested == true
-            and IsUsablePortal(target)
-    end
-    action:AddSuccessAction(function()
-        inst._my_friend_portal_revive_requested = nil
-        inst._my_friend_portal_target = nil
-    end)
-    action:AddFailAction(function()
-        inst._my_friend_portal_target = nil
-    end)
-    return action
 end
 
 local function IsRecoverableDrop(item)
@@ -518,7 +452,6 @@ function M.OnSave(inst, data)
             death_x = point.x,
             death_y = point.y,
             death_z = point.z,
-            portal_requested = inst._my_friend_portal_revive_requested == true,
             recover_drops = inst._my_friend_recover_death_drops == true,
             auto_recovery = inst._my_friend_auto_recovery_point ~= nil,
             sites = sites,
@@ -539,7 +472,6 @@ function M.OnLoad(inst, data)
             y = saved.death_y or 0,
             z = saved.death_z,
         }
-        inst._my_friend_portal_revive_requested = saved.portal_requested and true or nil
         inst._my_friend_recover_death_drops = saved.recover_drops and true or nil
         inst._my_friend_auto_recovery_point = saved.auto_recovery and saved.recover_drops
             and Vector3(saved.death_x, 0, saved.death_z) or nil

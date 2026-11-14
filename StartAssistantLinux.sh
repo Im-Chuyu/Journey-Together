@@ -1,5 +1,6 @@
 #!/bin/sh
 set -eu
+umask 077
 
 # Run from the mod root even when launched from another directory.
 CDPATH= cd -P "$(dirname "$0")"
@@ -9,4 +10,4 @@ if ! command -v python3 >/dev/null 2>&1 || ! python3 -B -c 'import sys; sys.exit
     exit 1
 fi
 
-exec python3 -B -m tools.companion_bridge --headless --provider deepseek-api "$@"
+exec python3 -B -m tools.companion_bridge --server "$@"

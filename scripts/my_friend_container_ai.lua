@@ -2,10 +2,19 @@ local FoodAI = require("my_friend_food_ai")
 local LightAI = require("my_friend_light_ai")
 local Policy = require("my_friend_policy")
 local InventoryAI = require("my_friend_inventory")
+local Discovery = require("my_friend_discovery")
+local Home = require("my_friend_home")
+local Navigation = require("my_friend_navigation")
 
 local M = {}
 M.SEARCH_RANGE = 15
 local CANT_TAGS = {"INLIMBO", "burnt", "fire", "pickable", "playerghost"}
+local STORAGE_TAGS = {"chest", "fridge", "structure", "_container"}
+
+local function Count(item)
+    return item ~= nil and item:IsValid()
+        and (item.components.stackable ~= nil and item.components.stackable:StackSize() or 1) or 0
+end
 
 local function IsOwnSack(inst, target)
     return target ~= nil and target:IsValid() and target.prefab == "beargerfur_sack"
@@ -28,14 +37,18 @@ local function IsAvailable(inst, target)
         local c = target.components.container
         return c ~= nil and not c.readonlycontainer and not c:IsRestricted(inst)
     end
-    if target:HasTag("INLIMBO") or not Policy.InRange(inst, target) then return false end
+    if target:HasTag("INLIMBO") or not Policy.InRange(inst, target)
+        or not Home.IsPointInRange(inst, target:GetPosition())
+        or inst:GetCurrentPlatform() ~= target:GetCurrentPlatform()
+        or Navigation.IsBlocked(inst, target:GetPosition()) then return false end
     local holder = target.components.inventoryitemholder
     if target.prefab == "gelblob_storage" then return holder ~= nil and holder:CanTake(inst) end
     local c = target.components.container
     local leader = Policy.GetLeader(inst)
-    return c ~= nil and (target:HasTag("fridge") or target.prefab == "icebox"
+    return c ~= nil and target.components.stewer == nil
+        and (c.type == "chest" or target:HasAnyTag("chest", "fridge") or target.prefab == "icebox"
             or target.prefab == "saltbox" or target.prefab == "beargerfur_sack")
-        and c.canbeopened and not c.readonlycontainer and not c:IsRestricted(inst)
+        and InventoryAI.CanWithdrawFrom(inst, target)
         and (c:IsOpenedBy(inst) or c:CanOpen()
             or leader ~= nil and c:IsOpenedBy(leader))
 end
@@ -48,12 +61,15 @@ local function CanAct(inst)
         and not inst._my_friend_under_threat and not Policy.IsBusy(inst)
 end
 
-local function FindBestFood(inst, target, command)
+local function FindBestFood(inst, target, command, ready_only)
     local best, bestscore, bestperish
+    local takes_into_inventory = target.components.inventoryitemholder ~= nil
     for _, item in ipairs(GetItems(target)) do
         local score, perish
-        if command ~= nil then score = FoodAI.CommandScore(inst, item, true)
-        else score, perish = FoodAI.Evaluate(inst, item) end
+        if not (ready_only or takes_into_inventory) or M.IsReadyMeal(inst, item) then
+            if command ~= nil then score = FoodAI.CommandScore(inst, item, true)
+            else score, perish = FoodAI.Evaluate(inst, item) end
+        end
         if score ~= nil and (bestscore == nil or score > bestscore + .001
             or math.abs(score - bestscore) <= .001
                 and (perish or math.huge) < (bestperish or math.huge)) then
@@ -86,11 +102,47 @@ end
 
 local function SearchOrigin(inst)
     if Policy.GetLeader(inst) == nil then
-        local Home = require("my_friend_home")
         local home = Home.Get(inst)
-        if home ~= nil then return home.x, 0, home.z, Home.WANDER_RADIUS end
+        if home ~= nil then return home.x, 0, home.z, Home.Radius(inst), false end
     end
-    return Policy.SearchOrigin(inst, M.SEARCH_RANGE)
+    local x, y, z, range = Policy.SearchOrigin(inst, M.SEARCH_RANGE)
+    return x, y, z, range, true
+end
+
+local function StoredFoodSources(inst)
+    local x, y, z, range, moving = SearchOrigin(inst)
+    local sources = {}
+    for _, entity in ipairs(Discovery.Query(inst, "food_containers", "containers",
+        x, y, z, range, nil, CANT_TAGS, STORAGE_TAGS, moving)) do
+        if entity:GetDistanceSqToPoint(x, y, z) <= range^2 and IsAvailable(inst, entity) then
+            sources[#sources + 1] = entity
+        end
+    end
+    return sources
+end
+
+function M.IsReadyMeal(inst, item)
+    if not item:IsValid() or not item:HasTag("preparedfood") or not FoodAI.IsUsableFood(inst, item)
+        or item.components.inventoryitem.islockedinslot or item:HasTag("spoiled")
+        or require("my_friend_food_storage").IsReserved(inst, item)
+        or not FoodAI.CanSafelyEat(inst, item) then return false end
+    local health, hunger, sanity = FoodAI.GetFoodDeltas(inst, item)
+    if health >= 0 and hunger >= 0 and sanity >= 0 then
+        return true, inst.components.eater.eatwholestack and hunger / math.max(1, Count(item)) or hunger
+    end
+    return false
+end
+
+function M.HasStoredMeal(inst)
+    if inst.components.eater == nil then return false end
+    local stats = FoodAI.GetStats(inst)
+    for _, target in ipairs(StoredFoodSources(inst)) do
+        for _, food in ipairs(GetItems(target)) do
+            if M.IsReadyMeal(inst, food)
+                and FoodAI.MealMatchesRecovery(inst, food, stats) then return true end
+        end
+    end
+    return false
 end
 
 local function CloseContainer(inst, target)
@@ -101,11 +153,6 @@ local function CloseContainer(inst, target)
     end
     inst._my_friend_container_action = nil
     inst._my_friend_container_target = nil
-end
-
-local function Count(item)
-    return item ~= nil and item:IsValid()
-        and (item.components.stackable ~= nil and item.components.stackable:StackSize() or 1) or 0
 end
 
 local function IsCarried(inst, item)
@@ -240,7 +287,7 @@ local function NextMealAction(inst, meal)
         M.Cancel(inst)
         return
     else
-        local food, score = FindBestFood(inst, target, meal.command)
+        local food, score = FindBestFood(inst, target, meal.command, meal.ready_only)
         if food == nil or PreferCarriedFood(inst, meal.command, score) then
             FinishMeal(inst, meal)
             return
@@ -256,7 +303,7 @@ local function NextMealAction(inst, meal)
             action = BufferedAction(inst, target,
                 capacity >= Count(food) and ACTIONS.TAKEITEM or ACTIONS.TAKESINGLEITEM)
             action.validfn = function()
-                return IsAvailable(inst, target) and holder.item == food
+                return IsAvailable(inst, target) and holder.item == food and M.IsReadyMeal(inst, food)
                     and inst.components.inventory:CanAcceptCount(food, amount) >= amount
             end
             action:AddSuccessAction(function()
@@ -285,6 +332,7 @@ local function NextMealAction(inst, meal)
                 action.validfn = function()
                     return not FoodAI.IsForbiddenFood(food)
                         and FoodAI.CanSafelyEat(inst, food)
+                        and (not meal.ready_only or M.IsReadyMeal(inst, food))
                         and IsAvailable(inst, target) and container:GetItemSlot(food) ~= nil
                         and (IsOwnSack(inst, target) or InventoryAI.CanReachContainer(inst, target))
                         and (container:IsOpenedBy(inst) or leader ~= nil and container:IsOpenedBy(leader))
@@ -307,7 +355,7 @@ local function NextMealAction(inst, meal)
     return Policy.GuardAction(inst, action)
 end
 
-local function GetMealAction(inst, command, own_only)
+local function GetMealAction(inst, command, own_only, ready_only)
     if not CanAct(inst) then return end
     local meal = inst._my_friend_meal
     if meal ~= nil then
@@ -321,28 +369,39 @@ local function GetMealAction(inst, command, own_only)
         if command ~= nil and command.food_failed ~= nil and command.food_failed[target.GUID] then
             return false
         end
-        local food, score = FindBestFood(inst, target, command)
+        local food, score = FindBestFood(inst, target, command, ready_only)
         return food ~= nil and not PreferCarriedFood(inst, command, score)
     end
     local target = FindOwnSack(inst, Wanted)
     if target == nil and not own_only then
-        local x, y, z, range = SearchOrigin(inst)
         local priority, distance
-        for _, entity in ipairs(TheSim:FindEntities(x, y, z, range, nil, CANT_TAGS)) do
-            if IsAvailable(inst, entity) and Wanted(entity) then
-                -- The carried sack was checked first. Prefer fridges to
-                -- saltboxes, then gelblob holders; distance breaks ties.
-                local p = entity.prefab == "gelblob_storage" and 3
-                    or entity.prefab == "saltbox" and 2 or 1
+        local sources = StoredFoodSources(inst)
+        -- Item holders use the native take/return path and are discovered
+        -- only when no ordinary storage can provide this meal.
+        for _, entity in ipairs(sources) do
+            if Wanted(entity) then
+                local p = (entity:HasTag("fridge") or entity.prefab == "icebox") and 1
+                    or entity.prefab == "saltbox" and 2 or 3
                 local d = inst:GetDistanceSqToInst(entity)
                 if priority == nil or p < priority or p == priority and d < distance then
                     target, priority, distance = entity, p, d
                 end
             end
         end
+        if target == nil then
+            local x, y, z, range, moving = SearchOrigin(inst)
+            for _, entity in ipairs(Discovery.Query(inst, "food_holders", "structures",
+                x, y, z, range, {"structure"}, CANT_TAGS, nil, moving)) do
+                if entity.prefab == "gelblob_storage" and entity:GetDistanceSqToPoint(x, y, z) <= range^2
+                    and IsAvailable(inst, entity) and Wanted(entity) then
+                    local d = inst:GetDistanceSqToInst(entity)
+                    if distance == nil or d < distance then target, distance = entity, d end
+                end
+            end
+        end
     end
     if target == nil then return end
-    meal = {target = target, command = command, deadline = GetTime() + 40}
+    meal = {target = target, command = command, ready_only = ready_only, deadline = GetTime() + 40}
     inst._my_friend_meal = meal
     inst._my_friend_container_action = true
     inst._my_friend_container_target = target
@@ -358,17 +417,44 @@ function M.GetCommandFoodAction(inst, command)
     return GetMealAction(inst, command, false)
 end
 
-function M.GetFoodAction(inst)
+function M.GetFoodAction(inst, allow_stock)
     if inst._my_friend_command ~= nil and inst._my_friend_command.id == "food" then return end
-    if inst._my_friend_meal == nil and inst.components.hunger ~= nil
-        and inst.components.hunger:GetPercent() >= .25 then
-        local cooking = require("my_friend_recipe_cooking")
-        if cooking.Score(inst) > 0 then
-            local action = cooking.GetAction(inst)
-            if action ~= nil then return action end
+    local action = GetMealAction(inst, nil, false, not FoodAI.IsEmergency(inst))
+    if action ~= nil or allow_stock == false or inst._my_friend_command ~= nil
+        or not CanAct(inst) or inst._my_friend_container_action
+        or Policy.IsFollowGatheringPaused(inst)
+        or inst._my_friend_storage_action or LightAI.IsDark(inst)
+        or not FoodAI.NeedsFoodSupply(inst) then return action end
+    local target, food, best, distance
+    for _, source in ipairs(StoredFoodSources(inst)) do
+        for _, item in ipairs(GetItems(source)) do
+            local ready, calories = M.IsReadyMeal(inst, item)
+            if ready and calories > 0 and inst.components.inventory:CanAcceptCount(item, 1) > 0 then
+                local d = inst:GetDistanceSqToInst(source)
+                if best == nil or calories > best or calories == best and d < distance then
+                    target, food, best, distance = source, item, calories, d
+                end
+            end
         end
     end
-    return GetMealAction(inst, nil, false)
+    if food == nil then return end
+    local shortage = FoodAI.GetFoodSupplyTarget(inst) - FoodAI.GetFoodSupply(inst)
+    if shortage <= 0 then return end
+    local count = math.min(Count(food), math.ceil(shortage / best))
+    action = BufferedAction(inst, target, ACTIONS.MY_FRIEND_WITHDRAW, food)
+    action._my_friend_withdraw_count = math.min(count, inst.components.inventory:CanAcceptCount(food, count))
+    action.validfn = function()
+        local x, y, z, radius = SearchOrigin(inst)
+        if inst._my_friend_command ~= nil or Policy.IsFollowGatheringPaused(inst) or not IsAvailable(inst, target)
+            or target:GetDistanceSqToPoint(x, y, z) > radius^2 then return false end
+        local ready, calories = M.IsReadyMeal(inst, food)
+        if not ready or calories <= 0 or food.components.inventoryitem.owner ~= target then return false end
+        local missing = FoodAI.GetFoodSupplyTarget(inst) - FoodAI.GetFoodSupply(inst)
+        action._my_friend_withdraw_count = math.min(count, math.ceil(missing / calories))
+        return action._my_friend_withdraw_count > 0
+    end
+    action:AddSuccessAction(function() inst._my_friend_food_supply_cache = nil end)
+    return Policy.GuardAction(inst, action)
 end
 
 function M.GetReturnFoodAction(inst)
@@ -451,11 +537,9 @@ local function GetLightContainerAction(inst)
     if not CanAct(inst) or inst._my_friend_container_action then return end
     if GetTime() < (inst._my_friend_container_next_light or 0) then return end
     inst._my_friend_container_next_light = GetTime() + 1
-    local x, y, z, range = SearchOrigin(inst)
     local target, distance
-    for _, entity in ipairs(TheSim:FindEntities(x, y, z, range, nil, CANT_TAGS)) do
-        if IsAvailable(inst, entity) and entity.components.container ~= nil
-            and FindLightSupply(inst, entity.components.container) ~= nil then
+    for _, entity in ipairs(StoredFoodSources(inst)) do
+        if FindLightSupply(inst, entity.components.container) ~= nil then
             local d = inst:GetDistanceSqToInst(entity)
             if distance == nil or d < distance then target, distance = entity, d end
         end

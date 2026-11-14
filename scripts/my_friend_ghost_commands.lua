@@ -57,7 +57,6 @@ end
 function M.Cancel(inst)
     if inst._my_friend_ghost_revive ~= nil then Replan(inst) end
     inst._my_friend_ghost_revive = nil
-    inst._my_friend_portal_revive_requested, inst._my_friend_portal_target = nil, nil
 end
 
 function M.Request(inst, player, portal)
@@ -83,25 +82,12 @@ end
 local function GetRequest(inst)
     local request = inst._my_friend_ghost_revive
     if request == nil then return end
-    if GetTime() >= request.deadline or not request.automatic
-        and (not Policy.IsLocalPlayer(request.player) or Policy.GetLeader(inst) ~= request.leader) then
+    if GetTime() >= request.deadline or not Policy.IsLocalPlayer(request.player)
+        or Policy.GetLeader(inst) ~= request.leader then
         M.Cancel(inst)
         return
     end
     return request
-end
-
-function M.RequestAutomatic(inst)
-    if not IsGhost(inst) or GetRequest(inst) ~= nil then return false end
-    local request = {automatic = true, portal = true, origin = inst:GetPosition(),
-        failed = {}, deadline = GetTime() + M.TIMEOUT}
-    request.target = FindTarget(inst, request)
-    if request.target == nil then return false end
-    require("my_friend_commands").Clear(inst)
-    M.Cancel(inst)
-    inst._my_friend_ghost_revive = request
-    Replan(inst)
-    return true
 end
 
 function M.Score(inst)
@@ -111,8 +97,7 @@ end
 
 function M.GetAction(inst)
     local request = GetRequest(inst)
-    if request == nil then return require("my_friend_revive_ai").GetPortalAction(inst) end
-    if not IsGhost(inst) or Policy.IsBusy(inst) then return end
+    if request == nil or not IsGhost(inst) or Policy.IsBusy(inst) then return end
     if request.wait_until ~= nil then
         if GetTime() < request.wait_until then return end
         request.failed[request.target.GUID or request.target] = true
@@ -155,39 +140,27 @@ function M.OnRespawned(inst)
     if request == nil then return end
     request.returning, request.wait_until = true, nil
     request.deadline = GetTime() + M.TIMEOUT
-    if request.automatic then
-        local point = inst._my_friend_death_point
-        if point == nil then M.Cancel(inst) return end
-        request.origin = Vector3(point.x, 0, point.z)
-        inst._my_friend_auto_recovery_point = request.origin
-    end
     Replan(inst)
-    if not request.automatic then Dialogue.Reply(inst, "ghost_revive_return") end
+    Dialogue.Reply(inst, "ghost_revive_return")
 end
 
 function M.ReturnScore(inst, context)
     local request = GetRequest(inst)
     if context ~= nil and (context.dark or context.thermal or (context.hunger or 1) < .4) then return 0 end
     return request ~= nil and request.returning and not IsGhost(inst)
-        and (request.automatic and 118 or 112) or 0
+        and 112 or 0
 end
 
 function M.GetReturnAction(inst)
     local request = GetRequest(inst)
     if request == nil or not request.returning or IsGhost(inst) or Policy.IsBusy(inst) then return end
-    if request.automatic and not require("my_friend_recovery_safety").IsSafe(inst, request.origin) then return end
-    local distance = request.automatic and (inst:GetPosition() - request.origin):LengthSq()
-        or inst:GetDistanceSqToInst(request.player)
-    if distance <= (request.automatic and 3^2 or 5^2) then M.Cancel(inst) return end
-    local action = request.automatic and BufferedAction(inst, nil, ACTIONS.WALKTO, nil, request.origin)
-        or BufferedAction(inst, request.player, ACTIONS.WALKTO)
-    action.arrivedist = request.automatic and 2 or 4
-    require("my_friend_base_ai").SetTask(inst, request.automatic
-        and "正在复活后返回死亡地点" or "正在复活后返回玩家身边")
+    if inst:GetDistanceSqToInst(request.player) <= 5^2 then M.Cancel(inst) return end
+    local action = BufferedAction(inst, request.player, ACTIONS.WALKTO)
+    action.arrivedist = 4
+    require("my_friend_base_ai").SetTask(inst, "正在复活后返回玩家身边")
     action._my_friend_revive_return = request
     action.validfn = function()
         return GetRequest(inst) == request and not IsGhost(inst)
-            and (not request.automatic or require("my_friend_recovery_safety").IsSafe(inst, request.origin))
     end
     action:AddSuccessAction(function()
         if inst._my_friend_ghost_revive == request then M.Cancel(inst) end
@@ -195,7 +168,7 @@ function M.GetReturnAction(inst)
     action:AddFailAction(function()
         if inst._my_friend_ghost_revive == request and not action._my_friend_cancelled then
             M.Cancel(inst)
-            if not request.automatic then Dialogue.Reply(inst, "ghost_revive_return_blocked") end
+            Dialogue.Reply(inst, "ghost_revive_return_blocked")
         end
     end)
     return action

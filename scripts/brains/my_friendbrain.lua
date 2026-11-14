@@ -11,6 +11,7 @@ local BaseAI = require("my_friend_base_ai")
 local Backpacks = require("my_friend_backpacks")
 local ReviveAI = require("my_friend_revive_ai")
 local GhostCommands = require("my_friend_ghost_commands")
+local GhostHelp = require("my_friend_ghost_help")
 local CoreAI = require("my_friend_core_ai")
 local Policy = require("my_friend_policy")
 local CookingAI = require("my_friend_cooking_ai")
@@ -568,12 +569,12 @@ function MyFriendBrain:OnStart()
             and not inst._my_friend_under_threat
             and (inst.components.combat == nil or inst.components.combat.target == nil)
     end
-    Action("revive", function(c) return c.ghost and math.max(150, GhostCommands.Score(inst)) or 0 end,
+    Action("revive", function(c) return c.ghost and GhostCommands.Score(inst) or 0 end,
         GhostCommands.GetAction, nil, GhostCommands.TIMEOUT, true)
     Action("revive_return", Alive(function(c) return GhostCommands.ReturnScore(inst, c) end),
         GhostCommands.GetReturnAction, nil, GhostCommands.TIMEOUT, true)
     Add("ghost_follow", function(c)
-        return c.ghost and c.leader ~= nil and 151 or 0
+        return c.ghost and c.leader ~= nil and not GhostHelp.IsWaitingForRescue(inst) and 151 or 0
     end, require("behaviours/my_friend_ghost_follow")(inst))
     Add("ghost", function(c) return c.ghost and 149 or 0 end, StandStill(inst))
     -- Saying goodbye before a character change: walk away from everyone and
@@ -663,7 +664,7 @@ function MyFriendBrain:OnStart()
             and require("my_friend_command_tower").IsChanneling(inst) and 118 or 0
     end), StandStill(inst))
     Action("temperature", Alive(function(c)
-        return c.thermal and (c.thermal_shade and 50 or 115) or 0
+        return c.thermal and (c.hot_danger and 128 or c.thermal_shade and 110 or 115) or 0
     end),
         SurvivalAI.GetTemperatureAction, "正在处理体温问题")
     Action("repair", Alive(function(c)
@@ -671,7 +672,7 @@ function MyFriendBrain:OnStart()
     end), require("my_friend_equipment").GetRepairAction,
         "正在修补装备", 12)
     Add("thermal_wait", Alive(function(c)
-        return c.thermal and SurvivalAI.IsNearThermalSource(inst) and 114 or 0
+        return c.thermal and SurvivalAI.IsNearThermalSource(inst) and (c.hot_danger and 127 or 114) or 0
     end), StandStill(inst))
     Action("base_fire", Alive(function(c)
         if c.thermal and SurvivalAI.GetThermalNeed(inst) == "hot" then return 0 end
@@ -716,8 +717,12 @@ function MyFriendBrain:OnStart()
         require("my_friend_rescue").GetAction, "正在救助附近死去的玩家", 20)
     Action("recovery_delivery", Alive(function(c) return c.leader == nil and 79 or 0 end),
         BaseAI.GetRecoveryDeliveryAction, "正在把找回的物资送回基地", 120)
-    Action("container_food", Alive(function(c) return c.emergency_food and 121 or c.hunger < .4 and 95 or 61 end),
-        ContainerAI.GetFoodAction, "正在从容器进食")
+    Action("container_food", Alive(function(c) return c.emergency_food and 121 or 109 end),
+        function(actor)
+            local body = actor._my_friend_body
+            return ContainerAI.GetFoodAction(actor, body == nil
+                or body.active == nil and not require("my_friend_body_api").PlanActive(actor))
+        end, "正在从容器取用食物", 35)
     Action("butterfly_hunt", Alive(function(c)
         return require("my_friend_butterfly").Score(inst, c)
     end), require("my_friend_butterfly").GetSurvivalAction, "正在捕蝶并收集掉落物", 18)
@@ -962,6 +967,11 @@ function MyFriendBrain:OnStart()
         end
         local hurt = GetTime() < (inst._my_friend_hurt_until or 0)
         local emergency_food = not ghost and FoodAI.IsEmergency(inst) or false
+        local temperature = inst.components.temperature
+        local hot_danger = temperature ~= nil and temperature.current >= temperature.overheattemp - 2
+        if temperature == nil or temperature.current <= temperature.overheattemp - SurvivalAI.HOT_START_MARGIN then
+            inst._my_friend_heat_damage_pending = nil
+        end
         local thermal = not ghost and SurvivalAI.NeedsTemperatureHelp(inst) or false
         local wait_active = GetTime() < (inst._my_friend_wait_until or 0)
             and threat == nil and not hurt and not hurt_evade
@@ -986,6 +996,7 @@ function MyFriendBrain:OnStart()
             dark = dark,
             thermal_shade = not ghost and SurvivalAI.IsShadeComfortOnly(inst) or false,
             thermal = thermal,
+            hot_danger = hot_danger,
             needsfood = not ghost and FoodAI.NeedsFoodSupply(inst),
             reserve = ghost or LightAI.HasLightReserve(inst),
             full = not ghost and BaseAI.GetStoragePressure(inst),

@@ -88,6 +88,7 @@ end
 
 function M.CanStoreCount(inst, target, item, count)
     if not IsCarriedBy(inst, item) or item.components.inventoryitem.islockedinslot then return 0 end
+    if require("my_friend_equipment_reserves").IsCharacterEquipment(inst, item) then return 0 end
     local c = target ~= nil and target:IsValid() and target.components.container or nil
     if c == nil or not c.canbeopened or c.readonlycontainer or c:IsRestricted(inst)
         or c:IsOpenedByOthers(inst) or not c:CanTakeItemInSlot(item) then return 0 end

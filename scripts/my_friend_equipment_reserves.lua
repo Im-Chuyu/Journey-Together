@@ -2,6 +2,7 @@ local Survival = require("my_friend_survival_ai")
 local LightAI = require("my_friend_light_ai")
 local M = {}
 local EquipSlots = require("my_friend_equip_slots")
+local SpDamage = require("components/spdamageutil")
 
 local function Size(item)
     return item.components.stackable ~= nil and item.components.stackable:StackSize() or 1
@@ -9,13 +10,36 @@ end
 
 local function Better(a, b)
     if b == nil then return true end
+    if a.priority ~= b.priority then return a.priority end
     if a.usable ~= b.usable then return a.usable end
-    -- Healthy equipped gear already fills the reserve for identical gifts.
-    if a.item.prefab == b.item.prefab and a.durability >= .15 and b.durability >= .15
-        and a.equipped ~= b.equipped then return a.equipped end
     if a.value ~= b.value then return a.value > b.value end
     if a.durability ~= b.durability then return a.durability > b.durability end
-    return a.equipped and not b.equipped
+    if a.equipped ~= b.equipped then return a.equipped end
+    return (a.item.GUID or 0) < (b.item.GUID or 0)
+end
+
+function M.IsCharacterEquipment(inst, item)
+    if item == nil or not item:IsValid() then return false end
+    if inst.prefab == "wathgrithr" then
+        return require("my_friend_wathgrithr").IsSpear(item)
+    end
+    return inst.prefab == "wanda" and (item.components.pocketwatch ~= nil
+        or item.prefab == "pocketwatch_weapon" or item.prefab == "nightmarefuel")
+        or inst.prefab == "wortox" and item.prefab == "wortox_soul"
+end
+
+function M.WeaponValue(item)
+    local weapon = item.components.weapon
+    if weapon == nil then return 0 end
+    local damage = weapon.damage
+    if type(damage) == "function" then
+        -- Read the advertised base value without invoking target callbacks.
+        damage = item.scrapbook_weapondamage
+        if type(damage) == "table" then damage = damage[1] end
+        if type(damage) ~= "number" then damage = TUNING.SPEAR_DAMAGE end
+    end
+    return (type(damage) == "number" and damage or 0)
+        + SpDamage.CalcTotalDamage(SpDamage.CollectSpDamage(item))
 end
 
 function M.GetKeep(inst)
@@ -27,12 +51,14 @@ function M.GetKeep(inst)
         local item = inventory:GetEquippedItem(slot)
         if item ~= nil then equipped[item], keep[item] = true, Size(item) end
     end
-    local items, usable_prefabs, player_prefabs = inventory:ReferenceAllItems(), {}, {}
+    local items, usable_prefabs, player_prefabs, seen = inventory:ReferenceAllItems(), {}, {}, {}
+    local active = inventory.GetActiveItem ~= nil and inventory:GetActiveItem() or nil
     for _, item in ipairs(items) do
         local c = item.components
         if item:IsValid() and c ~= nil and c.inventoryitem ~= nil
             and c.inventoryitem:GetGrandOwner() == inst then
             if (Survival.GetDurabilityPercent(item) or 1) > Survival.EQUIPMENT_WEAR_LIMIT
+                and not item:HasTag("broken")
                 and (c.equippable == nil or c.equippable.IsRestricted == nil
                     or not c.equippable:IsRestricted(inst)) then
                 usable_prefabs[item.prefab] = true
@@ -45,17 +71,20 @@ function M.GetKeep(inst)
     for _, item in ipairs(items) do
         local c = item.components
         local ii = c ~= nil and c.inventoryitem or nil
-        if item:IsValid() and ii ~= nil and ii:GetGrandOwner() == inst then
+        if not seen[item] and item:IsValid() and ii ~= nil and ii:GetGrandOwner() == inst then
+            seen[item] = true
             local durability = Survival.GetDurabilityPercent(item) or 1
             local eq = c.equippable
             local allowed = eq == nil or eq.IsRestricted == nil or not eq:IsRestricted(inst)
             -- Compare each purpose independently of current weather or activity.
             -- A single item can cover several purposes without extra copies.
-            local function Reserve(role, value)
+            local function Reserve(role, value, combat)
                 if not allowed or type(value) ~= "number" or value <= 0 then return end
                 local candidate = {item = item, value = value, durability = durability,
-                    usable = durability > Survival.EQUIPMENT_WEAR_LIMIT, equipped = equipped[item] == true}
-                local choices = roles[role] or {}
+                    usable = durability > Survival.EQUIPMENT_WEAR_LIMIT and not item:HasTag("broken"),
+                    equipped = equipped[item] == true,
+                    priority = combat == true and (equipped[item] == true or ii.islockedinslot == true)}
+                local choices = roles[role] or {combat = combat}
                 roles[role] = choices
                 if Better(candidate, choices[1]) then
                     choices[2], choices[1] = choices[1], candidate
@@ -66,9 +95,7 @@ function M.GetKeep(inst)
             if ii.islockedinslot or item:HasAnyTag("backpack", "heatrock", "irreplaceable") then
                 keep[item] = Size(item)
             end
-            if inst.prefab == "wanda" and (c.pocketwatch ~= nil
-                or item.prefab == "pocketwatch_weapon" or item.prefab == "nightmarefuel")
-                or inst.prefab == "wortox" and item.prefab == "wortox_soul" then
+            if M.IsCharacterEquipment(inst, item) then
                 keep[item] = Size(item)
             end
             if player_prefabs[item.prefab] then
@@ -82,16 +109,20 @@ function M.GetKeep(inst)
             if eq ~= nil then
                 local slot = tostring(eq.equipslot)
                 local weapon = c.weapon
-                if weapon ~= nil and eq.equipslot == EQUIPSLOTS.HANDS then
-                    if type(weapon.damage) == "number" then
-                        Reserve(weapon.projectile ~= nil and "ranged" or "melee", weapon.damage)
-                    else
-                        -- Keep one of each target-dependent weapon without
-                        -- evaluating its damage function against a fake enemy.
-                        Reserve("weapon:" .. item.prefab, 1)
+                if weapon ~= nil and eq.equipslot == EQUIPSLOTS.HANDS
+                    and not item:HasTag("torch") and item.prefab ~= "torch" then
+                    local value = M.WeaponValue(item)
+                    if c.tool == nil or value >= TUNING.SPEAR_DAMAGE then
+                        local ranged = weapon.projectile ~= nil or c.projectile ~= nil
+                            or item:HasTag("rangedweapon") or (weapon.attackrange or 0) > 3
+                        Reserve(ranged and "ranged" or "melee", value, true)
                     end
                 end
-                if c.armor ~= nil then Reserve("armor:" .. slot, c.armor.absorb_percent or .6) end
+                local planar = SpDamage.GetSpDefenseForType(item, "planar")
+                if c.armor ~= nil or planar > 0 then
+                    local absorption = c.armor ~= nil and (c.armor.absorb_percent or .6) or 0
+                    Reserve("armor:" .. slot, absorption * 100 + planar, true)
+                end
                 if c.waterproofer ~= nil then Reserve("rain:" .. slot, c.waterproofer:GetEffectiveness()) end
                 Reserve("cold:" .. slot, Survival.GetInsulationValue(item, "cold"))
                 Reserve("hot:" .. slot, Survival.GetInsulationValue(item, "hot"))
@@ -119,11 +150,19 @@ function M.GetKeep(inst)
     end
     for _, choices in pairs(roles) do
         local best = choices[1]
-        keep[best.item] = Size(best.item)
-        if best.durability < .15 and choices[2] ~= nil and choices[2].usable then
-            keep[choices[2].item] = Size(choices[2].item)
+        local amount = choices.combat and math.min(2, Size(best.item)) or Size(best.item)
+        keep[best.item] = math.max(keep[best.item] or 0, amount)
+        local next_choice = choices[2]
+        if next_choice ~= nil then
+            local item = next_choice.item
+            local repairable = item.components.forgerepairable ~= nil or item:HasTag("needssewing")
+            if choices.combat and amount < 2 and (next_choice.usable or repairable)
+                or not choices.combat and best.durability < .15 and next_choice.usable then
+                keep[item] = math.max(keep[item] or 0, choices.combat and 1 or Size(item))
+            end
         end
     end
+    if active ~= nil and active:IsValid() then keep[active] = Size(active) end
     return keep
 end
 

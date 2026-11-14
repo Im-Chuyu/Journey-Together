@@ -3,6 +3,7 @@ import argparse
 import json
 import os
 import queue
+import signal
 import subprocess
 from .paths import data_dir
 import threading
@@ -24,6 +25,7 @@ def desktop(store, server, language):
     root.geometry("780x720")
     from .settings import load, save, HOTKEYS
     preferences = load()
+    model_config_path = getattr(store, "model_config_path", None)
     voice_hotkey = tk.StringVar(value=preferences.get("voice_hotkey", "F9"))
     hotkey = VoiceHotkey()
     voice = WindowsVoice(language, preferences)
@@ -53,13 +55,13 @@ def desktop(store, server, language):
             ttk.Button(setup, text="扩展所在文件夹", command=lambda: os.startfile(str(extension_folder))).pack(side="left", padx=5)
         ttk.Label(root, text="首次加载扩展，登录DeepSeek或豆包，在所选聊天页连接；支持自动新建对话。").pack(anchor="w", padx=12)
     if getattr(store.adapter, "diagnostics_kind", None) == "api":
-        from .api_config import ROOT
-        ttk.Button(setup, text="API配置文件", command=lambda: os.startfile(str(ROOT / "AssistantAPI.json"))).pack(side="left", padx=5)
-        ttk.Label(root, text="API模式直接连接DeepSeek；修改AssistantAPI.json后重启助手。用量按DeepSeek账单计费。").pack(anchor="w", padx=12)
+        from .api_config import config_path
+        ttk.Button(setup, text="API配置文件", command=lambda: os.startfile(str(model_config_path or config_path()))).pack(side="left", padx=5)
+        ttk.Label(root, text="API设置在重启助手后生效，调用费用由所选平台结算。").pack(anchor="w", padx=12)
     ttk.Button(setup, text="诊断日志", command=lambda: os.startfile(str(data_dir() / "logs"))).pack(side="left", padx=5)
     def model_settings():
         from .api_settings import show
-        show(root)
+        show(root, model_config_path)
     ttk.Button(setup, text="大模型设置", command=model_settings).pack(side="left", padx=5)
     def pairing_settings():
         window = tk.Toplevel(root); window.title("助手设置")
@@ -394,33 +396,46 @@ def desktop(store, server, language):
 
 
 def main():
+    from . import api_config
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--headless", action="store_true")
+    parser.add_argument("--server", action="store_true", help="Run the assistant without a desktop window for a dedicated server")
+    parser.add_argument("--config", type=Path, help="Assistant configuration JSON")
     parser.add_argument("--adapter", help="Explicit local provider adapter .py file")
-    parser.add_argument("--provider", choices=("auto", "demo", "web", "deepseek-api", "deepseek-web", "doubao-web"), default="auto")
-    parser.add_argument("--pair-code", help="Optional six-digit code; otherwise randomly generated")
+    parser.add_argument("--provider", choices=api_config.PROVIDERS, default="auto")
+    parser.add_argument("--pair-code", help="Override the configured six-digit game pairing code")
+    parser.add_argument("--check-config", action="store_true", help="Validate configuration without starting the listener or calling the model")
     parser.add_argument("--speech-language", default="zh-CN")
     parser.add_argument("--voice-check", action="store_true")
     args = parser.parse_args()
     if args.voice_check:
         print(json.dumps(WindowsVoice(args.speech_language).run("check"), ensure_ascii=False)); return
-    from .diagnostics import configure
-    configure()
     from .settings import load, save
-    preferences = load()
     if args.pair_code is not None and (len(args.pair_code) != 6 or not args.pair_code.isascii() or not args.pair_code.isdigit()):
         parser.error("pair-code must be six digits")
-    if args.adapter:
-        adapter = load_adapter(args.adapter)
-    else:
-        from .api_config import select_adapter
-        try:
-            adapter = select_adapter(args.provider, preferences)
-        except ValueError as error:
-            parser.error(str(error))
+    try:
+        config = api_config.load(args.config, provider=args.provider) if (
+            not args.adapter and (args.config is not None or args.provider in ("auto", "deepseek-api"))
+        ) else {}
+        provider = args.provider
+        if args.server and not args.adapter and provider == "auto" and config["provider"] == "auto":
+            provider = "deepseek-api"
+        preferences = load() if not args.check_config else {"web_code": ""}
+        adapter = load_adapter(args.adapter) if args.adapter else api_config.select_adapter(provider, preferences, config)
+    except ValueError as error:
+        parser.error(str(error))
+    if args.check_config:
+        close = getattr(adapter, "close", None)
+        if callable(close):
+            close()
+        print("配置有效。", flush=True)
+        return
+    from .diagnostics import configure
+    configure()
     if args.pair_code:
         preferences["pair_code"] = args.pair_code; save(preferences)
-    store = Store(adapter, preferences["pair_code"])
+    store = Store(adapter, args.pair_code or config.get("pair_code") or preferences["pair_code"])
+    store.model_config_path = args.config
     try:
         server = make_server(store)
     except OSError:
@@ -428,16 +443,24 @@ def main():
         parser.exit(1, "本机端口 18766 已被占用；请检查是否已打开伙伴助手。\n")
     threading.Thread(target=server.serve_forever, daemon=True).start()
     print(f"Loopback assistant: http://127.0.0.1:18766; mode={getattr(store.adapter, 'label', type(store.adapter).__name__)}", flush=True)
-    print(f'Game console: c_myfriend_ai("start", "{store.code}")', flush=True)
+    if args.server:
+        print("正在等待专服自动配对，请确认游戏启用了 AI 大模型模式和常规配对。", flush=True)
+    else:
+        print(f'Game console: c_myfriend_ai("start", "{store.code}")', flush=True)
+    stop = threading.Event()
+    previous_term = signal.signal(signal.SIGTERM, lambda *_: stop.set()) if args.server else None
     try:
-        if args.headless:
-            print("Local automation client token: " + store.client_token, flush=True)
-            threading.Event().wait()
+        if args.headless or args.server:
+            if not args.server:
+                print("Local automation client token: " + store.client_token, flush=True)
+            stop.wait()
         else:
             desktop(store, server, args.speech_language)
     except KeyboardInterrupt:
         pass
     finally:
+        if previous_term is not None:
+            signal.signal(signal.SIGTERM, previous_term)
         store.close(); server.shutdown(); server.server_close()
 
 

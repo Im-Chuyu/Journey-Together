@@ -390,7 +390,7 @@ craft原生条件失败时返回同口径材料/科技状态，stage=craft_block
 
 ## DeepSeek API接入（2026-11-04）
 
-助手默认provider=auto，读取根目录AssistantAPI.json：有Key使用deepseek-api，无Key保留web；--provider可显式选择。API配置独立于.local/settings.json，后者仍只保存原配对/语音偏好。API Key只由本机Python通过HTTPS Authorization发往api.deepseek.com，不进入游戏RPC/日志或网页扩展。发布导出使用代码默认值生成空配置，不复制实际配置或可能填过Key的示例。
+桌面助手默认 `provider=auto`，读取根目录 `AssistantAPI.json`，有 Key 使用 DeepSeek API，无 Key 使用网页。Linux 专服脚本的 `auto` 选择 DeepSeek API，`provider` 或命令行可显式选择模式。配置可填写六位 `pair_code`，留空沿用 `.local/settings.json`。支持 `--config` 和 `MY_FRIEND_ASSISTANT_CONFIG` 指定文件位置。API Key 由助手通过 HTTPS Authorization 发往 api.deepseek.com，不进入游戏 RPC、日志或网页扩展。发布导出使用代码默认值生成空配置。
 
 API把现有tools转换成原生function定义；只允许本次tools内的单个顶层工具，Schema基本校验后复用Store执行和Lua最终校验。可选顶层_text/_plan转为原有text/plan，不下传为动作参数；多步用execute_sequence。游戏回执与tool_call_id对应，reasoning_content按官方要求在同一任务回传；新任务/取消清理上下文，迟到响应不再执行。仅API输出规则替换网页JSON输出部分，共享游戏语义说明，接口Schema不重复塞进user数据。
 

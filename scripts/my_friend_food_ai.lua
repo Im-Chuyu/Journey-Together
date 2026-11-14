@@ -94,6 +94,13 @@ local function HasMeaningfulRecovery(health, hunger, sanity)
         or math.max(0, sanity or 0) >= 5
 end
 
+local function IsWorthEating(food, health, hunger, sanity)
+    -- Seasonal candy is a small snack. Keep the normal minimum for food
+    -- gathering and reserves, which target substantial supplies.
+    return HasMeaningfulRecovery(health, hunger, sanity)
+        or food:HasTag("halloweencandy") and (health > 0 or hunger > 0 or sanity > 0)
+end
+
 function M.IsUsableFood(inst, food)
     if food == nil or IsSeedFood(food) or M.IsForbiddenFood(food) then return false end
     if food.components == nil or food.components.edible == nil
@@ -146,8 +153,26 @@ end
 
 function M.GetStats(inst) return GetStats(inst) end
 
-function M.NeedsRecipeRecovery(inst)
-    local stats = GetStats(inst)
+function M.GetMealHealthDeficit(inst, stats)
+    stats = stats or GetStats(inst)
+    if stats ~= nil and stats.healthpercent < HEALTH_THRESHOLD and stats.hungerpercent > .35 then
+        return stats.healthmax - stats.health
+    end
+end
+
+function M.MealMatchesRecovery(inst, food, stats)
+    stats = stats or GetStats(inst)
+    if stats == nil or not M.NeedsRecipeRecovery(inst, stats) then return true end
+    local recovery, _, health = M.Evaluate(inst, food, stats)
+    local missing = M.GetMealHealthDeficit(inst, stats)
+    if missing ~= nil then
+        return recovery ~= nil and health >= math.min(20, missing)
+    end
+    return recovery ~= nil
+end
+
+function M.NeedsRecipeRecovery(inst, stats)
+    stats = stats or GetStats(inst)
     return stats ~= nil and (stats.healthpercent < .90
         or stats.hungerpercent < .65 or stats.sanitypercent < .60)
 end
@@ -434,9 +459,7 @@ function M.Evaluate(inst, food, stats)
     if stats == nil then return end
     local health, hunger, sanity = GetFoodDeltas(inst, food)
     if not IsSafeHealthDelta(inst, health) then return end
-    -- Tiny recovery items such as ice and light bulbs are never worth an
-    -- eating action. This rule also applies during emergencies.
-    if not HasMeaningfulRecovery(health, hunger, sanity) then return end
+    if not IsWorthEating(food, health, hunger, sanity) then return end
     if M.IsForbiddenFood(food) then return end
     if M.IsEmergency(inst, stats) then
         -- Actual eater deltas include spoilage, food memory and character
@@ -590,7 +613,7 @@ function M.CommandScore(inst, food, positive_only)
         return score, score ~= nil
     end
     local health, hunger, sanity = GetFoodDeltas(inst, food)
-    if not HasMeaningfulRecovery(health, hunger, sanity) then return end
+    if not IsWorthEating(food, health, hunger, sanity) then return end
     if not IsSafeHealthDelta(inst, health) then return end
     if hunger < 0 and inst.components.hunger.current + hunger <= 0 then return end
     local positive = health >= 0 and hunger >= 0 and sanity >= 0
@@ -686,13 +709,17 @@ function M.GetFoodSupply(inst)
 end
 
 function M.NeedsFoodSupply(inst)
+    return M.GetFoodSupply(inst) < M.GetFoodSupplyTarget(inst)
+end
+
+function M.GetFoodSupplyTarget(inst)
     local follower = inst.components.follower
     local leader = follower ~= nil and follower:GetLeader() or nil
     local days = leader ~= nil and leader:IsValid() and 1 or 2
     if days == 2 and (inst._my_friend_base == nil or not inst._my_friend_base.complete) then
         days = 1
     end
-    return M.GetFoodSupply(inst) < M.GetDailyHunger(inst) * days
+    return M.GetDailyHunger(inst) * days
 end
 
 function M.GetDailyHunger(inst)

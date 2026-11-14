@@ -73,7 +73,7 @@ end
 
 local function IsTidyItem(inst, item, pressure)
     if item == nil or not item:IsValid() or IsEquipped(inst, item)
-        or Inventory.IsPlayerProtected(item)
+        or Inventory.IsPlayerProtected(item) or EquipmentReserves.IsCharacterEquipment(inst, item)
         or item:HasAnyTag("irreplaceable", "heavy", "backpack", "heatrock") then return false end
     if item.components.edible ~= nil and not IsMaterial(item) then return false end
     return item.components.equippable ~= nil or item.components.tool ~= nil
@@ -237,7 +237,8 @@ function M.GetAction(inst, command)
     for _, item in ipairs(inv:ReferenceAllItems()) do
         local surplus = (totals[item.prefab] or 0) - (command.initial_items[item.prefab] or 0)
         surplus = math.min(surplus, math.max(0, Count(item) - (equipment[item] or 0)))
-        if surplus > 0 and (command.id == "tidy" or command.id == "seeds" and M.IsSeed(item)) then
+        if surplus > 0 and not EquipmentReserves.IsCharacterEquipment(inst, item)
+            and (command.id == "tidy" or command.id == "seeds" and M.IsSeed(item)) then
             cargo, count = item, math.min(Count(item), surplus)
             break
         end
@@ -268,7 +269,15 @@ function M.GetAction(inst, command)
             end)
             return action
         end
-        return M.HandOver(inst, command, cargo, count)
+        local handover = M.HandOver(inst, command, cargo, count)
+        local valid = handover.validfn
+        handover.validfn = function(act)
+            if not cargo:IsValid() or valid ~= nil and not valid(act) then return false end
+            local surplus = Count(cargo) - (EquipmentReserves.GetKeep(inst)[cargo] or 0)
+            act._my_friend_give_count = math.min(count, surplus)
+            return act._my_friend_give_count > 0
+        end
+        return handover
     end
     local p, best, nearest = player:GetPosition()
     for _, item in ipairs(TheSim:FindEntities(p.x, 0, p.z, 32, {"_inventoryitem"},
