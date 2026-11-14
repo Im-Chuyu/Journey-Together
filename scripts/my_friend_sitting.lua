@@ -1,4 +1,5 @@
 local Policy = require("my_friend_policy")
+local Home = require("my_friend_home")
 local Navigation = require("my_friend_navigation")
 local RouteAction = require("behaviours/my_friend_route_action")
 local M = {}
@@ -34,6 +35,12 @@ local function SeatLeader(inst)
         local api = require("my_friend_body_api")
         if api.Valid(inst) ~= nil and api.Authorize(inst, request.issuer or request.leader) then return request.leader end
     end
+    local decision = inst._my_friend_decision
+    local sitting = inst._my_friend_sitting
+    if leader == nil and (decision ~= nil and decision.task == "free"
+        or sitting ~= nil and sitting.leader == inst) and Home.IsInBase(inst, inst:GetPosition()) then
+        return inst
+    end
     return leader
 end
 
@@ -55,7 +62,7 @@ local function PlayerSeat(leader)
 end
 
 local function Choice(inst, leader)
-    local session = PlayerSeat(leader)
+    local session = leader ~= inst and PlayerSeat(leader) or nil
     local choice = inst._my_friend_sit_choice
     -- SG creates a new statemem for every seating, even on the same chair.
     if choice == nil or choice.leader ~= leader or choice.session ~= session then
@@ -98,6 +105,7 @@ function M.CanUseSeat(inst, chair, leader, range)
         and chair:GetCurrentPlatform() == inst:GetCurrentPlatform()
         and chair:GetDistanceSqToInst(leader) <= range^2
         and chair:GetDistanceSqToInst(inst) <= math.max(12, range)^2
+        and (leader ~= inst or Home.IsInBase(inst, chair:GetPosition()))
         and not Navigation.IsBlocked(inst, chair:GetPosition())
         and not require("my_friend_behavior_ai").IsTargetUnsafe(inst, chair)
 end
@@ -124,6 +132,9 @@ function M.Score(inst, context)
     local active = inst._my_friend_sitting
     if active ~= nil then
         if active.leader ~= leader or active.request ~= nil and active.request ~= request then return 0 end
+        if leader == inst and (not active.chair:IsValid()
+            or active.chair:HasAnyTag("INLIMBO", "fire", "burnt")
+            or not Home.IsInBase(inst, active.chair:GetPosition())) then return 0 end
         return active.request ~= nil and 104 or 11
     end
     if request ~= nil then return not Policy.IsBusy(inst) and 104 or 0 end
@@ -131,9 +142,21 @@ function M.Score(inst, context)
     if not choice.allowed or choice.used or Policy.IsBusy(inst)
         or inst:HasTag("sitting_on_chair")
         or inst:GetDistanceSqToInst(leader) > SEAT_RANGE^2
-        or leader.sg ~= nil and leader.sg:HasStateTag("moving")
-        or GetTime() < (inst._my_friend_next_seat_scan or 0)
+        or leader ~= inst and leader.sg ~= nil and leader.sg:HasStateTag("moving")
         or choice.session == nil and GetTime() < (inst._my_friend_next_rest or 0) then return 0 end
+    if leader == inst then
+        local now = GetTime()
+        if inst._my_friend_next_rest == nil then
+            inst._my_friend_next_rest = now + math.random(20, 40)
+            return 0
+        end
+        if now >= (inst._my_friend_next_seat_scan or 0) then
+            inst._my_friend_next_seat_scan = now + 5
+            choice.chair = M.FindSeat(inst, inst, false)
+        end
+        return choice.chair ~= nil and 11 or 0
+    end
+    if GetTime() < (inst._my_friend_next_seat_scan or 0) then return 0 end
     return 11
 end
 
@@ -150,8 +173,9 @@ function Sit:Visit()
         local request = Request(inst, leader)
         local choice = Choice(inst, leader)
         local range = request ~= nil and COMMAND_RANGE or SEAT_RANGE
-        local chair = request ~= nil and request.chair
-            or M.FindSeat(inst, leader, choice.session ~= nil)
+        local chair = request ~= nil and request.chair or choice.chair
+        if chair == nil and leader ~= inst then chair = M.FindSeat(inst, leader, choice.session ~= nil) end
+        choice.chair = nil
         if not M.CanUseSeat(inst, chair, leader, range) then
             chair = request ~= nil and not request.strict and M.FindSeat(inst, leader, false, range) or nil
         end
@@ -174,7 +198,17 @@ function Sit:Visit()
         -- rest afterwards so the selector does not immediately resume walking.
         self.route = RouteAction(inst, function()
             if not M.CanUseSeat(inst, chair, leader, range) then return end
-            return BufferedAction(inst, chair, ACTIONS.SITON)
+            local action = BufferedAction(inst, chair, ACTIONS.SITON)
+            if leader == inst then
+                action.validfn = function()
+                    local seat = chair.components.sittable
+                    return SeatLeader(inst) == inst and Home.IsInBase(inst, chair:GetPosition())
+                        and chair:GetCurrentPlatform() == inst:GetCurrentPlatform()
+                        and not chair:HasAnyTag("INLIMBO", "fire", "burnt")
+                        and seat ~= nil and not seat:IsOccupied()
+                end
+            end
+            return action
         end, "WalkToSeat", false, 12, true)
     end
     if self.status ~= RUNNING then return end

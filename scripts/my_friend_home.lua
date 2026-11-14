@@ -65,6 +65,14 @@ function M.IsPointInRange(inst, point)
     return (point.x - home.x)^2 + (point.z - home.z)^2 <= limit * limit
 end
 
+function M.IsInBase(inst, point)
+    local mode = M.Mode(inst)
+    local base = mode == "base" and M.Get(inst) or mode == nil and inst._my_friend_base or nil
+    if base == nil or (mode == nil and not base.complete) or base.x == nil or base.z == nil then return false end
+    local radius = mode == "base" and M.MANUAL_BASE_RADIUS or M.AUTO_BASE_STRUCTURE_RANGE
+    return (point.x - base.x)^2 + (point.z - base.z)^2 <= radius^2
+end
+
 -- Read current-shard scalar memory only: observation must never create a home
 -- or invoke construction/discovery. Waiting and roaming circles are not bases.
 function M.Status(inst)

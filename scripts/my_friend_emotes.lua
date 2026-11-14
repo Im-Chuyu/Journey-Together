@@ -1,4 +1,5 @@
 local Policy = require("my_friend_policy")
+local Home = require("my_friend_home")
 local M = {}
 
 local function Same(a, b)
@@ -37,14 +38,19 @@ function M.PlayBody(inst, data)
     return inst.sg.currentstate.name == "emote"
 end
 
-function M.Available(inst)
+function M.Available(inst, allow_base)
+    if not inst:IsValid() then return false end
     local leader = Policy.GetLeader(inst)
-    return inst:IsValid() and leader ~= nil and Policy.IsLocalPlayer(leader)
-        and not inst:HasTag("playerghost") and not leader:HasTag("playerghost")
-        and not inst.components.health:IsDead() and inst:GetDistanceSqToInst(leader) <= 7^2
+    if leader ~= nil then
+        if not Policy.IsLocalPlayer(leader) or leader:HasTag("playerghost")
+            or inst:GetDistanceSqToInst(leader) > 7^2
+            or inst:GetCurrentPlatform() ~= leader:GetCurrentPlatform() then return false end
+    elseif not allow_base or not Home.IsInBase(inst, inst:GetPosition()) then
+        return false
+    end
+    return not inst:HasTag("playerghost") and not inst.components.health:IsDead()
         and inst.sg ~= nil and not inst.sg:HasAnyStateTag("sleeping", "floating", "nopredict")
         and not inst.components.inventory:IsHeavyLifting()
-        and inst:GetCurrentPlatform() == leader:GetCurrentPlatform()
         and inst._my_friend_command == nil and not inst._my_friend_under_threat
         and inst.components.combat.target == nil and inst:GetBufferedAction() == nil
         and inst._my_friend_backpack_target == nil and not inst._my_friend_container_action
@@ -101,9 +107,11 @@ function M.OnPlayerEmote(player, data)
 end
 
 function M.TryIdle(inst)
-    if inst._my_friend_pending_emote ~= nil or not M.Available(inst) or Policy.IsBusy(inst) then return end
     local decision = inst._my_friend_decision
-    if decision == nil or decision.task ~= "follow" and decision.task ~= "catch_up_mount" then return end
+    if decision == nil or (decision.task ~= "follow" and decision.task ~= "catch_up_mount"
+        and decision.task ~= "free") then return end
+    if inst._my_friend_pending_emote ~= nil or not M.Available(inst, decision.task == "free")
+        or Policy.IsBusy(inst) then return end
     local now = GetTime()
     if inst._my_friend_idle_emote_after == nil then
         inst._my_friend_idle_emote_after = now + math.random(20, 40)
@@ -134,7 +142,7 @@ function M.Score(inst)
     local request = inst._my_friend_pending_emote
     if request == nil then return 0 end
     if request.expires ~= nil and GetTime() >= request.expires
-        or Policy.GetLeader(inst) ~= request.leader or not M.Available(inst) then
+        or Policy.GetLeader(inst) ~= request.leader or not M.Available(inst, request.idle_duration ~= nil) then
         inst._my_friend_pending_emote = nil
         return 0
     end
