@@ -63,12 +63,13 @@ function M.RecipeValue(inst, recipe, stats, health_deficit)
     if eater == nil or not AcceptsType(eater.caneat, recipe.foodtype)
         or not AcceptsType(eater.preferseating, recipe.foodtype) then return end
     local healing = 0
+    local memory = inst.components.foodmemory
+    local multiplier = memory ~= nil and memory:GetFoodMultiplier(recipe.name) or 1
     if health_deficit ~= nil then
-        local memory = inst.components.foodmemory
-        local multiplier = memory ~= nil and memory:GetFoodMultiplier(recipe.name) or 1
         healing = math.min(health_deficit, h * (eater.healthabsorption or 1) * multiplier)
     end
-    return M.NutritionValue(inst, h, f, s, stats), healing
+    return M.NutritionValue(inst, h, f, s, stats), healing,
+        s * (eater.sanityabsorption or 1) * multiplier
 end
 
 -- Score nutrition and ingredient cost against the same current deficits.
@@ -113,24 +114,25 @@ function M.Evaluate(inst, cooker, prefabs, stale_meat, stats, health_deficit)
         if data == nil then return end
         for tag, value in pairs(data.tags) do tags[tag] = (tags[tag] or 0) + value end
     end
-    local priority, value, valid, duration, product, healing
+    local priority, value, valid, duration, product, healing, sanity
     for _, recipe in pairs(Cooking.recipes[cooker] or {}) do
         local p = recipe.priority or 0
         if (priority == nil or p >= priority) and recipe.test(cooker, names, tags) then
-            local score, recovery = M.RecipeValue(inst, recipe, stats, health_deficit)
+            local score, recovery, sanity_recovery = M.RecipeValue(inst, recipe, stats, health_deficit)
             if priority == nil or p > priority then
                 priority, value, valid, duration = p, score, score ~= nil, recipe.cooktime or 1
-                product, healing = recipe.name, recovery
+                product, healing, sanity = recipe.name, recovery, sanity_recovery
             else
                 product = nil
                 valid = valid and score ~= nil
                 if score ~= nil then value = math.min(value or score, score) end
                 if recovery ~= nil then healing = math.min(healing or recovery, recovery) end
+                if sanity_recovery ~= nil then sanity = math.min(sanity or sanity_recovery, sanity_recovery) end
                 duration = math.max(duration, recipe.cooktime or 1)
             end
         end
     end
-    if valid then return value, duration, product, healing end
+    if valid then return value, duration, product, healing, sanity end
 end
 
 function M.EvaluateSpecific(inst, cooker, prefabs, wanted, stale_meat)
@@ -224,11 +226,13 @@ local function StaleInMix(prefabs, pool)
     return stale
 end
 
-local function FindAutomatic(inst, cooker, pool)
+local function FindAutomatic(inst, cooker, pool, recovery_only)
     local stats = Food.GetStats(inst)
     local health_deficit = Food.GetMealHealthDeficit(inst, stats)
     local healing_target = health_deficit ~= nil and math.min(20, health_deficit) or nil
     local needs_only_health = healing_target ~= nil and stats.hungerpercent >= .65 and stats.sanitypercent >= .60
+    local sanity_target = recovery_only and stats ~= nil and stats.sanitypercent < .60
+        and math.min(10, stats.sanitymax - stats.sanity) or nil
     local selected, used, best, bestscore, best_meatballs, best_meatballs_score = {}, {}, nil, 0, nil, 0
     local best_healing
     local checked = 0
@@ -238,10 +242,14 @@ local function FindAutomatic(inst, cooker, pool)
             checked = checked + 1
             local prefabs = {}
             for _, group in ipairs(selected) do prefabs[#prefabs + 1] = group.prefab end
-            local value, duration, product, healing = M.Evaluate(inst, cooker, prefabs,
+            local value, duration, product, healing, sanity = M.Evaluate(inst, cooker, prefabs,
                 StaleInMix(prefabs, pool), stats, health_deficit)
             if value == nil then return end
             local gain = value - rawvalue
+            if recovery_only then
+                if not (healing_target ~= nil and healing >= healing_target
+                    or sanity_target ~= nil and (sanity or 0) >= sanity_target) then return end
+            end
             if healing_target ~= nil and healing >= healing_target and (best_healing == nil
                 or healing > best_healing.healing or healing == best_healing.healing and gain > best_healing.gain) then
                 best_healing = {prefabs = prefabs, duration = duration, gain = gain, product = product, healing = healing}
@@ -352,8 +360,8 @@ local function SpecificSearch(inst, cooker, pool, wanted)
     return Search(1)
 end
 
-function M.Find(inst, cooker, pool, wanted)
-    if wanted == nil then return FindAutomatic(inst, cooker, pool) end
+function M.Find(inst, cooker, pool, wanted, recovery_only)
+    if wanted == nil then return FindAutomatic(inst, cooker, pool, recovery_only) end
     if Cooking.GetRecipe(cooker, wanted) == nil then return end
     local ingredients = {}
     for _, group in ipairs(pool) do

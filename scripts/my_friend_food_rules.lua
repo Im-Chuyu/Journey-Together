@@ -18,7 +18,8 @@ end
 -- apply roasting's health/freshness filter to an entire pot or to base mode.
 function M.NeedsRoasting(inst, item, health)
     if item == nil or item.components == nil or item.components.cookable == nil
-        or item.components.edible == nil or M.IsProtected(item) then return false end
+        or item.components.edible == nil or M.IsProtected(item)
+        or require("my_friend_food_ai").IsSeedFood(item) then return false end
     if health == nil then health = require("my_friend_food_ai").GetFoodDeltas(inst, item) end
     local perish = item.components.perishable
     return health < 0 or perish ~= nil and perish:GetPercent() < (TUNING.PERISH_STALE or .2)

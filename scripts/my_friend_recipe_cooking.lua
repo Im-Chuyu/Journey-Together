@@ -49,12 +49,23 @@ local function NeedsHealingPlan(inst)
     return Food.GetMealHealthDeficit(inst) ~= nil
 end
 
+local function NeedsNewMeal(inst)
+    return CookCommand(inst) ~= nil or inst._my_friend_recipe_requested ~= nil
+        or not PreferExistingMeals(inst)
+            and (Food.NeedsFoodSupply(inst) or Food.NeedsRecipeRecovery(inst))
+end
+
+local function MatchesMealNeed(inst, plan, healing_needed)
+    return CookCommand(inst) ~= nil or inst._my_friend_recipe_requested ~= nil
+        or (plan.healing_needed == true) == healing_needed
+            and (plan.recovery_only == true) == not Food.NeedsFoodSupply(inst)
+end
+
 local function CanContinuePot(inst, pot, healing_needed)
     local stewer = pot.components.stewer
     local job = pot._my_friend_recipe_job
     return stewer:IsCooking() or stewer:IsDone() or next(pot.components.container:GetAllItems()) ~= nil
-        or (CookCommand(inst) ~= nil or (job.healing_needed == true) == healing_needed)
-            and not PreferExistingMeals(inst)
+        or MatchesMealNeed(inst, job, healing_needed) and NeedsNewMeal(inst)
 end
 
 local function CanPlan(inst)
@@ -226,6 +237,8 @@ end
 local function GetPlan(inst)
     local health_deficit = CookCommand(inst) == nil and Food.GetMealHealthDeficit(inst) or nil
     local healing_needed = health_deficit ~= nil
+    local recovery_only = CookCommand(inst) == nil and inst._my_friend_recipe_requested == nil
+        and not Food.NeedsFoodSupply(inst)
     if CookCommand(inst) == nil then
         local current = inst._my_friend_recipe_pot
         if Owned(inst, current) and Accessible(inst, current) then
@@ -233,8 +246,9 @@ local function GetPlan(inst)
             Forget(inst, current)
         end
         local cache = inst._my_friend_recipe_cache
-        if cache ~= nil and cache.healing_needed == healing_needed and GetTime() < cache.untiltime
-            and (cache.plan == nil or cache.plan.cleanup or not PreferExistingMeals(inst)) then
+        if cache ~= nil and cache.healing_needed == healing_needed
+            and cache.recovery_only == recovery_only and GetTime() < cache.untiltime
+            and (cache.plan == nil or cache.plan.cleanup or NeedsNewMeal(inst)) then
             return cache.pot, cache.plan
         end
     end
@@ -253,7 +267,7 @@ local function GetPlan(inst)
     end
     local wanted = inst._my_friend_recipe_requested
     -- An existing meal takes precedence over opening a new pot.
-    if wanted == nil and PreferExistingMeals(inst) then
+    if wanted == nil and not NeedsNewMeal(inst) then
         inst._my_friend_recipe_cache = nil
         return
     end
@@ -268,7 +282,7 @@ local function GetPlan(inst)
                 -- Keep the pantry centred on the pot while walking between sources.
                 local _, fridges, grounds = Nearby(inst, pot)
                 local pool = Planner.Pool(inst, fridges, grounds)
-                local candidate, searching = Planner.Find(inst, pot.prefab, pool, wanted)
+                local candidate, searching = Planner.Find(inst, pot.prefab, pool, wanted, recovery_only)
                 if searching then return nil, nil, "waiting" end
                 if candidate ~= nil and (plan == nil or healing_needed
                     and (candidate.healing or 0) > (plan.healing or 0)) then
@@ -278,9 +292,11 @@ local function GetPlan(inst)
             end
         end
     end
-    if plan ~= nil and wanted == nil then plan.healing_needed = healing_needed end
+    if plan ~= nil and wanted == nil then
+        plan.healing_needed, plan.recovery_only = healing_needed, recovery_only
+    end
     inst._my_friend_recipe_cache = {pot = chosen, plan = plan,
-        healing_needed = healing_needed, untiltime = GetTime() + 5}
+        healing_needed = healing_needed, recovery_only = recovery_only, untiltime = GetTime() + 5}
     return chosen, plan, chosen == nil and cooking and "waiting" or nil
 end
 
@@ -448,8 +464,8 @@ function M.GetAction(inst)
         return not s:IsCooking() and not s:IsDone() and (needed or Remaining(pot, plan.prefabs)) ~= nil
             and (Owned(inst, pot) or pot._my_friend_recipe_job == nil
                 and pot._my_friend_beefalo_chef == nil and next(c:GetAllItems()) == nil)
-            and (next(c:GetAllItems()) ~= nil or (CookCommand(inst) ~= nil
-                or (plan.healing_needed == true) == NeedsHealingPlan(inst)) and not PreferExistingMeals(inst))
+            and (next(c:GetAllItems()) ~= nil
+                or MatchesMealNeed(inst, plan, NeedsHealingPlan(inst)) and NeedsNewMeal(inst))
     end
     if not Owned(inst, pot) then
         local action = BufferedAction(inst, pot, ACTIONS.MY_FRIEND_OPEN)
@@ -457,7 +473,7 @@ function M.GetAction(inst)
         action:AddSuccessAction(function()
             pot._my_friend_recipe_job = {owner = Pot.OwnerID(inst), prefabs = plan.prefabs,
                 recipe = inst._my_friend_recipe_requested, healing = plan.healing,
-                healing_needed = plan.healing_needed}
+                healing_needed = plan.healing_needed, recovery_only = plan.recovery_only}
             inst._my_friend_recipe_pot = pot
         end)
         return Guard(inst, pot, action, Unchanged)
