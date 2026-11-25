@@ -1,6 +1,6 @@
 -- Which player characters may act as the companion, and the mapping between a
 -- character prefab ("wilson") and the name its save record is written under
--- ("my_friend_wilson"). See DEVELOPER.md section 1.1 for why the save name
+-- ("my_friend_wilson"). See docs/DEVELOPER.md section 1.1 for why the save name
 -- differs from the runtime prefab.
 local M = {}
 

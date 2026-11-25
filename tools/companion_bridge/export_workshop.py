@@ -29,7 +29,7 @@ def main():
     for name in sorted(set(files)):
         path = Path(name)
         if not name or path.parts[0] in {"tests", ".github"} or name in {
-            ".gitattributes", ".gitignore", "AGENTS.md", "DEVELOPER.md", "CONTRIBUTING.md", "CONTRIBUTING.en.md",
+            ".gitattributes", ".gitignore", "AGENTS.md", "CONTRIBUTING.md",
             "tools/companion_bridge/export_workshop.py",
             "AssistantAPI.json", "AssistantAPI.example.json",
         } or path.name.split(".", 1)[0].casefold() == "readme" or path.name.startswith("AssistantAPI.json.") or any(
@@ -37,6 +37,11 @@ def main():
         ) or path.suffix in {".pyc", ".pyo", ".log"}:
             continue
         source = root / path
+        if path.parts[0] == "docs":
+            if name != "docs/BODY_API.md":
+                continue
+            # Workshop installations have always shipped the action reference at the mod root.
+            path = Path("BODY_API.md")
         if source.is_symlink():
             raise ValueError(f"Refusing symlink: {name}")
         if source.is_file():

@@ -4,8 +4,8 @@
 
 ## 先读哪里
 
-- 完整架构、系统规则、模块索引、排错和测试地图：[DEVELOPER.md](DEVELOPER.md)。
-- 使用说明：[README.md](README.md)、[README.en.md](README.en.md)。
+- 完整架构、系统规则、模块索引、排错和测试地图：[开发文档](docs/DEVELOPER.md)。
+- 使用说明：[README.md](README.md)、[英文首页](docs/en/README.md)、[玩家手册](docs/player-guide.md)。
 - 翻译规范：[CONTRIBUTING.md](CONTRIBUTING.md)、[scripts/languages/README.md](scripts/languages/README.md)。
 
 ## 主要入口
@@ -35,7 +35,7 @@
 ## 检查与交付
 
 - 开始检查 `git status` 和当前分支，保留用户已有改动。新功能约定从 `develop` 开始，新分支默认 `codex/<主题>`；用户指定分支/位置优先。
-- 仅改任务文件，不擅自改版本号、作者或发布设置。系统规则更新 `DEVELOPER.md`，用法更新 README；本文件保持简短。
+- 仅改任务文件，不擅自改版本号、作者或发布设置。系统规则更新 `docs/DEVELOPER.md`，用法更新对应语言的玩家手册和首页；本文件保持简短。
 - 默认不跑全量测试、全目录语法检查或启动游戏验证。文档、语言、注释及简单低风险修改只做差异检查；普通代码修改以阅读受影响调用链为主，必要时只对修改的 Lua 文件运行 `luac -p`（不生成 `luac.out`）。不要求每次改代码都运行回归或新增测试。
 - 只有修改涉及实质行为风险、出现具体疑点或用户明确要求时，选择能验证该风险的最少定向检查；能由阅读差异或语法检查确认的小改动到此结束。不得因存在测试目录、涉及多个模块或准备发布而批量运行测试；不自动扩展到相邻系统，已通过的不重复跑。全量测试仅在用户明确要求时执行。差异检查包含 `git diff --check`，新文件暂存后另查 `git diff --cached --check`。
 - `tests/` 整个目录仅供本地使用，由 Git 忽略，不提交；临时产物放 `tests/.local/`，不写系统 Temp。不为普通修改新增测试，也不恢复用户已删除的测试文件或目录；删除本地测试不影响模组运行。

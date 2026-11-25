@@ -2,7 +2,7 @@
 
 本文面向维护模组、扩展角色和排查问题的开发者，介绍当前工作目录中的实现。它是代码阅读地图和规则说明，不代替实际代码；具体阈值、优先级与配方应以对应模块的常量和判断为准。
 
-快速维护约束见 [AGENTS.md](AGENTS.md)，使用说明见 [README.md](README.md)，翻译流程见 [CONTRIBUTING.md](CONTRIBUTING.md) 和 [语言目录说明](scripts/languages/README.md)。
+快速维护约束见 [AGENTS.md](../AGENTS.md)，使用说明见 [伙伴手册](player-guide.md)，翻译流程见 [CONTRIBUTING.md](../CONTRIBUTING.md) 和 [语言目录说明](../scripts/languages/README.md)。
 
 ## 目录
 
@@ -31,7 +31,7 @@
 
 伙伴运行时是实际角色实体，例如 `wendy`、`wortox`、`wathgrithr`，保留原版角色组件、装备动作、状态图、饮食能力和专属物品接口。模组为它安装伙伴 AI，而不是另造一个只有角色外观的普通随从。
 
-保存世界时，`modmain.lua` 的保存包装会把伙伴的记录名称映射为 `my_friend_<character>`。恢复时，[包装 prefab](scripts/prefabs/my_friend_characters.lua) 创建对应的真实角色，再安装伙伴配置并恢复状态。这样，移除模组后不会把世界中的伙伴记录误恢复成没有控制者的普通玩家。
+保存世界时，`modmain.lua` 的保存包装会把伙伴的记录名称映射为 `my_friend_<character>`。恢复时，[包装 prefab](../scripts/prefabs/my_friend_characters.lua) 创建对应的真实角色，再安装伙伴配置并恢复状态。这样，移除模组后不会把世界中的伙伴记录误恢复成没有控制者的普通玩家。
 
 `my_friend_wendy` 是旧存档使用过的名称，必须兼容保留。新增角色支持、改存档字段或调整保存包装时，都要同时检查 `my_friend_characters.lua` 和包装 prefab，不能只改生成逻辑。
 
@@ -748,85 +748,13 @@ DST 按注册顺序分配 RPC 编号。关闭模型时，模型 RPC 仍按相同
 
 伙伴与当前领队对局时，`my_friend_games_companion.lua` 的被动 `game_sit` 评分为 13，高于普通跟随/闲置表情，低于工作和生存行为。仅在伙伴跟随该对局玩家且双方存活、安全、无其他明确指令时，经 RouteAction 靠近到约 2.5 单位，使用原版 `/sit` 的循环 emote 数据持续坐着。原版起手约半秒 busy 保留；高优先级行为可接管，结束后重新靠近并坐下。只退出自身拥有且已非 busy 的 emote，不覆盖受击、进食等状态。玩家停止跟随、换领队、死亡或对局结束后释放陪坐；棋盘本身不因这些事件关闭。开始/结束伙伴对局请求重新决策，不新增行为周期任务。
 
-### 15.5 本机身体接口与语音助手
+### 15.5 本机助手与动作接口
 
-使用与完整契约见 [BODY_API.md](BODY_API.md)。Windows 启动器经 `start.ps1` 检查 Python/Tk；Linux 专服经 `StartAssistantLinux.sh` 启动无界面助手。两端读取 `AssistantAPI.json`，其中六位 `pair_code` 留空时沿用原配对设置，`--pair-code` 优先。Linux 脚本的 `auto` 选择 DeepSeek API，显式 `provider` 按配置分派。专服模式只监听回环地址，启动输出只包含模式及配对提示。可用 `--check-config` 离线检查，`--provider demo` 提供独立演示，`--adapter` 提供自选模型入口。Linux API 助手使用 Python 标准库，不依赖 GUI 和语音运行库。
+`my_friend_body_startup.lua` 按 `model_enabled` 注册入口。关闭模式时保留相同顺序的 RPC 占位和普通伙伴聊天。启用时，游戏通过回环助手或管理员客户端中继配对。玩家与伙伴跨分片时，服务端按原发言者核对权限，身体动作在伙伴所在分片执行。
 
-`model_instructions.md` 是模型说明书；`model.py` 每轮追加 Schema、快照、玩家文字、历史及真实回执，以唯一 nonce 匹配 JSON，剔除未知接口、过长台词和回显输入。`web_model.py` 等待鉴权网页回复，不调用私有 API。MV3 扩展只启用用户选择的 DeepSeek 标签页；正常登录，通过 DOM 输入/读取 JSON，不读取凭据或绕过验证码/限流。模型端点有独立长随机码，游戏端点拒绝浏览器 Origin；旧模型回复不进入新游戏会话。开发侧尚未完成真实浏览器端到端联调，自动化桩不等于网页稳定性证明。
+`my_friend_body_api.lua` 管理会话和动作回执。观察返回会话内的实体句柄，执行时需重新核对实体、距离、归属和能力。新指令按 revision 接替旧任务，在安全的动作边界交接。动作序列只报告实际完成的步骤，取消、掉线、迁移和换体均需清理待执行动作。
 
-共享提示正文采用纯文本短段落，按任务理解、状态依据、组合调用、游戏操作和失败续接组织。工具参数细节由每轮 Schema 提供，正文强调数量口径、实体句柄、指定落点和跨步骤引用。重复块先提供明确的值列表，动态候选列表在读取后组织下一批。末段以“只输出一个JSON”起始，API 适配器按该标记截去网页输出协议，再追加原生工具的 `_text/_plan` 与快照增量规则。
-
-提示正文用文字说明美元符号引用，网页请求中的美元符号按 JSON 转义发送。网页回复用单个 JSON 代码块保留引用和引号，扩展沿用可见代码块提取。执行序列在启动前以 `invalid_repeat_values` 拒绝无效迭代列表。锄地选址先检查工具组件，错误道具返回 `till_tool_required`，实体观察裁剪保留 `farm_tiller`。
-
-网页回复依次从可见pre/code.textContent（最多16个）、p.textContent（末64个）及倒序TreeWalker文本节点对应父节点提取，最后回退body.innerText末120000字符；TreeWalker最多20000个文本节点、向上6层、单个候选最多120000字符，只读本轮编号所在节点，不读script/style/编辑器/隐藏内容。普通段落和分散div/span不依赖代码块或整页末尾排序；严格匹配本轮request_id及输出字段，不能用旧回复或输入上下文代替决定。渲染不换行空格只在JSON字符串外归一，字符串本身保留。sleep遇到提前触发/提前唤醒必须重新安排剩余等待，发送前和等待阶段均检查activeRequest，防止旧轮次提交。poll携带当前阶段/代码块计数，助手按固定白名单记录，stale进度不覆盖当前轮；GET /health只返回安全诊断字段，不更新page_seen。receive记录收到/过期，解析失败记固定分类，不能记录实际提示、回复或token。
-
-网页心跳45秒内显示已连接，45～120秒是可发送的后台等待，超过 120 秒才判暂未连通。扩展增加 alarms，每约 30 秒向已配置的真实页面发 buddy_ping；页面立即跑pollOnce并唤醒到期等待；后台收到真实ready响应后调用/v1/model/heartbeat刷新助手状态，不取走或重复提交job。页面关闭/无脚本/无响应不伪造心跳；HTTP经AbortController设8秒上限，页面ping设4秒上限。content推理期间最多一个状态查询，暂时网络失败不丢pendingResult，确认服务端job已变化才丢弃旧结果。页面初载/焦点/可见/online事件立即重试。模型回复最多等 300 秒，网页侧约 285 秒；后台冻结、断网及网站限流仍可超时。`diagnostics.py` 在助手显式启动时配置 `.local/logs/bridge.log`，64 KiB/2 个备份；仅状态、耗时、工具名和固定错误分类，不记录语音文字、提示、模型回复、快照或认证信息。GUI 提供日志入口，未启用日志的旧版故障不能事后据游戏日志重建。
-
-`my_friend_body_api.lua` 管理单会话、35 个技能、一次一个具体身体任务、去重、实际结果和取消。观察模块导出有上限的 JSON 和临时 handle。模型查询复用 Discovery 的分类规则，按请求做一次实时局部扫描以覆盖移动实体，同一批请求同半径共享结果。原有自主基地、资源等发现继续使用事件缓存。动作模块复用 BufferedAction、库存/容器、饮食、科技及配方；Body 节点通过 RouteAction 执行，战斗复用原 Combat，不提高全行为扫描频率。
-
-`my_friend_follow_request.Apply` 共用于原 follow 命令和模型 follow，保留原仲裁、事件、脱战、自动骑牛限制及重聚窗口顺序。follow 设置完即完成，不占 active。空闲连接不限制原跟随、工作、坐椅子、表情和换装；只在具体动作期间限制普通自动工作，生存反射保留。
-
-Commands.Dispatch 通过 Clear(friend,nil,true) 标记接受的新玩家任务并调用 API.ManualTakeover：revision 递增，取消待执行项，旧动作安全结束，连接保留；等待玩家的临时命令同样使旧规划失效。普通 Clear 完成/清理不递增版本，避免自然任务结束误取消对话；内部 Clear(friend,state) 不替换该会话，参数不来自网络。模型最多一个 pending，非危险时仅请求重排，Utility 仍先检查 busy；危险中不强制重排逃避节点，安全后再清原任务并启动新动作，运行超时重新计算。pending 超过120秒失败。选择器排名中启动待执行任务不得留下强制重排标记，否则下一帧会取消刚启动的任务。Migrate.HoldCompanion、Switch.StopActions、库存破坏性捕获及附身显式 Close，保留生命周期边界。
-
-原工作接口曾只装备工具但未把它绑定到 BufferedAction.invobject，真实 RouteAction 工具复核会将其当作无工具而中断；现传实际工具并复核所有权。Body.OnStop 保留 manual_command/superseded 等交接原因，不把手动打断误报成普通 preempted 或取消。手动接替也释放旧动态语音占用标记。
-
-模型请求携带 snapshot.revision 与输入轮次。Bridge 对缺省版本回退该次 HTTP 发出时的版本，防止旧轮询响应绕过交接。助手收到 control_changed 更新版本、取消旧规划/排队命令，正在推理的旧答复也不能执行；新玩家输入同样作废旧轮次，单线程规划只保留一个最新候选。来源ambient允许查询、说话、emote、6单位内移动、换装备及SITON，助手最多4轮，游戏逐次重验无现有指令/模型计划/动作/busy/危险并保留领队权限。每个闲聊动作最多15秒，移动固定接受时的位置，不持续追逐实体；不允许劳动、战斗、制作或世界操作。
-
-`my_friend_body_interactions` 将目标实际 sittable/machine/activatable 能力映射成 SITON/TURNON/TURNOFF/ACTIVATE；观察输出 interactions、occupied、switched_on，执行重新验证组件、平台、机器启用/冷却和激活条件。SITON 用 Sitting.RequestTarget 的 strict 请求，交给原 Sit 节点，不自己重写座位状态图；目标失效不改坐另一把椅子。API 仅在真实 sg sitting/同一椅子后完成，保留原休息请求；委派任务完成不能调用强制 Wake，否则 Utility 会停止 Sit 并立刻起身。取消/断开只清除自身请求，正常手动指令可接管。此入口不自动支持所有模组动作，也没有模型骑牛接口。
-
-model_enabled控制整套模型模式；关闭时模型RPC仅保留空处理器，不安装模型监听器/行为节点或运行HTTP/连接任务。开启后自动连接，不要求跟随、好感或首次距离；真实活动伙伴及本地连接玩家仍须有效。CanConnect只验证通信身份，Authorize按当前领队或独立状态校验工作，普通游戏劳动仍沿用原权限。聊天人人可参与；跟随时仅领队可安排身体任务，独立时其他玩家也可。RPC验证类型/长度、真实发言者及活动身体，动作复核物品/配方/饮食/路线；紧急优先级不变。
-
-engage通过共享MyFriendCombat可选targetfn传递明确目标，持续从任务GUID解析实时实体，不伪造自卫/玩家攻击计数，不再依赖敌人先有仇恨。普通Combat(inst)保持原目标选取。显式中立目标在选好有效武器后可沿用指令战斗条件，CanCounterAttack/CanContinueCombat新增可选instructed，缓存区分指令与自然评估；原危险、低血量装备撤退、火把、跟随32范围、被暂停目标等规则保留。共享节点每tick按目标实时位置接近/攻击/躲避，不需模型move_to；子节点拒绝攻击立即返回原因，目标移除/失去health及时失败而非空转120秒。停止/替换在安全边界清理目标与死亡监听器，不转打无关目标。
-
-engage另经工作区tests/.local/body_bridge/combat_engine隔离原生游戏验证：满状态温蒂携带武器护甲，直接对无初始仇恨的猪人调用接口；目标前1.5秒由脚本驱动位置变化，记录14次真实attacked事件、目标死亡/defeated完成，第二次追击被follow替换且目标保持存活、领队保留。场景断言DONE且无Lua错误；原生隔离进程关服仍返回既有0xC0000409异常退出码，不宣称正常零退出。独立存储/端口与用户世界分离；DeepSeek实际战斗全流程、远端多人和长时间移动追击仍需更新后实测。
-
-body共35个接口，包含query_recipe/get_capabilities/harvest/character_skill及pickup_many/work_many。body_recipes按需查AllRecipes/当前料理注册，材料按原Builder ingredientmod及RoundBiasedUp计算，返回真实代码、缺额、科技和角色消耗，不周期广播全配方；料理复用RecipePlanner.Pool/Find及其分帧缓存，来源均为实际可访问实体句柄。失败craft附配方数据。Inventory.CanWithdrawFrom新增仅显式传true时允许关闭容器的参数，用于原生stewer已煮/在煮状态，不取消只读/他人占用/归属等检查；普通箱子沿用默认行为。收成使用容器交互距离和原生HARVEST.fn，返回产品句柄，可单独harvest恢复。
-
-连续模型轮次在首个实物操作后建立plan_id，Bridge轮询附带计划id/revision/active，由游戏已接受的计划续租30秒。AllowLocal在步骤间限制非紧急库存/生活动作及非急饿eat、backpack_recovery，保留原REFLEXES；Snapshot普通UpdateLoadout也让位，照明/生存仍检查。纯聊天/查询、阿比模式控制不开始计划；普通指令ManualTakeover清plan并递增revision，结束轮次主动释放，跟随/SITON完成恢复原模式，过期/断线不保留控制。活动身体任务期间释放计划不会强制重排，避免新聊天误停原工作。状态只在body会话中，保存/迁移关闭会话清理，不新增存档引用。
-
-body_characters仅复用现有八种角色脚本；主动操作白名单及原角色配方列表来自SpecialCommands，书/设备/香料不另写解析器。GetCapabilities区分role.actions与automatic，WX电路保存函数不作为可调用技能。结构化命令由已授权的body拥有，Score仅允许本job.command，普通原指令仍能替换；工厂调用原SpecialActions/Books/CharacterActions/Wortox等，保留末本、材料、科技、原主人链接及忙碌处理。Wrapper保留原validfn/回调，记录真正最终产物/READ/充能/收成效果，中间绳子或无效读书不作成功。清理只关闭仍属于本job的原命令。温蒂模式控制直接用原Request/Recall，不抢占身体动画；旺达原生怀表通过use_item调用CanCast/CAST_POCKETWATCH，点位施法不误当移动。沃利原SpiceAction收成改在打开容器之前处理，检查权限并使用容器距离，修复原生关闭状态取菜失败。
-
-隔离原生资源场景验证旧包释放→零普通栏容量的新包原生自动装备、实时科学机器rocks=4、冰箱取料→肉丸烹饪→关闭锅收成→交给模拟领队、独立harvest恢复。领队库存是接收边界桩；角色场景原生执行温蒂召回、旺达专有造表和怀表施法、薇克巴顿读书、沃利调味并取得spiced成品，均有DONE断言。原生隔离进程关服仍有已记录0xC0000409退出码，资源场景模拟用户还触发一次Invalid RPC sender list，未宣称正常零退出；功能链无Lua错误。真实DeepSeek组合规划、远程玩家库存及其余角色主动操作尚待多人实测，原生检查数据均在tests/.local。
-
-游戏与模型以最新玩家任务双向接替，原权限/归属和危险优先级不变。Score 的安全快照及运行时危险、低饱食、黑暗、温度、受伤等检查阻止 pending 抢紧急行为；没有强切状态图。观察/聊天完成不重排；请求仍按 request_id/action_id 去重。正常保存不关闭，破坏性身体捕获前 Close；模型会话、临时动作/句柄/环境、音频及对话不进存档。
-
-pickup_many/work_many由body_batch维护单个父任务和连续原版子动作；一次新鲜局部扫描或显式句柄列表，固定原点半径1～32，最多100目标。子动作不发布独立终态，父任务最终汇总实际count/work_units、目标/跳过/失败/partial/limited。拾取缺省count拿整堆；PICK/HARVEST每株一次，砍挖矿敲完成当前资源再换下一个，不把CHOP后的DIG树桩继续砍。草丛同时有pickable/workable时PICK优先检查pickable，不能误走DIG工具检查。背包满/缺工具停止且保留已完成数量，失效目标跳过；不周期重扫，不吸收后生掉落。craft(count)原本即循环原生BUILD后一次结束，无模型逐件回合。
-
-Chat.Dispatch连接ready时统一验证原有称呼匹配，转成player_input事件，不再将该公屏消息同时分派旧指令；无名字不送模型，断开/未ready恢复原入口。助手文字/语音免称呼，先通过exchange.inputs交游戏验证身份，再带服务器生成turn_id和真实speaker回传；命令带同一turn_id，不能通过模型参数指定userid借用权限。输入上下文上限64、900秒过期，事件/请求去重有界；任务记issuer，换领队/发言者离开时安全中断不关连接。角色代理使用issuer，Commands.Get仅给当前body.command及授权issuer独立工作的例外。owner保持传输玩家；模型上下文owner/speaker为真实发言者、leader才是领队、transport_owner是中继者。旁人聊天队列上限16，不使领队规划版本失效；单个浏览器/模型worker串行处理，完成后依次聊天。轮盘原入口仍能安全接替。
-
-body_chat以仅服务端ShardRPC转发地面/洞穴公屏文本和角色三维，目标伙伴重新匹配称呼；无本地实体的远端发言者使用短期服务器身份记录，只有合法分片生成，不伪造玩家实体或句柄。独立时可安排基础动作，跟随时仍仅领队；远端跟随/需要本地玩家的角色代理明确失败。远端坐下用伙伴本身作为座位距离参照，实际issuer仍为原发言者；离开后清理。跨分片动态回复通过定向客户端RPC显示为发言者的原版聊天公告，不伪造远端伙伴实体，不重复播报。世界操作送回发言者所在分片，重新查实际在线发言者，再由主分片验证两轮原因审查，不能借用别人的审批。跨分片请求/回执去重、超时和世界移除清理有界，发言者移除通知使旧身份失效。仍不做自动跨洞穴追随或移交。
-
-Bridge.connect声明input_protocol=2；旧助手未提供输入上下文的user命令拒绝，更新须重启助手。真实服务仍固定回环。exchange回复按28KB预算截取可重传数组，不丢原待确认队列，兼容远端客户端30KB限制。已有房间助手时其他客户端共享连接确认，不抢走owner，关闭时通知观察者重新尝试。
-
-助手发送不再预先插入消息行，仅在player_input确认后显示。broadcast_input与whisper_input是独立、默认关闭并保存的设置；提交时将布尔broadcast与whisper附到该条exchange.inputs，仅broadcast为true时由真实owner客户端调用TheNet:Say(text,whisper)。whisper选择原版附近私聊，关闭则公共聊天；即使不同步输入也可选择回复频道。房主直调避免向自身RPC。原生聊天限制150个字符，助手将控制字符转空格；游戏再次检查类型、长度及单行文本。BodyPublicInput只接受匹配当前玩家userid的服务端消息，会话请求ID有界去重；原生聊天回显在该会话按玩家、文本和频道短期匹配，只作确认不再次输入模型。8秒无回显报告input_broadcast_failed，不重发；关闭清理所有等待任务。玩家发言使用原生聊天身份和气泡，原权限不变。
-
-模型输入的whisper由聊天屏幕/原生事件/RPC与助手逐条传递，state.inputs固定该轮频道，模型参数不能提升公开范围。公开say保留伙伴气泡但将Chatter的聊天回显优先级设为0，通过BodyChatSpeech向本分片玩家及已连接分片广播；接收端调用原版ChatHistory:OnSay生成带伙伴名字的Message，不用公告，不重复近处聊天行。私聊保留原Chatter附近显示，私聊请求不跨分片转发。采摘接触伤害由当前劳动动作和原有1秒接触记录识别，healthdelta与attacked两个入口均不再启动撤离；仍保留原有60秒同类伤人资源重试冷却。eater包装在调用期间标记食物并在返回/异常时恢复，只过滤该食物造成的瞬时扣血，不将其记作危险地面；其他单次伤害与持续区域的通用判定见9.2。
-
-2026-11-06核查按当前游戏scripts.zip的eater/edible/perishable、采摘与普通/重型落石回调、ChatHistory真实方法进行本地定向检查，覆盖新鲜度边界、低血/低饥饿、不能食疗角色、执行前血量变化、喂食/采摘/单次伤害、未知持续来源采样及清理、公开/附近/跨分片显示、重复回显与闲聊权限。复用受影响body_api/transport/shard_chat/speech_chat、年龄保护和助手选择的定向用例；隐藏Tk窗口检查同步与私聊独立保存，不开启麦克风。修改Lua语法、Python解析和差异检查通过；测试与临时原版源码均只留本地，交付清理本次临时产物。未启动真实游戏、多人服务器或付费模型调用，原版回调/桩验证不等于游戏实测。
-
-网页首发确认兼看当前编辑框和排除编辑框/隐藏节点后的可见消息编号；已经进入正文的本轮请求不因残留草稿报send_not_confirmed或补点发送。正文读取与回复解析共用过滤路径，禁止body兜底把编辑框里的编号/JSON当作发送证据或模型回复；严格匹配本轮request_id和稳定JSON的要求保留。未发送草稿仍报错，本地测试覆盖残留编辑框与延迟首回，但不等于真实网站验证。
-
-2026-11-03隔离原生引擎验证批量3堆活木共6、3株草、craft2把斧头、独立坐稳，场景DONE。原生关服仍有既存0xC0000409，未宣称零退出；数据与端口在tests/.local，未动用户世界。多人/双分片用真实路由模块的边界桩验证，持续语音/快捷键用不接触麦克风的流进程桩和隐藏GUI验证；真实远端多人/持续麦克风/DeepSeek复杂闭环仍需实测。
-
-桥接固定访问 `127.0.0.1:18766` 的 `/v1/game/connect` 和 `/v1/game/exchange`，六位配对码换取随机 token。本机房主用真实 ThePlayer 走主模拟直连并检查归属/权限，避免离线房主向自身发 RPC 导致 Invalid RPC sender list。专服在现有伙伴维护任务中尝试直连，优先当前领队，否则选同分片在线玩家持有会话。无有效玩家不发请求，暂时无法连接时最短间隔 10 秒重试。错码由 connect 返回 403，客户端及专服都结束自动配对；错码请求不影响已建立的会话。专服控制台可恢复配对。远程客户端通过 `BodyRelay/BodyRelayReply` 把 HTTP 交给发起者本机，回执校验 owner、会话/权限及 pending 编号；客户端只接受固定 URL/path，回调重验世界。定向客户端 RPC 接收者使用单元素 userid 列表。关闭清理旧 pending 并发最终回执。当前仍是一个逻辑伙伴/控制会话；真实远程客户端待实测，无须开放公网端口。
-
-扩展弹窗先确认 content script 的 buddy_ping，再向助手验证长码，只有两侧都通过才显示已连通。扩展加载不自动给旧页面注入脚本，缺少接收者须提示 F5；后台 fetch 失败和错误连接码也显示，不得只保存 storage 就声称连接成功。助手发送入口检查两侧状态，保留未发送输入并显示原因。游戏控制台打印配对结果及拒绝原因，合法发起者的权限拒绝通过 BodyEvent 返回，不静默吞掉。
-
-modinfo 模型模式总开关 model_enabled 默认关闭，六个 model_pair_digit_N 选项默认321151，四语言同步。玩家观察返回名字、角色及已取得的生命/饥饿/理智与上限，覆盖owner和附近玩家；缺组件字段保持缺省。原生 modinfo 沙箱不提供 tostring，数字用字符串连接，回归用最小沙箱。AttachAuto 仅在真实 ThePlayer 激活时建立本地控制器。失败数*5秒等待，30次停止，成功重置；attempt 序号拒绝旧回调重复计数，15秒无结果算失败，实体/世界变化清理，显式 stop 暂停本次世界重试。Connect 同一活动会话幂等，首个实际 exchange 成功才确认 connected，避免只拿到 token 就重置重试预算；建立连接不清原任务。
-
-助手 settings.py 在 .local/settings.json 原子保存六位码与网页码；默认六位321151、网页码首次随机，均可在GUI自定义，重启不变。临时游戏 token 仍每会话随机。扩展将其自身配对从 storage.session 迁移到 storage.local，重载/浏览器重启后恢复 alarm；原tab仍有效则保留；失效后优先原URL，再选新加载/激活页或唯一候选，多页不明确不随意选择。tabs更新/激活/关闭、runtime启动及alarm均可恢复；不因worker启动重复重置已有alarm。网页码不变时助手重启可恢复，弹窗回填保存的码；buddyDisabled使显式断开优先于恢复和旧session迁移，迁移后清旧session。重新开页无需重输码；登录、网站验证和冻结仍需用户处理。cancel_pending 与网页 activeRequest 防止旧生成回复在新输入后生效。
-
-世界接口save_game/rollback_game/pause_game/kick_player/ban_player统一为两条玩家消息的原因审查，取消set_world_permission及admin/grants执行门槛。API.Input记录服务端原始text；API.Call只从服务器绑定的turn_id提取dialogue证据，模型参数不能冒充新消息。首次World.Process只生成审批号（5分钟、绑定userid/操作/参数），下一实际输入才能提交精确原文reason、approved和assessment，缺少/同轮/不匹配/过期/已用均拒绝。是否合理交给模型判断；asked→reason→review逻辑由模型协议说明。主分片保存有界临时审批，洞穴缓存只读pending_request视图以便后续对话；请求、审批不落存档，旧授权保存/读取停用。正常原生存档、回档、暂停、Kick/Ban约1秒后执行，requested只表示安排。踢/封禁只接受在线精确userid，名单向聊天用户公开；原管理员列表不修改。跨分片RPC携带原始dialogue回主分片审查，保留原去重/超时/世界清理；不在真实测试房间执行这些操作。
-
-首次连接构建环境摘要，之后每 60～120 秒随机 RefreshEnvironment。地面实体共用一次半径 20 的原生扫描，玩家由 AllPlayers 按同半径筛选。各类最多 12 条，不扫容器内容。摘要记录扫描中心，超过 90 秒或移动超过 4 单位时暂不发送。快照含 world(day/season/phase/temperature/weather)、character(id/name)、manual_task、pending、revision。助手空闲、最近60秒无玩家模型输入且无危险/busy时才处理 ambient_context，闲聊轮次只提供say工具并做服务端二次限制。personas.py 按真实prefab（兼容包装名）追加角色语气；模型指令含主动闲聊与最新意图规则。
-
-仅连接期间使用原短 POST 交换协议。body_api.Emit 通过会话内 on_emit 回调唤醒 Bridge 的一次性发送任务，同一批事件合并；同一会话只允许一个 exchange 在途，发起间隔至少 0.5 秒，失败仍按原退避重试。完全空闲时下一次交换延迟 2 秒，同时减少快照生成与 JSON 编码次数；存在输入上下文、任务、有效计划、语音等待、未确认事件或最近事件活动时保持 0.5 秒节奏。助手主动发起的首次空闲输入仍等待下一次交换，最多增加到约 2 秒；公屏输入和动作回执入队可提前唤醒。每次发出仍读取当前快照，不增加跨事件的状态缓存或库存失效监听。旧定时任务按身份失效，关闭连接清理回调、唤醒与 HTTP 超时任务。结果按 event_id 确认，每次最多 4 条指令；HTTP 不等待动作完成，连续失败关闭控制，迟到/重复/手动接管后的请求失效。观察最多 40 个实体/64 条容器内容，句柄最多 2048 个且无固定时间期限；结果历史 40 条、待事件 64 条，本机队列、对话和日志也有上限。不接受模型返回的可执行代码。
-
-动态文字用四语言一致的固定 `ai_dynamic` 模板 `{1}`，不增加动态字符串表条目或语音编号。自由回复的声音由助手可选本机 TTS 播放，状态通过会话回传；不是游戏内 3D 声音，也不对其他玩家自动分发。播报期间协调现有自定义语音队列，结束、失败或断开后释放；默认关闭TTS，快捷键在设置中选择F1～F12（默认F9），持久保存并立即重新注册。持续语音按钮显式启动一个长期识别进程，每条识别JSON立即flush返回；停止/退出只清理自身监听进程。朗读期间及结束短时屏蔽持续识别的回声。快捷键由hotkey.py管理，F1～F11走RegisterHotKey；[微软文档](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-registerhotkey)保留F12，F12改用只响应该键的WH_KEYBOARD_LL回调，过滤修饰键、注入及长按重复，关闭/改键解除钩子；不注入游戏键盘事件。Windows PowerShell 脚本使用 UTF-8 BOM 避免 5.1 按 ANSI 误读中文。
-
-隔离真实引擎验证包括此前 POST 配对/观察/移动/手动抢占，以及原跟随模式 → 实际拾取 → 指定木椅坐稳 → 保持休息 → 新拾取任务起身执行、全程保留领队。修复了委派坐下完成时强制重排造成马上起身的问题。最终流程断言通过，日志无 Lua 错误；隔离原生进程打印 Shutting down 后返回 1，未将其宣称为正常零退出。测试假领队需在 OnDespawn 从 AllPlayers 移除，避免关服时把没有 Network 的假玩家当真人保存；此前失败属于此桩边界。基础接口另有回归；这些隔离测试本身不证明DeepSeek理解或后台网页稳定性。2026-11-02玩家协助真实Chrome验证库存问答：20:52:31记录reply_detected(source=page)，20:52:34收到chat决定并入队say，20:52:35游戏say completed，玩家确认游戏内回复可见；验证范围为普通文本问答自动回传。此前用当前助手手动接收玩家截图中的observe JSON，原生游戏say/observe完成；手动接收不当作扩展自动观察证明。普通段落及倒序文本节点读取修复已做相关桩回归。复杂动作自动闭环、远程客户端、长期后台稳定性及麦克风仍需实测。隔离数据均在 tests/.local，不用玩家存档。
-
-双向交接另在隔离游戏验证：建立会话保留正在砍树的原命令；砍树 busy 中提出模型移动，安全边界后完成；模型砍树中发轮盘跟随，返回 manual_command 中断且会话保留；受伤撤退保护期间的新模型移动保持 pending，保护结束才执行。相关进程已关闭；该次原生退出仍出现既有 0xC0000409，功能断言在退出前完成，不能把异常退出码当作正常零退出。
+`tools/companion_bridge/` 负责模型适配、网页扩展、语音和本机配置。网页回传只接收当前请求编号的完整结果。世界管理操作另有原因审查。修改参数或返回值时，同时核对游戏执行端和助手侧 Schema。[动作接口与部署协议](BODY_API.md) · [安装与配对](../tools/companion_bridge/README.md)
 
 ## 16. 语言、对白与声音
 
@@ -853,8 +781,6 @@ modinfo 模型模式总开关 model_enabled 默认关闭，六个 model_pair_dig
 当前游戏的talker会将镜头8单位内的NPC chatter设为silent，仅记历史而不通知即时聊天UI。伙伴在Resolve阶段（原版调用OnChatterMessage之前）按ChatHistory实例安装一次包装；仅当前说话实体带my_friend标签且chatter实际key为ai_dynamic或角色/ai_dynamic时取消silent，普通台词保留原静默规则。伙伴附近聊天的icon/background统一为profileflair_yule_glommer/playericon_bg_none；非专服启动时幂等包装TEMPLATES.ChatterMessageBadge，仅此头像从原版images/profileflair.xml读取，其他NPC继续原图集，缺少贴图回退profileflair_none.tex。公开OnSay传同一profileflair，普通玩家的装扮不改。沿用原OnChatterMessage，保留附近距离、NPC聊天开关/优先级及原版去重，不手工重复插入历史、不增加网络变量。房主与远程客户端各自在本地处理，专服不加载UI模板，无HUD/ChatHistory时安全跳过。
 
 普通对白保持附近聊天/气泡路径。入场、告别、换角色到来、变鬼求救和自行复活告知等原公告统一通过body_chat.Public/Broadcast发送带伙伴名字的公共聊天，复用BodyChatSpeech客户端与分片接收；无须模型连接或存活talker。BodyBridge关闭模型时仍按原顺序注册通用聊天展示处理器，模型请求和世界操作继续拒绝，RPC编号不变。AddSimPostInit在主模拟端包装原版GetNewDeathAnnouncementString/GetNewRezAnnouncementString：原函数生成的伙伴死亡/复活信息送公共聊天后返回空字符串，原版不再重复发公告；保留原死因/复活来源文案，去掉正文开头重复的发言者姓名。普通玩家及附身后已无伙伴标签的身体返回原文，原死亡/复活动作、存档和语音流程保持。语音独立挂载在伙伴声音发射器上，全服文字不改变声音空间衰减，不新增全服无衰减音频。
-
-2026-11-06头像与公告检查：核对当前游戏images.zip的格罗姆头像和默认回退贴图；用原版ChatterMessageBadge构造与死亡/复活文案函数、原版发送条件做本地定向检查，覆盖头像切换、其他NPC、模型关闭时的公共聊天、跨分片去重、普通玩家和非伙伴身体回退、鬼魂无talker及原语音队列。复用speech_chat/voice_queue/body_transport/body_shard_chat受影响检查，修改Lua语法与差异检查通过。未启动真实游戏或远程客户端，图形显示仍待进世界实测。
 
 中文/繁体自定义语音在 `my_friend_voice.PlayLine` 统一进入每个伙伴独立的先进先出队列，覆盖普通台词、直接回复和公告；文字仍按原入口即时显示，不等待语音。声音事件绑定 `my_friend_line` 通道；`my_friend_voice_durations.lua` 按固定 fn 编号提供音频银行采样数/采样率计算出的录音时长，首次播放自定义语音时加载一次，运行时直接按编号查询。当前录音按实际时长加 0.1 秒余量结束通道并接续队列，短音频不固定等待 7 秒；不使用 `PlayingSound` 持续等待，避免专用服务器或残留通道状态锁住队列。仅缺少时长记录的音频按 7 秒兜底，不丢弃后续请求。普通 `donetalking`/`ontalk` 只处理原角色循环声，不截断自定义音频。死亡、变鬼、实体移除清理播放和队列；延迟回调重验实体、伙伴身份及附身停放状态。仅播放/等待期间存在延迟任务，不做世界扫描；队列只存声音事件字符串、时长、时间和任务，不写存档或迁移数据。声音银行异常保留文字并继续后续队列，原角色声音回退最多持续 2 秒。英文/俄文及关闭自定义语音的路径沿用原规则，固定 fn 编号及音频资源不变。
 
@@ -1006,7 +932,7 @@ modinfo 模型模式总开关 model_enabled 默认关闭，六个 model_pair_dig
 
 在模组根目录运行 Lua 5.1 的 `lua` 和 `luac`；可执行文件不在 PATH 时使用实际路径。语法检查不要生成 `luac.out`。
 
-测试脚本与验证数据统一放当前工作区，不使用系统 Temp。`tests/` 整个目录由 Git 忽略，仅供本地使用，不提交到 GitHub 或发布；临时验证、桩数据、导出和备份放在 `tests/.local/`。用户可删除本地测试，不影响模组运行，不为后续维护自动恢复。本文历史记录提到的测试文件和结果仅说明当时的验证范围，不承诺仓库提供这些脚本，也不是以后修改的必跑清单。
+测试脚本与验证数据统一放当前工作区，不使用系统 Temp。`tests/` 整个目录由 Git 忽略，仅供本地使用，不提交到 GitHub 或发布；临时验证、桩数据、导出和备份放在 `tests/.local/`。用户可删除本地测试，不影响模组运行，不为后续维护自动恢复。
 
 交付后删除本次生成的可重建缓存与重复发布导出，避免多轮维护不断累积完整模组副本。需要保存的旧资料与配置备份集中归档；不能将助手配对设置、API密钥、离线语音模型、Python/识别运行库或玩家存档视为普通缓存。清理前确认路径和依赖，保留仍在使用的数据。
 
@@ -1028,167 +954,8 @@ modinfo 模型模式总开关 model_enabled 默认关闭，六个 model_pair_dig
 
 ### 18.6 文档与提交
 
-`AGENTS.md` 保持简短，记录工作原则和入口；具体系统规则更新本文，使用方式更新 README，翻译规范更新贡献文档。规则变更要同时检查实现、调用处和测试，避免只改文档。
+`AGENTS.md` 保持简短，记录工作原则和入口；具体系统规则更新本文，使用方式更新玩家手册和相应语言的首页，翻译规范更新贡献文档。规则变更要同时检查实现、调用处和测试，避免只改文档。
 
 开始前记录 Git 状态，保留用户已有修改。新功能按仓库约定从 `develop` 开始，需要新分支时默认 `codex/<主题>`；已有指定分支/工作目录按用户要求继续。不得擅自调整版本号、作者、发布设置或声音二进制。提交、推送和发布依当前授权范围执行。
 
 提交标题、提交说明和合并说明使用英文；项目沟通和中文维护文档继续使用中文。GitHub 自动生成的英文合并标题可以保留，已经公开的历史提交保留原记录。`main` 发布后及时同步回 `develop`，保持下一轮开发包含已发布修复；已合并功能分支不再承载新主题的开发。
-
-### 通用网页站点与会话续接（2026-11-03）
-
-sites.js集中声明DeepSeek/豆包普通聊天网址及上下文上限提示；manifest仅新增豆包域名权限，不开放任意网页。background/popup/content共用该目录，保存buddyProvider避免恢复时跨站点误绑定；旧DeepSeek配对和DeepSeekWebAdapter导入/CLI名称保留，新通用名称WebChatAdapter和web。助手菜单同时提供两站入口。
-
-自动新对话由buddyAutoNew控制，无固定轮次换页。content只响应可见上限提示，background核对当前pending nonce及选定页面后发放续接，session中对同一nonce最多两次失败换页，避免重载循环。点击原站新对话按钮，SPA等输入框准备，完整导航则由新脚本重新领取仍pending的同一nonce。job.prompt已含协议、状态、历史与实际回执；游戏执行队列不重放。只清除确认为自身该nonce写入且未被用户修改的滞留输入。豆包富文本使用原生insertText编辑事务，之后发送input事件并沿用可见Enter/发送按钮。没有隐藏API、登录态或网络接口采集。
-
-新增node tests/body_web_sites_test.js覆盖两站输入、上限后同nonce续接、开关关闭、正常20轮不换页、旧nonce拒绝及重复失败上界；原body_web_page_test.js继续覆盖绑定/心跳/回复读取。豆包真实页面/真实上限提示的DOM结构仍需用户实测，不把桩测试当登录网页验证。
-
-豆包发送补丁：优先等待并点击输入区带明确发送标识的图标控件（包括div形式的chat_input_send_button），兼容无aria-label/title；跳过disabled/aria-disabled/data-disabled与禁用样式。找不到时补齐Enter的keyCode/which及keypress事件，再在仍有输入时尝试语义明确的发送按钮。每次提交至多点击一次，避免重复发送。body_web_sites_test新增“富文本拒绝合成回车、只接受无标签图标点击”场景，包含新对话后再次发送；真实豆包页面效果仍须用户刷新验证。
-
-### 原生动作与本轮规则修正
-
-my_friend_body_native通过EntityScript:CollectActions查询INVENTORY/USEITEM/EQUIPPED/POINT/SCENE，query_actions只导出当前动作ID/模式，perform_action重新收集验证同一Action对象，走原生BufferedAction和状态图。复用原版玩家自动装备的例外规则（GIVE/DEPLOY等不自动穿装），施法尊重原生范围，Body节点不把法术当成走向目的地；SCENE也包含实体inherentscenealtaction。INVENTORY查询/调用只在当前调用栈临时提供NPC缺少的UI可用标志并恢复，不打开窗口或改变归属；Fn异常反馈失败。物品移动仍检查拥有者/容器许可，使用原版动作执行成本与效果。无改动动作/实体引用保存逻辑。
-
-Body热危险屏蔽与原brain的thermal_shade舒适标记对齐，避免已记忆树荫下正常乘凉需求卡住模型任务；原受伤、饥饿40%、真实温度/黑暗/威胁优先级保留。snapshot新增blockers具体原因，pending超时也附busy/blockers，原生失败reason回传并写入助手元数据日志，模型不得用笼统避险解释所有失败。此前日志仅能证明transfer两次failed，缺少reason，不能推断当时每一项状态。phonograph通过trader/GIVE接收唱片，旧transfer到非玩家inventory会失败，此路径现桥接原生给予。
-
-单目标work默认做到砍/挖/敲目标完成；显式amount仍保留次数语义。助手文本/语音调用Input时require_name=false（仅认证后的本机入口），公屏及跨分片公屏保持称呼门槛。界面与模型协议已同步。
-
-新增tests/body_native_test.lua覆盖原生给予、库存使用/标志恢复、实体/地面施法/持有及手部校验、SCENE动作、树荫与真热危险、连续HAMMER、助手免称呼。隔离原生引擎已实际完成record→phonograph、telestaff→pigman和orangestaff地面BLINK；发现并补齐原玩家控制器的施法自动装备，否则SGwilson假定手部staff会报错。假玩家另补ScreenFlash桩仅用于测试闪电效果。最终场景DONE，退出仍有既存0xC0000409，未宣称正常零退出；不使用用户存档。世界审查/踢封操作仅桩测试，没有在真实房间执行。
-
-原因审查和输入节流使用GetStaticTime（无该函数的桩环境回退GetTime），避免暂停后第二条恢复理由被冻结的模拟时间永久限流；审批和洞穴只读视图均为64条有界临时数据。
-
-模型协议维护：提示词改为每次决策步骤与动作选择表，区分接口completed、原生executed、世界requested与玩家目标真正完成；重复附带的utterance不视作新指令，复用有效快照/句柄/配方，按partial实际进度补剩余，纯聊天不主动扫描。can_work的身体权限与世界原因审查明确分开，历史不能替代同一玩家的新理由。角色台词遵循先意图后结果、减少逐步播报；同步精简工具description，澄清原生动作查询、SCENE来源和speaker跟随语义。仅调整模型说明和工具描述，没有修改接口Schema、权限或行为代码；验证用body_bridge_test.py，模型实际遵循程度仍需对话评估。
-
-### 伙伴查找容错与食物收集核查
-
-轮盘FindFriend先按原生player_common直接写入的isplayer字段筛候选，再保护性检查IsValid/HasTag/Transform和有限数值坐标；跳过全局Ents里的非表、缺方法、方法异常和坏坐标，保持面板缓存→鼠标→最近伙伴及附身释放顺序。扫描一遍选最近，不构造中间实体列表。服务端FindFriend先按表类型/角色prefab筛选，再检查实体方法，保留配置首个/清理重复伙伴和跳过停放身体的规则。回归：lua tests/friend_lookup_test.lua，覆盖杂项值、异常方法/坐标、正常选择、附身及服务端重复处理。
-
-本次食物逻辑仅核查未修改：普通FoodAI收集以随身可用食物的饱食储备是否达到GetDailyHunger乘天数判断，跟随/建家阶段通常1天，独立且基地完成2天；不等于当前饱食不足。机会收集也按同一需求选食物，基础材料、明确整理/拾取及特定工作另有各自目标，没有通用击杀后全捡掉落的行为。日常基地存储把角色可吃且偏好的食物视为随身必需品，跟随顺手整理也排除非材料食物，不能推断捡到后会自动返基地入库。建家满包腾位、原容器剩余食物归还、显式任务等另有路径。
-
-### 旺达年龄误判与名字语气（2026-11-03）
-
-解压源码oldager.OnUpdate将正常年龄增长映射为health:DoDelta负值，cause为oldager_component，overtime=false。旧OnEnvironmentalDamage仅排除了oldage/health_as_oldage，没有排除真实事件名称，于是把无来源的年龄变化记成当前位置的环境危害，UpdateHazardRetreat可持续触发受伤后退。Health.IsAgeDisplayDelta按真实oldager组件及cause识别；主healthdelta监听跳过装备受伤处理，环境危害入口也过滤。不是按角色名字或只看生命下降就屏蔽伤害，原attacked、火/热/冷/环境危害路径保留。回归tests/wanda_age_damage_test.lua直接读取用户解压目录../yuanma/scripts/components/oldager.lua，验证三次自然衰老不产生危害、真实环境伤害仍退避。
-
-模型快照新增health_kind（oldager为remaining_lifespan）、health_max、旺达age/age_max，提示词明确余寿下降与正常衰老不等于受伤。助手新增game_safety元数据日志，仅在emergency/blockers/health_kind变化或新会话时记录，记录原因码不记录姓名、台词或完整快照。历史动作日志只能确认执行结果，不能据此证明当时是哪项避险条件。
-
-快照新增custom_name/renamed及character.is_mod，实际character.id继续代表技能身体。personas始终附当前名字；改名后优先采用名字的称谓/关系，普通昵称不强行推断背景。温蒂改“妹妹”使用妹妹的亲近自然语气，实体技能仍温蒂；模组/未有预置语气的角色按名字及玩家明确设定回应，不套原版性格或捏造背景。
-
-model_instructions.md内容改纯文本（保留文件路径兼容），去除表格、Markdown标题与列表。model.prompt追加的角色说明与数据区标题也用纯文本；Schema/状态仍为JSON数据，模型回复仍必须是原有JSON协议。body_prompt_test.py检查完整生成提示词格式、改名切换、模组名字语气及实际prefab不被改写。
-
-通用组合执行：body_composition新增query_batch（最多8项只读）与execute_sequence（最多12步、600秒）。父任务持有唯一Body控制，子动作不发独立终态，不逐步调用模型；支持已有普通动作及pickup_many/work_many嵌套，Current沿parent.child链验证根任务。禁止世界/递归/角色/跟随/战斗/持续委派混入，结构先验证再接替旧工作。步骤结果记录实际进度，首败停止；cancel/新指令清理子任务，返回部分完成/未完成信息。前步result的$step.path引用仅取已完成数据，未执行字符串代码；新制作/拾取返回产品items以续接，已接受的有效实体句柄临时固定并续期，失效不复活。查询只合并独立读操作，重复参数在本次缓存；回包约18KB和每步1200字节预算，显式标记截断，内部引用保留完整结果。协议深度增至8，序列参数10KB/查询7KB，助手等待序列至650秒，回复仍受28KB预算控制。
-普通drop新增position，先走到目标再调用原库存DropItem；不修改原丢包归属保护。物品观察补充fillable百分比/满状态、watersource、deployable/plantable/terraformer通用组件提示，无新增周期扫描。原生PLANTSOIL/DEPLOY/TERRAFORM/FILL复用已有执行桥接，不调用模型提供的脚本或强写地图。
-回归body_composition_test.lua覆盖批读单回执、craft→产物引用→equip→连续DIG→返回、首败保留实际拾取、busy取消/禁止递归世界操作、嵌套批拾取和坐标丢弃。隔离私有引擎composition_engine实际跑通query_batch、FILL→返回、PLANTSOIL、TERRAFORM、拾取地皮→DEPLOY铺回，场景DONE、exit 0；未操作用户世界。提示词保持纯文本，强调先合并查询、再执行已确定序列、失败后依据实际进度降级单步。
-
-
-2026-11-03 任务规划补充：制作准备查询整合库存缺额、地面/容器来源和可用科技站；`my_friend_body_sites.lua` 提供按需原生建筑/部署选址，接入公开查询、批量查询和序列读取。建筑禁止隐式脚下建造与同址 count>1，执行前重验位置，失败沿用序列实际进度恢复。观察增加潮湿、日内时间、地面物品与 boss，环境沿用低频刷新。具体契约及局限见 BODY_API.md“任务准备、选址和局部恢复”，回归 `tests/body_planning_test.lua`；同时运行受影响的 body_api/resources/composition、Python prompt/bridge 和 Node web_sites/web_page。网页修复含新对话入口变体/公开首页回退、豆包富文本与发送控件适配及未发送诊断；未宣称真实网页或游戏端到端验证。
-
-大模型容器取放复用原有原生容器交互方式：`my_friend_body_actions` 在 pickup/transfer 内先接近并用独立短动作打开，再以短动作取放，完成/失败/取消/断线时通过 job.cleanup 关闭本次自行打开的容器；序列子步骤沿用已有 Dispose 清理。不使用新增计时任务或监听器，不要求模型额外调用开关接口。领队已打开的容器直接共用，不替领队关箱；伙伴原已打开的容器也不冒领清理权。取放执行时重新验证开门、权限和源容器身份；料理继续走原有开锅/放料/烹饪/收成流程，原生 trader 给予不当作普通存箱。按风险只运行现有 body_resources 定向回归及修改模块语法检查，未做真实游戏动画/远端客户端验证。
-
-
-### 大模型通用组合能力维护（2026-11-03）
-
-实测结论与改动契约见BODY_API.md“通用感知、布局与组合执行优化”。主要根因：Discovery筛选之外的土坑/照料实体缺失；容器非堆叠槽的GiveItem兜底仅移一件；成功读取的and/or表达式误写失败原因；选址统一稀疏间隔、没有行列布局；单锅接口等待收成导致设备串行。接口仍采用通用观察/原生动作/布局/序列，不新增按任务名硬编码流程。
-
-模块新增`my_friend_body_terrain.lua`，只在terrain观察调用中取有界地块数据；观察拓展、原生坐标目标发现、同步产物回执分别在body_observation/body_native/body_actions。body_sites返回原生间距与固定网格；body_composition展开有界for_each（总计64步），按迭代隔离局部结果引用，不接受脚本/条件或嵌套。所有运行时句柄/布局/产物仍不存档，无新增定时器/监听器。Survival.IsFireClearPoint被营火和唤星复用。提示词压缩并按通用约束组织，Schema参数与实现共同维护。
-
-仅按行为风险选body_composition、body_resources、body_native、body_planning及Python body_prompt/body_bridge检查；不将该列表或历史测试地图视为以后每次修改都必跑。补在现有回归中的关键用例覆盖重复变量隔离/缺字段拒绝、多格不堆叠容器部分容量、土坑发现及接续播种目标、地块网格、cook非等待；新代码真实游戏及多人尚待实测。
-
-
-制作回执口径：body_recipes的可制作数量按原Inventory:Has计数，保留归属数量但分开available_for_crafting；补总量、角色资源、科技状态、blockers/next_step，内层材料通过transfer到自身库存。实际craft失败返回同口径状态及已完成次数。composition裁剪保护材料/来源/动作数组，最新详情优先，早前省略显式标记；助手execution账本不把query_recipe的预计产量算已完成。世界操作needs_reason/过期等在助手侧终止本轮，保存成功请求也结束；当前world_control不再被旧输入快照覆盖。相关契约见BODY_API.md“制作准备与助手回执口径修正”；定向回归body_resources/body_composition/body_planning、Python body_prompt/body_bridge，未做真实豆包端到端验证。
-
-
-助手对话终止语义：Store._turn将模型选择say归一为最终text，仅发送一次并结束该轮；arguments.text优先于同回复的text，保留语音开关。不要把say的完成回执继续送回模型，否则会出现“完成说明→say→新决策→完成说明”的循环。行动前说明必须与身体skill同轮。正常游戏状态/语音通知保留，游戏原动作入口和去重不变。回归位于body_bridge_test的终止/去重与装备后收尾用例。
-
-自动闲聊排查区分“未触发”与“模型主动静默”：定时请求及回复正常但没有say时，检查ambient指令及空回复历史；当前提示明确依据快照主动短聊，空ambient不入history并在model.prompt中过滤旧记录。日志ambient_started/ambient_finished仅记结果元数据。未改变触发频率和安全门槛；定向回归覆盖连续静默不挤出用户历史及模型数据格式。
-
-本机助手启动/语音：StartVoice.vbs隐藏调用start.ps1，start.ps1检查环境后独立启动pythonw及launch模块；启动异常可见弹窗，CheckOnly不启动GUI。WindowsVoice保留默认系统兼容路径，按配置启动独立voice-runtime下whisper_worker：prepare只下载、check不录音、recognize/continuous才打开麦克风、wave用于本地文件验证；CPU int8 small模型，4线程，continuous重用进程，停止/退出清理，TTS经控制管道pause/resume抑制回声。speech.ps1公布可用SAPI音色并从UTF-8 JSON读取音色/语速/音量。偏好由settings.validate_voice验证并随配对设置原子保存；设置窗口提供离线准备、朗读选项与试听。运行库/模型不提交或发布，不新增游戏定时器。仅语音/助手相关回归及窗口启动探针验证，不自动测试全部Lua或打开真实麦克风。
-
-重物模型接线：body_actions的pickup在heavy目标上使用body_carry，后者调用command_carry原GetAction并固定body_target GUID；原CanPickUp导出复用，不另写一套重物库存/背包/骑乘算法。完成以GetHeavy和carrying阶段为准，保留原持有命令；失败/中断按job.cleanup所有权清理。batch默认排除heavy；原PICKUP的Dedicated接口避免绕过。commands.Catalogue只读导出当前语言/角色稳定ID，body_command_catalog给get_capabilities补覆盖分类，不是任意指令执行网关。完整覆盖/未暴露清单见BODY_API.md。无新增存档数据、定时器或监听器，body_target/命令引用只用于运行时；保存、迁移和附身仍走既有库存和Close/Clear接线。定向body_native回归确认目标不替换、自动装备不重复及移动放下；真实多人、牛和背包恢复尚待实测。
-
-网页回传排错：waiting_reply一直未出现reply_detected且由页面报reply_timeout时，优先检查DOM提取与nonce，不先认定游戏动作失败。readReply的倒序文本遍历不再用“单节点包含完整编号”作为祖先检查前提，最深24层、有界文本大小及遍历量；可见文本拼接过滤隐藏后代，旧nonce和非协议对象仍拒绝。web_model保存/记录布尔request_seen供诊断，不能将页面包含输入提示词中的编号误当已经收到回复。对应body_web_page定向回归从用户JSON的分段/深嵌套读取到回传accepted；web_sites和WebModelTests检查接续及诊断，不代表真实登录网页验证。
-
-网页首发发送确认：DeepSeek 首次进入会话可能替换输入框，content.execute 在发送后重取可见输入框，不因旧脱离节点仍有提示词而报 send_not_confirmed，也不对该旧节点补点发送；当前新框仍有草稿则保留失败判断。web_model 错误分类补齐发送确认/换会话错误，仅记录白名单元数据。server.submit 对协议 2 返回本机排队 input_id，游戏确认/拒绝消息沿原 ID 回传；desktop 立即显示待确认行，按 ID 原位更新，拒绝恢复输入、断线清理待确认状态。游戏授权、模型启动时机和 100 毫秒 UI 刷新频率保持，交换节奏见上述连接传输规则。定向检查复用 body_web_page/sites、WebModelTests、body_multiplayer_bridge 和无麦克风的隐藏 Tk 用例；不宣称真实网页已验证。
-
-全局按住说话修正：原RegisterHotKey(None)绑定Tk线程但由after轮询PeekMessage，存在消息先被Tk循环取走的路径，且原只提供按下事件。VoiceHotkey改为独立消息线程，在注册线程消费消息/注销，F1～F11注册、F12钩子，事件队列传按下和松开；回调不录音。桌面层按下启动listen_held、松开发送finish；Whisper先采集再加载模型，Windows系统识别用C#事件处理器异步收集语句后停止，避免PowerShell后台回调缺runspace。识别术语UI/传参/预置initial_prompt移除，旧字段保存时清除。定向回归覆盖线程归属、双边沿、松开控制和隐藏UI连接；真实Windows专用消息线程探针确认事件接收，不开启麦克风；游戏物理按键尚待验证。
-
-
-2026-11-03 创意工坊轻量启动：start.ps1复用已有Python/Tk，缺少时由ensure_python.ps1按用户安装固定版本。下载顺序为 Python 官网、阿里云和华为云。每个来源 25 秒无进度或总计 10 分钟超时，校验通过才将本次下载文件移入缓存，所有来源共用固定 SHA-256。不随模组打包运行库，不改PATH。paths.py与paths.ps1统一以模组tools/companion_bridge/.local保存新数据，MY_FRIEND_ASSISTANT_DATA_DIR支持隔离检查。已有模组本地配置、运行库和模型继续使用。主窗口启动不依赖Whisper下载；setup_voice.ps1仅由用户在设置中准备。Whisper 准备时给 Hugging Face 显式传模型目录下的缓存路径并在该进程禁用 Xet，模型及其分支引用一起归入模组目录。CheckOnly失败走控制台错误，不弹窗。export_workshop.py从当前Git工作区导出（包含未提交文件），显式排除.local/tests/日志/缓存，不上传、不改发布配置；旧开发目录缓存保留，不得直接当作上传目录。未做全新Windows机器端到端或真实麦克风验证。
-
-
-2026-11-03 组合任务修正：新增body_cooking模块负责显式四格配料验证/供应枚举与有效cook动作判定。复用实时recipe_planner.EvaluateSpecific，不自行写菜谱、不调用随机选菜；food_rules.CanUseIngredient和planner.Available仅增加可选explicit参数，默认自主规则保持，例外仅允许显式Body料理使用新鲜肉干，COOK原包装重验当前任务身份。query_recipe区分组合合法/总量齐备/外部来源/仍缺材料，cook按指定mix执行。body_observation补物品存放/归属、采摘产品、食材标签；work起止有界观察产物，drop/equip/unequip给当前物品状态，transfer提前拒绝不可存放物。所有实体仍使用临时句柄，无新增保存字段或循环监听。
-
-助手model/server增加有界plan任务笔记，仅活跃轮次保存，模型每次可完整更新；真实回执优先，新玩家任务清空。浏览器content只增plan字段白名单，旧协议兼容；模型提示按最终交付、对象绑定、按缺额准备和部分失败恢复重写，接口参数同步。sequence回执为各步增加有界arguments，方便识别实际执行对象，整体预算预留最多约4KB。详细契约见BODY_API.md末节。
-
-本次仅运行受影响resources/native/composition/planning与Python prompt/bridge、网页解析定向检查及修改Lua语法检查，未启动游戏或真实模型网页。清理三份可重建workshop-upload副本约150.8MiB；语音运行库/模型保留，当前开发目录仍不适合直接上传，发布时重新导出。
-
-
-2026-11-04 DeepSeek API：api_config.py生成/读取根目录AssistantAPI.json（支持UTF-8 BOM），默认auto按Key选择API/web，独立于配对语音设置；DEEPSEEK_API_KEY可作空配置Key的回退。deepseek_api.py仅使用标准库HTTPSConnection，固定官方TLS端点，function定义由本轮TOOLS深拷贝并增加顶层_text/_plan元数据，基本Schema校验后剥离元数据交现有Store；游戏权限仍最终裁决。单个顶层调用、原结果回传、任务内reasoning_content保留；取消关闭本机连接/清任务，晚到结果丢弃。默认开启思考且等级为 low，8192输出、120秒单次网络操作超时、指定临时状态重试一次；未知网络结果不自动重发，失败不切换提供方。ambient_enabled默认false在Store调度前抑制付费闲聊。diagnostics只公开计数，health按api/web键区分，GUI显示用量。
-
-model.context_data提取共同请求数据保持原web prompt行为；API以原提示行为段加API输出协议运行，Schema通过tools传递。实际密钥文件Git忽略且export_workshop显式排除，实际配置/示例均从DEFAULTS重新生成避免携密钥发布。API模块不打包第三方SDK或修改Lua/游戏保存；使用和验证边界见助手README、BODY_API末节。定向测试tests/body_deepseek_api_test.py覆盖配置/BOM/自动选择、原生调用/回执/思考续接/元数据、权限/截断/坏参数、多工具拒绝、取消迟到、HTTP错误脱敏/有限重试、导出清密钥；复用prompt/bridge/voice回归，不做全量或真实付费调用。
-
-
-2026-11-04 API参数桌面配置：api_settings.show提供独立Tk设置窗口，主窗口与助手设置均可进入；连接方式/遮挡Key/可编辑模型ID/思考开关与等级/输出上限/超时/重试/主动闲聊保存至原AssistantAPI.json，明确重启后生效，不热改正在运行的adapter。api_config.validate供load/save共用，界面load(resolve_env=False)避免环境变量Key回显或落盘；save使用配置目录内唯一临时文件并原子替换，失败清理、校验不通过不覆盖旧文件。Git与发布排除AssistantAPI.json.*临时残留。定向API测试覆盖隐藏GUI保存/禁用思考/非法数值不覆盖/重载后的实际请求参数/环境Key不落盘及导出排除，复用原语音GUI回归；未调用真实API或麦克风。
-
-
-2026-11-04 API未知字段中断修复：原validate只抛通用ValueError，Store终止整轮，旧日志无被拒参数因此不能断言具体字段。deepseek_api新增ToolArgumentError的category/结构path/允许字段；_decision在返回Store前完整验证，拒绝调用不下发游戏。仅参数校验类错误允许同一decide内追加原assistant（保留reasoning_content）→同tool_call_id的executed=false反馈→纠正提示，再请求一次；不删未知字段、不擅自扩大数量/区域、不重放此前已完成动作。二次校验失败明确报出路径，权限/HTTP/截断/多调用不进入参数修复；每个响应先累计usage，取消与返回前重验原事件。api_tool_rejected只记类别/路径/次数。observe描述明确nearby查植株、items查地面物，避免将石果植株当物品。定向API/bridge/prompt检查覆盖批查成功→错误序列字段→修正执行→收尾、不重放、纠错次数上限、取消迟到、无正文日志和纠错计费计数；未调用用户Key或真实游戏验证。
-
-
-2026-11-04 观测漏容器与位置语义：body_composition.Limit对扫描根结果走LimitScan，先精简描述/裁剪contents，保留实体身份/坐标；实体仍超预算按页缩减，returned/next_offset/限制标记同步，无法容纳单实体则明确失败。body_api独立observe复用18KB限制；body_observation按距离/GUID稳定排序、显式过滤后分页（40实体，offset<=10000），缓存返回再次检查实际范围与隐藏/燃烧标签，内容单独标记。环境原刷新中补containers摘要，不打开/扫描箱内物品。遵守限制与定向补查的Schema/提示已同步。
-
-对照本机上线版 2.5.0 后，3.0 模型扫描改用请求内共享的实时局部查询，并保留原自主发现缓存。配方按原容器权限和同平台规则核对缺额后才生成对外来源列表。指定容器续读可直接重验句柄、距离和权限；内容按 GUID 续页，预算裁剪同步下一页偏移。句柄上限 2048，以环形表淘汰，避免大批查在回执发出前淘汰早先结果。批量劳动子动作仅累计进度，单目标劳动仍报告掉落；原版动作效果以实际执行前为基准。选址候选（含地皮吸附后的坐标）同时受请求半径和伙伴 32 单位动作范围限制。两版本的基地扫描桩均验证了空查询复用和掉落事件失效；真实拥挤存档和多人性能待测。
-
-Home.Status只读当前分片已有_home/_base标量，区分manual基地/automatic基地与hold/roam驻留，at_base使用设施范围；自动设施/返家常量移至Home供原base_ai和状态共享，数值与原行为不变。body_terrain.Location只读脚下tile及当前topology节点，复用原ConvertTopologyIdToData输出task/room/layout和有依据的region，不以人工地皮冒充区域，不遍历地图/远处设施。新字段由snapshot自然传递，无保存/迁移格式变化或额外任务监听；原migration.LOCAL_FIELDS保证分片地点来源。完整字段及验证边界见BODY_API末节。定向复用body_api/resources/composition/planning及Python prompt/API检查，Lua只检查修改文件；基础API桩的空材料配方旧断言与现有native_recipe_condition_unmet语义对齐，不改craft逻辑。
-
-2026-11-04 模型身体任务：body_actions 使用 Builder:BufferBuild 预制建筑，落地仍用原生 BUILD，候选与执行前重验位置。原生 Builder 保存待放记录。制造型配方保持当前工作站约束。body_storage 将可见容器代理与内部真实库存分开，权限校验和开关绑定实体入口，按需拆分超大堆栈。鬼魂禁止普通移交，复活使用原版 GIVETOPLAYER 和 rescue 的就绪检查。body_travel 只在模型移动任务内复用 Navigation 长途分段和 Platforms 跳船，任务结束释放路径。提示词、两种传输的工具目录与 Lua 入口保持一致。同连接内的 last_task 按发言者隔离，实时回执继续优先。详见 [BODY_API.md](BODY_API.md)。
-
-模型 `work` 和 `work_many` 在同一目标上使用 SGwilson 的砍、采、敲、挖续招帧。Utility 取身体节点当前的 RouteAction，由活跃任务生成下一击并沿用成功、失败回调。每击重新核对任务权限、期限、原生动作、距离、手上工具和生存状态。离开操作范围或需要换工具时由普通任务路径接续。指定 `amount` 按成功动作次数停止，批量完成当前目标后才转移。
-
-助手同一轮任务按真实回执继续决策，取消固定 16 轮上限。最近 32 条回执滚动保留，溢出标记 results_limited，活跃任务笔记随轮次续接。取消、权限、单个游戏任务时限和单批序列步数按现有契约执行。
-
-助手区分任务编号 `turn_id` 和每次网页请求的 `request_id`。网页按 `turn_phase` 区分新输入和续接，续接用 `original_request` 保留原任务，供网页换对话后恢复。DeepSeek API 只在新任务追加玩家消息，执行回执及参数纠错使用匹配的 `tool` 消息。正常回执附快照增量和任务笔记，保留原模型思考上下文。
-
-专服可配置 model_dedicated_transport=admin_client。该模式复用 BodyRelay/BodyRelayReply 与跨分片 BodyShardLink，关闭专服自动回环探测，连接时验证服务器管理员身份和本分片配对码，并在轮询与接收中继回执时重验管理员身份。原 BodyControl 公屏/身体动作按真实发言者权限执行，跨分片公屏继续使用 BodyChat。选项只在专服生效，常规配对仍为默认。定向桩覆盖管理员接入、普通玩家身份、错码、撤权与既有跨分片路径。
-
-玩家资料由 `Observation.PlayerProfile` 统一生成。公屏名字优先取服务器客户端名单，角色和三维来自真实玩家实体。同分片发言经 `Describe` 补充坐标和句柄，跨分片发言随服务器间消息携带资料。助手保留中继身份供内部使用，序列化网页和 API 模型请求时以 `snapshot.speaker` 表示当次发言者。游戏仍通过 `turn_id` 找回真实玩家并执行权限检查。
-
-2026-11-05 连续任务续接：模型优先提交已确定序列，内部查询和实际掉落/物品/选址引用在主模拟端推进，首败返回实际进度；数量不足和空选址不继续后续步骤。`body_actions` 的可选 `drop_prefab` 以目标原生 `loot_prefab_spawned` 事件绑定本动作产物，监听随 job.cleanup 释放，不把周边增量当确定归属。`body_observation` 的主动实体查询默认 32 单位，劳动动作/树类型在分页前筛选，工具公开原生动作 ID；环境摘要仍是原频率、20 单位。`body_batch.work_many` 可显式限制完成目标数，目标在换工具时失效且尚无劳动进度则失败，不计为完成。句柄移除 90 秒租期，保留 2048 条有界缓存和有效序列身份固定；位置、归属和原生条件仍实时重验，临时数据不存档。
-
-`body_sites` 支持 exact 指定落点校验，失败提供地皮/表面/原生间距和有界邻近对象信息；邻近对象只是诊断上下文，不能替代 `CanDeployRecipeAtPoint/CanDeploy`。`body_native` 在准备和真正执行前重验可部署物，位置受阻不消耗物品。提示词与公共 Schema 同步，普通动作/容器部分移交停止序列，保留失败步骤参数。验证仅选 body_api/composition/batch/planning/native 和相关 Python prompt/API 参数用例及改动 Lua 语法，不启动游戏、不做全量测试；契约与使用示例见 BODY_API.md“连续任务、定向感知与句柄”。
-
-
-### 2026-11-06：跨分片连接、头像配置和网页配对保留
-
-my_friend_body_shard通过追加于既有RPC之后的BodyShardLink做服务器间发现、状态、HTTP中继、原生聊天同步和心跳。只接收在线分片发来的有界数据，客户端不能指定远端userid或身份。源分片从真实在线玩家捕获角色/三维、世界操作状态、会话身份和管理员标志；目的分片把该记录作为临时transport actor，仍由API.CanConnect/Authorize校验当前活动伙伴及领队。remote actor没有伪造的实体句柄或坐标，snapshot.owner.same_shard=false。跟随/移交/原专属玩家交互保留跨分片限制；world操作回源分片重验真实玩家和两轮理由，不借管理员中继权限扩大工作权限。
-
-本机API/网页助手经源分片访问真实玩家电脑的回环HTTP。管理员客户端模式重验源服务器捕获的admin，撤权或晚到回执不能执行动作。云服常规API无人同分片时沿TryDedicated原10秒节奏发送服务器邀约；其他分片的在线玩家提供身份上下文，HTTP直接在伙伴所在服务器运行，不要求玩家电脑运行助手。已有有效连接仍共用，不重复轮询。玩家/伙伴移除、分片掉线结束旧会话及任务，由原自动连接重新发现；旧GUID、句柄、任务及模型计划不写入跨分片存档。没有玩家在线时不凭空构造玩家身份。
-
-每侧最多32个临时链接；每链接最多8个未完成HTTP转发，源分片总转发最多64个。远端身份35秒租期、10秒单播心跳、8秒HTTP时限、12秒初始发现时限。连接/动作沿原权威模拟和busy安全边界执行，无全世界实体扫描。回显先在源分片按玩家/文本/频道匹配，再回报目的分片，最多64条短期记录，避免重复模型输入；附近私聊不跨分片，助手远端输入明确拒绝并保留原文。实体移除取消任务，回调复核World/玩家/链接身份，运行时表均不存档。
-
-companion_chat_icon提供当前原版profileflair.xml的246个条目及四种语言名称，包含空头像，稳定资源ID作为配置值。modinfo.lua的真实加载环境没有ipairs等标准库，目录构建只用数字for与表操作；需用不带标准全局的原版受限环境验证，普通Lua执行通过不足以说明游戏可加载。Speech.SetChatIcon读配置，公开消息携带目的分片选择的图标，跨分片显示不依赖源分片的另一套配置；附近chatter沿原包装使用同一头像，缺失资源回退空图，无新二进制资源或网络变量。
-
-settings.py将网页连接码迁移到当前用户JourneyTogether/companion_bridge/web-pairing.json，首次沿用当前模组副本已有值，后续各副本共用；游戏码/语音仍在模组.local/settings.json。显式修改网页码写回共享文件，更新和清理发布文件不得删除/迁走这些用户配置。MY_FRIEND_ASSISTANT_DATA_DIR继续隔离所有测试数据。扩展新增scripting权限，按保存的站点/标签页在启动和更新后恢复缺失脚本；注入前检查已有标志，并串行同一标签页的恢复，手动断开和切换配对仍优先。
-
-定向验证覆盖房主/远端客户端不同分片首次配对、真实身份快照、动作执行、同步回显一次、私聊拒绝、管理员错码/撤权、分片掉线/玩家移除、重连和云服无本地玩家的直接HTTP；复用既有transport/shard_chat及speech检查，网页DOM和自动恢复用例、隔离配置持久化及246个头像/四语言受限modinfo加载均通过。仅检查改动Lua/Python/JS语法与差异，不做全量测试或真实游戏/付费API验证。本次用户日志中的旧版开房失败为洞穴分片登录Klei超时后“No auth token could be found”，发生在首次modmain加载完成之后、世界载入之前；另有本次新增modinfo使用ipairs的加载错误，已改数字循环并定向复核。
-
-### 2026-11-06：洞穴启动与加载兼容性核查
-
-核对当前游戏762172的原版加载器、模组沙箱、头像模板及地图生成校验。入口只有modinfo.lua和modmain.lua，API版本10、双端必需标记与运行方式一致；业务模块使用原版require解析，注册使用标准PostInit及Mod/Client/Shard RPC接口。modmain不直接访问沙箱缺失的pcall/rawget等全局；保存包装、聊天包装和组件兼容处理保留原方法。无自定义下载加载器、登录接口替换或modworldgenmain.lua；原版WorldSim只执行世界生成入口，不执行本模组的modmain。伙伴真实角色与存档包装prefab是运行/保存设计，不改变游戏登录验证。头像通过现成图集显示，没有调用编织、皮肤装备或所有权验证接口；专服不加载头像UI。助手HTTP仅在世界及合法玩家身份存在后运行，启动注册阶段不发配对请求。
-
-用户14:12:31启动的日志中两分片已连接并ready，随后玩家ValidateGameSessionToken请求向login.kleientertainment.com超时，被以ID_DST_GAME_SESSION_AUTH_FAILED断开；后续记录也有分片首次登录超时。14:31:03新建世界的地表日志则连续缺少monkeyqueen、sculpture_bishop、junk_pile_big等原版必需物件，五次生成重试失败，同次洞穴登录超时；该世界配置为small。不能将这两类问题一概记为Lua崩溃，也不能说认证必定发生在模组加载之前。
-
-结构检查覆盖模块引用、UTF-8入口、资源路径、受限配置环境和发布副本一致性，没有逐模块重审业务或运行全量测试。254个脚本/声音/入口及图标运行文件与发布目录一致，193个字面模块引用均能在模组或当前原版脚本包解析，四种语言的246项头像配置通过受限环境加载。
-
-另外使用发布目录my_friends，在tests/.local独立存储中启动实际游戏专服双分片；仅启用本模组，保留中文语音、model_enabled=true和格罗姆头像，采用当前新建房间的生成配置并将地图改为medium，离线模式不读取认证令牌或玩家存档。地表/洞穴均完成世界初始化，约30秒后双向连接并报告secondary shard LUA is now ready，继续运行12秒后通过控制台正常关闭，没有Lua错误。此项验证真实引擎的生成、资源加载及分片握手；没有图形客户端加入，不能代替在线登录、头像显示或助手跨分片会话实测。本次不改运行脚本来掩盖认证超时，也不绕过原版生成校验。
-
-随后按用户授权在Linux云端管理后台的既有安装和存档上验证。先集中备份Cluster_1与两份旧模组目录，保留AssistantAPI.json及助手.local数据，再通过后台同款SteamCMD流程将游戏从761239更新到762172；当前模组代码同步到后台UGC目录和游戏Workshop缓存，不发布创意工坊。沿后台原tmux会话和run-shard.sh启动原地表/洞穴，原有其他模组与配置保留。两片分别在15/16秒报告Account Communication Success，约31/32秒连通并ready，无Lua错误；随后记录到玩家在线验证及客户端初始化成功。只读控制台确认两片均加载body_shard和格罗姆头像配置，活动伙伴在地表，洞穴没有重复伙伴；部署Lua文件与本地当前源文件逐项一致。服务器继续运行供用户测试。另备份并同步本机订阅版的26个旧文件、补入2个新文件，客户端须重新进入房间加载完整新代码。该结果验证云端在线启动和旧存档恢复；不能由此声称本机超时已修复，头像画面和助手跨分片完整对话仍需实际操作验证。
-
-### 2026-11-06：模型关闭边界、连接清理和网页回复延迟
-
-modmain改由my_friend_body_startup接线；关闭模型时不加载body_bridge/body_api/body_world/body_shard，仅保留body_chat公共聊天展示与固定RPC占位。占位和启用模式的13个注册入口按方向/名称顺序一致，关闭模式不创建HTTP、自动配对、心跳或发现任务。普通伙伴聊天及生命周期公共发言仍走现有路径，不要求模型连接。
-
-本地自动连接只在非专服真实ThePlayer激活时安装一次，激活事件与延迟兜底不会各造一个控制器；Stop清除重试/超时及自身移除监听。手动断开传播user_disconnected并停止当前世界自动连接和专服邀约，跨分片stop保留手动标志，普通迁移清理不伪装为主动停止；显式手动连接可恢复。服务器BodyControl先检查本片真实在线玩家；跨片发送前检查目的分片可用性，取消HTTP同时删除等待记录和超时。配对HTTP同步回调不覆盖其内部新建exchange超时。无本片玩家且无可用分片时，不占用后续真人连接的10秒重试窗口。
-
-助手Store.is_connected统一检查20秒通信租期，GUI、health、输入和动作等待复用；超时只通知一次并清除待发输入、动作、播报及模型规划。已关闭/过期的会话不能靠迟到exchange恢复，重配产生新token；旧请求ID及会话校验保留。GUI与health读取触发检查，不增常驻扫描线程。
-
-本机日志显示reply_detected至model_page_reply_received常相差3～4秒，来源是网页扩展原1秒采样加2.5秒稳定等待。按用户要求删除稳定期和网页生成结束等待：读到完整且匹配本轮request_id的JSON立即回传。仅等待未完成回复时临时安装MutationObserver，流式变化合并为最多每250毫秒一次DOM检查，750毫秒兜底；每次醒来清除observer和计时器。完整JSON、可见内容、请求编号、失效请求与回传确认校验保留，不增加页面内部接口访问。
-
-定向验证涉及关闭模式的真实require边界与RPC编号一致性、自动连接/手动停止/迟到回包、专服与客户端中继、取消跨片等待、助手超时/旧token、回环HTTP以及网页首轮完整回复立即返回和DOM事件合并。沿用本地受影响检查，Lua/Python/JS语法及差异检查；本次未启动真实游戏或模型网页，不把上述优化宣称为本机Klei认证超时修复。
