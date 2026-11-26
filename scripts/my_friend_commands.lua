@@ -251,6 +251,15 @@ local function FindCommand(friend, text)
     return id
 end
 
+local function IsFollowOrder(id)
+    return id == "follow" or id == "stop_follow"
+end
+
+function M.IsFollowMessage(friend, message)
+    local addressed = AddressedMessage(friend, message:match("^%s*(.-)%s*$"))
+    return addressed ~= nil and IsFollowOrder(FindCommand(friend, addressed:lower()))
+end
+
 local function CanDispatch(friend, player)
     return Policy.IsLocalPlayer(player) and friend ~= nil and friend:IsValid()
         and friend.components.health ~= nil
@@ -334,7 +343,7 @@ local function Execute(friend, player, id, special, portal)
     if id == nil or affinity == nil then return false end
     -- A dead companion can still be ordered to follow its leader, but it must
     -- not enter any ordinary work, food, or inventory command while ghosted.
-    if friend:HasTag("playerghost") and id ~= "follow" and id ~= "stop_follow" then
+    if friend:HasTag("playerghost") and not IsFollowOrder(id) then
         return false
     end
     if id == "follow" then
@@ -540,7 +549,8 @@ function M.Dispatch(friend, player, message)
             end
         end
     end
-    if MaybeRefuseChinese(friend, addressed_message, id) then return true end
+    if not (player:HasTag("playerghost") and IsFollowOrder(id))
+        and MaybeRefuseChinese(friend, addressed_message, id) then return true end
     local portal = false
     if id == "revive" then
         for _, word in ipairs(PORTAL_REVIVE_WORDS) do

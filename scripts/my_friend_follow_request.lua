@@ -5,9 +5,10 @@ function M.Apply(inst, player, clear, resume_current)
     local affinity = inst.components.my_friend_affinity
     -- An authorized model task resumes an existing leader relationship; it does
     -- not arbitrate a new follow request using the normal 25-affinity gate.
-    local current = resume_current == true and Policy.GetLeader(inst) == player
-    if affinity == nil or not current and not affinity:RequestFollow(player) then return false, "follow_unfamiliar" end
+    local current = resume_current == true and player ~= nil and Policy.GetLeader(inst) == player
+    if affinity == nil or not current and not affinity:RequestFollow(player, true) then return false, "follow_unfamiliar" end
     if Policy.GetLeader(inst) ~= player then return true, "follow_busy" end
+    inst._my_friend_ghost_follow_guid = player:HasTag("playerghost") and player.GUID or nil
     inst._my_friend_pending_recipe = nil
     require("my_friend_contextual_events").RecordFollowStarted(inst, player)
     require("my_friend_combat_rules").DisengageForFollow(inst, player)

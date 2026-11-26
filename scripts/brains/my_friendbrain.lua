@@ -236,6 +236,16 @@ function MyFriendFollow:Visit()
         Platforms.ResetRoute(self.inst)
         self.inst._my_friend_follow_route_reset = nil
     end
+    if leader:HasTag("playerghost") and not ghost then
+        local surface = Platforms.Surface(Vector3(tx, ty, tz), leader)
+        if not Policy.IsFollowingGhost(self.inst, leader) or surface ~= "land" and surface ~= "boat" then
+            self:FinishStroll(now)
+            self.chasing = false
+            self.status = RUNNING
+            self:Sleep(.25)
+            return
+        end
+    end
     Platforms.ResetAfterPlatformChange(self.inst, leader)
     if Platforms.FollowBoardingStep(self.inst, leader) then
         self.stroll_target, self.next_stroll = nil, nil
@@ -701,11 +711,12 @@ function MyFriendBrain:OnStart()
     Add("catch_up", Alive(function(c)
         local command = Commands.Get(inst)
         if command ~= nil and command.id == "chop" then return 0 end
-        return c.leader ~= nil and not c.leaderdead and not c.waitlight
+        return c.leader ~= nil and (not c.leaderdead or c.followghost) and not c.waitlight
             and not require("my_friend_basic_equipment").IsBaseEquipmentTravel(inst)
             and (Platforms.NeedsCrossing(inst, c.leader)
                 or Platforms.NeedsBoardingStep(inst)
                 or c.distance > Policy.ActivityRange(inst)^2
+                or c.followghost and c.distance >= Policy.FOLLOW_RANGE^2
                 or c.rejoining)
             and 110 or 0
     end),
@@ -875,11 +886,9 @@ function MyFriendBrain:OnStart()
     Add("game_sit", Alive(function(c) return GamesCompanion.Score(inst, c) end), GamesCompanion.Behaviour(inst))
     Add("sit", Alive(function(c) return Sitting.Score(inst, c) end), Sitting.Behaviour(inst))
     Add("follow", Alive(function(c)
-        return c.leader ~= nil and not c.leaderdead and not c.hurt_evade and 10 or 0
+        return c.leader ~= nil and (not c.leaderdead or c.followghost) and not c.hurt_evade and 10 or 0
     end), MyFriendFollow(inst))
-    -- Leader died: wait for them near where they fell instead of trailing the
-    -- ghost. Survival, rescue and commands still outrank this.
-    Add("vigil", Alive(function(c) return c.leaderdead and not c.dark and 10 or 0 end),
+    Add("vigil", Alive(function(c) return c.leaderdead and not c.followghost and not c.dark and 10 or 0 end),
         MyFriendExplore(inst))
     Add("dark_standby", Alive(function(c) return c.leader == nil and c.dark and 11 or 0 end), StandStill(inst))
     -- If no construction step is executable, survey the base with the same
@@ -987,6 +996,7 @@ function MyFriendBrain:OnStart()
         end
         return {
             leader = leader, rejoining = rejoining, leaderdead = leaderdead,
+            followghost = Policy.IsFollowingGhost(inst, leader),
             ghost = ghost, threat = threat, escape_threat = escape_threat,
             canfight = inst._my_friend_can_fight,
             -- A companion with a manual home, or one that joined a world past

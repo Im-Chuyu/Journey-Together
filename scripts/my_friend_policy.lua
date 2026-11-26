@@ -17,9 +17,8 @@ function M.ActivityRange(inst)
     return command ~= nil and command.player == M.GetLeader(inst) and 32 or M.ACTIVITY_RANGE
 end
 
--- A leader who died stays the leader (keepdeadleader), but must not be
--- followed around as a ghost. The companion keeps vigil instead; see
--- my_friend_base_ai.GetWanderPoint and the "vigil" brain entry.
+-- A dead leader retains the relationship. Movement stays in vigil unless
+-- this ghost explicitly requested follow and won leader arbitration.
 function M.IsLeaderDead(inst)
     local leader = M.GetLeader(inst)
     if leader == nil then return false end
@@ -28,15 +27,22 @@ function M.IsLeaderDead(inst)
             and leader.components.health:IsDead()
 end
 
+function M.IsFollowingGhost(inst, leader)
+    return inst._my_friend_ghost_follow_guid ~= nil and leader ~= nil
+        and leader.GUID == inst._my_friend_ghost_follow_guid and leader:HasTag("playerghost")
+end
+
 -- Centre and radius the companion is confined to while keeping vigil.
 function M.GetVigilPoint(inst)
     local point = inst ~= nil and inst._my_friend_vigil_point or nil
-    if point == nil or not M.IsLeaderDead(inst) then return end
+    if point == nil or not M.IsLeaderDead(inst) or M.IsFollowingGhost(inst, M.GetLeader(inst)) then return end
     return Vector3(point.x, 0, point.z)
 end
 
 function M.UpdateVigil(inst)
-    if not M.IsLeaderDead(inst) then
+    local following_ghost = M.IsFollowingGhost(inst, M.GetLeader(inst))
+    if not following_ghost then inst._my_friend_ghost_follow_guid = nil end
+    if following_ghost or not M.IsLeaderDead(inst) then
         inst._my_friend_vigil_point = nil
         return
     end

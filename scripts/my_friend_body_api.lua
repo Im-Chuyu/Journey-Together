@@ -176,7 +176,7 @@ end
 function M.LeaderAllows(inst, job)
     if not Policy.IsLeaderDead(inst) then return true end
     if job == nil or job.issuer ~= Policy.GetLeader(inst) or not job.issuer:HasTag("playerghost") then return false end
-    return job.skill == "execute_sequence" or job.skill == "revive" or job.skill == "pickup"
+    return job.skill == "execute_sequence" or job.skill == "follow" or job.skill == "revive" or job.skill == "pickup"
         or job.skill == "dismount" or job.skill == "move_to"
         or job.skill == "craft" and job.args.recipe == "reviver"
 end

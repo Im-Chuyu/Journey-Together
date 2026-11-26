@@ -282,10 +282,11 @@ function Affinity:RecordFollowerChange(health, sanity)
     if delta ~= 0 then return self:DoDelta(leader, delta, "follower_stats") end
 end
 
-function Affinity:RequestFollow(player)
+function Affinity:RequestFollow(player, allow_ghost)
     local userid = UserID(player)
-    if userid == nil or not Policy.IsLocalPlayer(player) or not self:CanFollow(userid)
-        or player:HasTag("playerghost") or player:HasTag("my_friend") then return false end
+    if userid == nil or not Policy.IsLocalPlayer(player) or not self:CanFollow(userid) then return false end
+    local ghost = player:HasTag("playerghost")
+    if ghost and not allow_ghost then return false end
     -- An idle companion must not reserve an old requester's priority.
     if Policy.GetLeader(self.inst) == nil then self.requests = {} end
     require("my_friend_home").Resume(self.inst)
@@ -295,7 +296,7 @@ function Affinity:RequestFollow(player)
     end
     -- Latest request wins within a priority tier, including repeated requests.
     table.insert(self.requests, 1, userid)
-    self:UpdateLeader()
+    self:UpdateLeader(ghost and player or nil)
     return true
 end
 
@@ -308,6 +309,7 @@ function Affinity:StopFollowing(player)
     if follower == nil or follower:GetLeader() ~= player then return false end
     self.requests = {}
     self.staying = true
+    self.inst._my_friend_ghost_follow_guid = nil
     self.inst._my_friend_last_leader_userid = nil
     self.inst._my_friend_backpack_target = nil
     follower:SetLeader(nil)
@@ -322,17 +324,21 @@ function Affinity:StopFollowing(player)
     return true
 end
 
-function Affinity:UpdateLeader()
+function Affinity:UpdateLeader(ghost_request)
     local follower = self.inst.components.follower
     if follower == nil then return end
+    local previous = follower:GetLeader()
     if self.staying then
-        if follower:GetLeader() ~= nil then follower:SetLeader(nil) end
+        self.inst._my_friend_ghost_follow_guid = nil
+        if previous ~= nil then follower:SetLeader(nil) end
         return
     end
     local online = {}
     for _, player in ipairs(AllPlayers or {}) do
-        if Policy.IsLocalPlayer(player) and player.userid ~= nil and not player:HasTag("my_friend")
-            and not player:HasTag("playerghost") then
+        -- A dead current leader can be kept for vigil. Other ghosts only
+        -- take part in arbitration when they explicitly request follow.
+        if Policy.IsLocalPlayer(player) and player.userid ~= nil
+            and (not player:HasTag("playerghost") or player == previous or player == ghost_request) then
             online[player.userid] = player
         end
     end
@@ -347,7 +353,10 @@ function Affinity:UpdateLeader()
             end
         end
     end
-    if follower:GetLeader() ~= selected then follower:SetLeader(selected) end
+    if selected ~= previous or selected == nil or not selected:HasTag("playerghost") then
+        self.inst._my_friend_ghost_follow_guid = nil
+    end
+    if previous ~= selected then follower:SetLeader(selected) end
 end
 
 function Affinity:OnSave()

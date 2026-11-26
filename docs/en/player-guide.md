@@ -40,6 +40,8 @@ The companion assists her current leader, chooses armour and tries to dodge inco
 
 A companion with a usable revival item or ability can help a dead player within 20 units, even while waiting or working independently. If the companion dies, her ghost calls for help twice. “Wendy, portal respawn” sends her to a portal. “Wendy, revive” or the wheel's Revive command searches for a resurrection point within 16 units.
 
+If you become a ghost, your companion waits nearby. Ask her to follow in chat or use Follow on the wheel to travel together again. The usual 25 affinity minimum applies. If you float over water she cannot cross, she waits for you to return to a reachable spot.
+
 ## Board games
 
 At 20 affinity, open the panel and choose **Games**. Play the companion, invite a player on the same shard, or select yourself to play both sides. An invitation expires after 45 seconds. Minimize the board to keep the game open. The world keeps running.

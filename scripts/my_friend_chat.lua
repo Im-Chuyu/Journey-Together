@@ -57,6 +57,9 @@ function M.Dispatch(player, message, source, whisper)
     player._my_friend_last_chat_command = {
         message = message, friend = friend, source = source, whisper = whisper == true, time = now,
     }
+    if player:HasTag("playerghost") and Commands.IsFollowMessage(friend, message) then
+        return Commands.Dispatch(friend, player, message)
+    end
     if body ~= nil and body.ready and require("my_friend_body_api").Valid(friend) == body then
         return require("my_friend_body_api").Input(friend, player, message, nil, nil, whisper == true)
     end

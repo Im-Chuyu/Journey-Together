@@ -22,7 +22,7 @@ Journey Together adds a companion to **Don't Starve Together** who can survive a
 
 | To… | In game |
 | --- | --- |
-| Travel together | Press `Alt+R` for the command wheel, or say “Wendy, follow me” |
+| Travel together | Press `Alt+R` for the command wheel, or say “Wendy, follow me”. Ask again after becoming a ghost |
 | Ask her to wait | Say “Wendy, stay here”. Use her current name if you rename her |
 | Set up camp | Stand where you want the centre of the base and say “Wendy, this is home” |
 | Ask for help with work | Once affinity is **above 50**, give her the right tool and say “Wendy, chop trees” |
