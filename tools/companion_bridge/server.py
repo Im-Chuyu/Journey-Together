@@ -99,6 +99,7 @@ class Store:
             self.input_protocol = 2 if data.get("input_protocol") == 2 else 1
             self.inputs.clear(); self.chat_queue.clear(); self.finished_inputs.clear(); self.input_seen.clear()
             self.commands.clear(); self.results.clear(); self.events_seen.clear(); self.playback.clear(); self.snapshot = {}
+            self.history.clear()
             self.task_memory.clear()
             self.condition.notify_all()
         self.notify("connected", companion=data.get("companion"), owner=data.get("owner"))
@@ -365,6 +366,14 @@ class Store:
         turn_id = input_event.get("turn_id") if input_event else None
         model_turn_id = turn_id or secrets.token_hex(12)
         speaker_id = (input_event["speaker"].get("userid") if input_event else None)
+
+        def remember(reply, **details):
+            with self.condition:
+                if self.session == session and self.turn_version == version and memory_key is not None:
+                    self.history.append({"user": text, "assistant": reply, "kind": source,
+                                         "speaker": input_event.get("speaker") if input_event else None,
+                                         "_memory_key": memory_key, **details})
+
         try:
             for iteration in count():
                 if source == "ambient" and iteration >= 4:
@@ -400,7 +409,9 @@ class Store:
                     context = {"utterance": text, "snapshot": snapshot,
                                "turn_id": model_turn_id, "turn_phase": "continuation" if iteration else "input",
                                "results": list(results), "results_limited": iteration > results.maxlen,
-                               "history": list(self.history),
+                               "history": [{k: v for k, v in entry.items() if k != "_memory_key"}
+                                           for entry in self.history if memory_key is not None
+                                           and entry.get("_memory_key") == memory_key and entry["kind"] == source],
                                "tools": [tool for tool in TOOLS if tool["name"] in allowed],
                                "input_kind": source, "task_plan": json.loads(json.dumps(task_plan))}
                     if source == "user" and memory_key is not None:
@@ -449,8 +460,7 @@ class Store:
                     if source == "ambient":
                         LOG.info("ambient_finished outcome=%s", "spoken" if reply and spoken.get("status") == "completed" else "silent")
                     if source != "ambient" or reply:
-                        self.history.append({"user": text, "assistant": reply or "", "kind": source,
-                                             "speaker": input_event.get("speaker") if input_event else None})
+                        remember(reply or "")
                     return
                 result = self.wait(self.enqueue(skill, decision.get("arguments", {}), expected_session=session,
                     version=version, revision=revision, source=source, turn_id=turn_id), version=version,
@@ -469,15 +479,12 @@ class Store:
                     self.wait(self.enqueue("say", {"text": question, "speak": True}, expected_session=session,
                         version=version, revision=revision, source=source, turn_id=turn_id), version=version)
                     self.notify("assistant", text=question)
-                    self.history.append({"user": text, "assistant": question, "kind": source,
-                                         "speaker": input_event.get("speaker") if input_event else None})
+                    remember(question)
                     return
                 if skill in world_skills and details.get("rejected"):
                     return
                 if skill in world_skills and result.get("status") == "completed" and details.get("requested") is True:
-                    self.history.append({"user": text, "assistant": "这次世界操作已安排。", "kind": source,
-                                         "operation": skill, "requested": True,
-                                         "speaker": input_event.get("speaker") if input_event else None})
+                    remember("这次世界操作已安排。", operation=skill, requested=True)
                     # A restart/pause may stop the next receipt. Do not replay
                     # the world operation or queue speech into the old world.
                     return

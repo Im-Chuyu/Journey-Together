@@ -53,10 +53,9 @@ function Traveller:Capture()
 end
 
 function Traveller:OnSave()
-    if self.record ~= nil then
-        -- The component is attached by AddPlayerPostInit before the save data
-        -- is applied, so add_component_if_missing is neither needed nor safe.
-        return {record = self.record, userid = self.userid, possession = self.possession}
+    if self.record ~= nil or self.exchange_route ~= nil or self.return_receipt ~= nil then
+        return {record = self.record, userid = self.userid, possession = self.possession,
+            exchange_route = self.exchange_route, return_receipt = self.return_receipt}
     end
 end
 
@@ -106,6 +105,10 @@ function Traveller:Restore()
 end
 
 function Traveller:OnLoad(data)
+    if data ~= nil then
+        self.exchange_route = data.exchange_route
+        self.return_receipt = data.return_receipt
+    end
     if data == nil or type(data.record) ~= "table"
         or not require("my_friend_characters").IsCharacter(data.record.prefab)
         or data.record.data == nil or data.record.data.my_friend_companion ~= true then return end

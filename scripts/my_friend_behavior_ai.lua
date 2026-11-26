@@ -305,19 +305,19 @@ function M.GetFoodOrResourceAction(inst)
                 and HasRoomForPrefab(inst.components.inventory, pickable.product)
         end
         if needs_food and CanPickUp(inst, item)
-            and FoodAI.IsUsableFood(inst, item) then
+            and FoodAI.CanForageFood(inst, item) then
             return true
         end
         if state[item.prefab] and CanPickUp(inst, item) then return true end
         local pickable = item.components ~= nil and item.components.pickable or nil
         if pickable ~= nil
             and (state[pickable.product] and IsPickableProduct(item, RESOURCE_PRODUCTS)
-                or needs_food and IsPickableProduct(item, FOOD_PRODUCTS))
+                or needs_food and IsPickableProduct(item, FOOD_PRODUCTS) and FoodAI.CanForageCrop(inst, pickable.product))
             and HasRoomForPrefab(inst.components.inventory, pickable.product) then
             return true
         end
         local crop = item.components ~= nil and item.components.crop or nil
-        return needs_food and crop ~= nil and crop:IsReadyForHarvest()
+        return needs_food and crop ~= nil and crop:IsReadyForHarvest() and FoodAI.CanForageCrop(inst, crop.product_prefab)
             and HasRoomForPrefab(inst.components.inventory, crop.product_prefab)
     end)
     if target == nil then return end
@@ -348,17 +348,17 @@ function M.GetFoodAction(inst, commanded)
         return HasRoomForPrefab(inventory, prefab)
     end
     local target = FindClosest(inst, function(item)
-        if CanPickUp(inst, item) and FoodAI.IsUsableFood(inst, item)
+        if CanPickUp(inst, item) and FoodAI.CanForageFood(inst, item)
             and HasFoodRoom(item.prefab) then
             return true
         end
         local pickable = item.components ~= nil and item.components.pickable or nil
-        if IsPickableProduct(item, FOOD_PRODUCTS)
+        if IsPickableProduct(item, FOOD_PRODUCTS) and FoodAI.CanForageCrop(inst, pickable.product)
             and HasFoodRoom(pickable.product) then
             return true
         end
         local crop = item.components ~= nil and item.components.crop or nil
-        return crop ~= nil and crop:IsReadyForHarvest()
+        return crop ~= nil and crop:IsReadyForHarvest() and FoodAI.CanForageCrop(inst, crop.product_prefab)
             and HasFoodRoom(crop.product_prefab)
     end)
     if target == nil then return end

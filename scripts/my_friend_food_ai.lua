@@ -1,5 +1,6 @@
 local M = {}
 local Health = require("my_friend_health")
+local Storage = require("my_friend_food_storage")
 
 local HEALTH_THRESHOLD = .90
 local HUNGER_THRESHOLD = .65
@@ -101,12 +102,21 @@ local function IsWorthEating(food, health, hunger, sanity)
         or food:HasTag("halloweencandy") and (health > 0 or hunger > 0 or sanity > 0)
 end
 
+function M.CanSelectFood(inst, food)
+    local inv = food ~= nil and food:IsValid() and food.components ~= nil and food.components.inventoryitem or nil
+    local eater = inst.components.eater
+    if inv == nil or inv.islockedinslot or food.components.edible == nil or IsSeedFood(food)
+        or M.IsForbiddenFood(food) or eater == nil or not eater:CanEat(food)
+        or not eater:PrefersToEat(food) then return false, 0 end
+    local stack = food.components.stackable
+    local size = stack ~= nil and stack:StackSize() or 1
+    local reserved = Storage.ReservedCount(inst, food, size)
+    local portions = size - reserved
+    return portions > 0 and (not eater.eatwholestack or reserved == 0), portions
+end
+
 function M.IsUsableFood(inst, food)
-    if food == nil or IsSeedFood(food) or M.IsForbiddenFood(food) then return false end
-    if food.components == nil or food.components.edible == nil
-        or food.components.inventoryitem == nil or inst.components == nil
-        or inst.components.eater == nil or not inst.components.eater:CanEat(food)
-        or not inst.components.eater:PrefersToEat(food) then return false end
+    if not M.CanSelectFood(inst, food) then return false end
     local health, hunger, sanity = GetFoodDeltas(inst, food)
     return HasMeaningfulRecovery(health, hunger, sanity)
 end
@@ -163,12 +173,17 @@ end
 function M.MealMatchesRecovery(inst, food, stats)
     stats = stats or GetStats(inst)
     if stats == nil or not M.NeedsRecipeRecovery(inst, stats) then return true end
-    local recovery, _, health = M.Evaluate(inst, food, stats)
+    local recovery, _, health, hunger, sanity = M.Evaluate(inst, food, stats)
     local missing = M.GetMealHealthDeficit(inst, stats)
     if missing ~= nil then
         return recovery ~= nil and health >= math.min(20, missing)
     end
-    return recovery ~= nil
+    if recovery == nil then return false end
+    if stats.sanitypercent < SANITY_THRESHOLD and stats.hungerpercent >= HUNGER_THRESHOLD
+        and not M.NeedsFoodSupply(inst) then
+        return sanity >= math.min(10, stats.sanitymax - stats.sanity)
+    end
+    return true
 end
 
 function M.NeedsRecipeRecovery(inst, stats)
@@ -418,6 +433,47 @@ function M.CanSafelyEat(inst, food)
     return IsSafeHealthDelta(inst, GetFoodDeltas(inst, food))
 end
 
+-- A soul uses the native souleater branch of EAT and has no edible component.
+function M.CanEatCarried(inst, item)
+    if item ~= nil and item.prefab == "wortox_soul" then
+        return require("my_friend_wortox").FindHungerSoul(inst, item) == item
+    end
+    return M.CanSelectFood(inst, item) and M.CanSafelyEat(inst, item)
+        and item.components.inventoryitem:GetGrandOwner() == inst
+end
+
+function M.CanForageFood(inst, item)
+    if not M.CanSelectFood(inst, item) then return false end
+    local health, hunger, sanity = GetFoodDeltas(inst, item)
+    return HasMeaningfulRecovery(health, hunger, sanity)
+        and (inst.components.hunger:GetPercent() >= .25 or hunger > 0 and IsSafeHealthDelta(inst, health))
+end
+
+function M.CanForageCrop(inst, prefab)
+    if type(prefab) ~= "string" or IsSeedFood(prefab) or M.IsForbiddenFood(prefab) then return false end
+    if inst.components.hunger:GetPercent() >= .25 then return true end
+    -- The bush has no edible component. Check the actual product against the
+    -- character's diet; share the verdict between local and distant searches.
+    local cache, now = inst._my_friend_forage_foods, GetTime()
+    local hp = inst.components.health.currenthealth
+    if cache == nil or now >= cache.untiltime or cache.health ~= hp then
+        cache = {untiltime = now + 10, health = hp, products = {}}
+        inst._my_friend_forage_foods = cache
+    end
+    if cache.products[prefab] == nil then
+        local sample = SpawnPrefab(prefab)
+        local useful = false
+        if sample ~= nil then
+            local ok, result = pcall(M.CanForageFood, inst, sample)
+            sample:Remove()
+            if not ok then error(result, 0) end
+            useful = result
+        end
+        cache.products[prefab] = useful
+    end
+    return cache.products[prefab]
+end
+
 local function IsInBeargerSack(item)
     local inventoryitem = item ~= nil and item.components ~= nil
         and item.components.inventoryitem or nil
@@ -448,19 +504,13 @@ local function GetPerishData(food)
 end
 
 function M.Evaluate(inst, food, stats)
-    if food == nil or not food:IsValid() or food.components == nil
-        or food.components.edible == nil or food.components.inventoryitem == nil
-        or IsSeedFood(food)
-        or food.components.inventoryitem.islockedinslot
-        or not inst.components.eater:CanEat(food)
-        or not inst.components.eater:PrefersToEat(food) then return end
+    if not M.CanSelectFood(inst, food) then return end
 
     stats = stats or GetStats(inst)
     if stats == nil then return end
     local health, hunger, sanity = GetFoodDeltas(inst, food)
     if not IsSafeHealthDelta(inst, health) then return end
     if not IsWorthEating(food, health, hunger, sanity) then return end
-    if M.IsForbiddenFood(food) then return end
     if M.IsEmergency(inst, stats) then
         -- Actual eater deltas include spoilage, food memory and character
         -- absorption; low-health harm was already rejected above.
@@ -480,7 +530,6 @@ function M.Evaluate(inst, food, stats)
         end
         return math.max(1, 100 + score), perishdays, health, hunger, sanity
     end
-    if require("my_friend_pets").IsIngredient(inst, food) then return end
     if require("my_friend_food_rules").NeedsRoasting(inst, food, health)
         and stats.hungerpercent > .2 and stats.healthpercent > .35 then return end
     if hunger < 0 and stats.hunger + hunger <= 0 then return end
@@ -602,12 +651,7 @@ end
 
 -- Explicit meals ignore fullness, but retain the same health safety guard.
 function M.CommandScore(inst, food, positive_only)
-    if food == nil or not food:IsValid() or food.components.edible == nil
-        or food.components.inventoryitem == nil or food.components.inventoryitem.islockedinslot
-        or IsSeedFood(food)
-        or M.IsForbiddenFood(food)
-        or not inst.components.eater:CanEat(food)
-        or not inst.components.eater:PrefersToEat(food) then return end
+    if not M.CanSelectFood(inst, food) then return end
     if M.IsEmergency(inst) then
         local score = M.Evaluate(inst, food)
         return score, score ~= nil
@@ -664,16 +708,14 @@ function M.GetEatAction(inst, commanded_food)
         and not M.IsEmergency(inst) and inst.components.hunger:GetPercent() >= .2 then return end
     local food = commanded_food or M.FindBestFood(inst)
     if food == nil then return M.GetSugarAction(inst) end
-    if not M.CanSafelyEat(inst, food) then return end
+    local function CanEatSelected()
+        return M.CanEatCarried(inst, food)
+    end
+    if not CanEatSelected() then return end
     if commanded_food == nil and food.prefab ~= "meat_dried" and not M.IsEmergency(inst)
         and require("my_friend_recipe_cooking").ShouldReserve(inst, food) then return end
     local action = BufferedAction(inst, nil, ACTIONS.EAT, food)
-    action.validfn = function()
-        return food:IsValid() and not M.IsForbiddenFood(food)
-            and inst.components.eater:CanEat(food)
-            and M.CanSafelyEat(inst, food)
-            and food.components.inventoryitem:GetGrandOwner() == inst
-    end
+    action.validfn = CanEatSelected
     action:AddSuccessAction(function()
         inst._my_friend_food_supply_cache = nil
         inst._my_friend_eat_after = GetTime() + 2
@@ -689,22 +731,20 @@ function M.GetFoodSupply(inst)
     local eater = inst.components.eater
     if hunger == nil or inventory == nil or eater == nil then return 0 end
     local cached = inst._my_friend_food_supply_cache
-    if cached ~= nil and GetTime() < cached.untiltime then return cached.supply end
-    local supply = 0
-    for _, item in ipairs(require("my_friend_food_storage").ReferenceItems(inst)) do
-        if item.components ~= nil and item.components.edible ~= nil
-            and not IsSeedFood(item)
-            and not M.IsForbiddenFood(item)
-            and eater:CanEat(item) and eater:PrefersToEat(item) then
+    if cached ~= nil and GetTime() < cached.untiltime and cached.command == inst._my_friend_command
+        and cached.revision == inst._my_friend_discovery_inventory then return cached.supply end
+    local supply = inst.prefab == "wortox" and require("my_friend_wortox").GetSoulFoodSupply(inst) or 0
+    for _, item in ipairs(Storage.ReferenceItems(inst)) do
+        local usable, portions = M.CanSelectFood(inst, item)
+        if usable then
             local health, calories, sanity = GetFoodDeltas(inst, item)
             if HasMeaningfulRecovery(health, calories, sanity) and health >= 0 then
-                supply = supply + math.max(0, calories)
-                    * (not eater.eatwholestack and item.components.stackable ~= nil
-                        and item.components.stackable:StackSize() or 1)
+                supply = supply + math.max(0, calories) * (eater.eatwholestack and 1 or portions)
             end
         end
     end
-    inst._my_friend_food_supply_cache = {supply = supply, untiltime = GetTime() + 1.5}
+    inst._my_friend_food_supply_cache = {supply = supply, untiltime = GetTime() + 1.5,
+        command = inst._my_friend_command, revision = inst._my_friend_discovery_inventory}
     return supply
 end
 

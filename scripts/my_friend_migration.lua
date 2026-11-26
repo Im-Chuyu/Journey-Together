@@ -1,12 +1,13 @@
 local M = {}
 -- Positions only make sense on the shard they were recorded on.
 local LOCAL_FIELDS = {"my_friend_base", "my_friend_home", "my_friend_hold_memory", "my_friend_revive",
-    "my_friend_fire_memory", "my_friend_resource_memory", "my_friend_bookstations"}
+    "my_friend_fire_memory", "my_friend_resource_memory", "my_friend_bookstations", "my_friend_explored"}
 
 function M.SaveWorldMemory(inst, data)
     local homes = inst._my_friend_shard_homes or {}
     local home = {}
     for _, field in ipairs(LOCAL_FIELDS) do home[field] = data[field] end
+    home.my_friend_explored = home.my_friend_explored or false
     homes[tostring(TheShard:GetShardId())] = home
     inst._my_friend_shard_homes = homes
     data.my_friend_shard_homes = homes
@@ -16,8 +17,18 @@ end
 function M.SelectWorldMemory(data)
     if data == nil or data.my_friend_companion ~= true then return end
     local shard = tostring(TheShard:GetShardId())
-    if data.my_friend_saved_shard ~= nil and data.my_friend_saved_shard ~= shard then
-        local home = (data.my_friend_shard_homes or {})[shard] or {}
+    local source = data.my_friend_saved_shard
+    if source ~= nil and source ~= shard then
+        local homes = data.my_friend_shard_homes or {}
+        data.my_friend_shard_homes = homes
+        local origin = homes[source] or {}
+        homes[source] = origin
+        -- Old records kept only one exploration map. Preserve it on the
+        -- recorded source shard, even if selection is called again on load.
+        if origin.my_friend_explored == nil then
+            origin.my_friend_explored = data.my_friend_explored or false
+        end
+        local home = homes[shard] or {}
         for _, field in ipairs(LOCAL_FIELDS) do data[field] = home[field] end
     end
 end
@@ -50,10 +61,24 @@ function M.HoldCompanion(player)
     friend._my_friend_replan_requested = true
 end
 
+local function AfterPlayerDespawn(inst, ...)
+    require("my_friend_possess").OnPlayerDespawn(inst)
+    return ...
+end
+
 function M.Attach(player, configure)
     if not TheWorld.ismastersim then return end
     M.ConfigureFriend = configure
+    if player._my_friend_migration_attached then return end
+    player._my_friend_migration_attached = true
     if player.components.my_friend_traveller == nil then player:AddComponent("my_friend_traveller") end
+    local persist = player.SetPersistData
+    player.SetPersistData = function(inst, data, ...)
+        if data ~= nil and inst.userid ~= nil and inst.userid ~= "" and not data.my_friend_companion then
+            data = require("my_friend_possess").PrepareLogin(inst, data)
+        end
+        return persist(inst, data, ...)
+    end
     player:ListenForEvent("ms_playerreroll", function(inst)
         local swapper = inst.components.seamlessplayerswapper
         if swapper ~= nil and swapper._my_friend_swap_in_progress then return end
@@ -84,8 +109,17 @@ function M.Attach(player, configure)
             end
         end
         if migrationdata == nil then M.HoldCompanion(inst) end
-        require("my_friend_possess").OnPlayerDespawn(inst)
-        if old ~= nil then return old(inst, migrationdata) end
+        local possess = require("my_friend_possess")
+        -- Vanilla may drop irreplaceable items, wake sleepers and dismount here.
+        -- Snapshot the remaining inventory after those ownership changes.
+        if migrationdata ~= nil then
+            possess.OnMigrate(inst, migrationdata.worldid)
+            if old ~= nil then return old(inst, migrationdata) end
+        elseif old ~= nil then
+            return AfterPlayerDespawn(inst, old(inst, migrationdata))
+        else
+            AfterPlayerDespawn(inst)
+        end
     end
 end
 

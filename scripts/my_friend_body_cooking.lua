@@ -1,6 +1,6 @@
 -- Explicit four-slot recipes are checked against the live cooking rules, without RNG.
 local M = {}
-function M.Validate(inst, cooker, wanted, ingredients)
+function M.Validate(inst, cooker, wanted, ingredients, pool, batches)
     if type(ingredients) ~= "table" or #ingredients ~= 4 then return false, "four_ingredients_required" end
     for key, prefab in pairs(ingredients) do
         if type(key) ~= "number" or key % 1 ~= 0 or key < 1 or key > 4
@@ -11,8 +11,37 @@ function M.Validate(inst, cooker, wanted, ingredients)
         if not cooking.IsCookingIngredient(prefab) then return false, "not_cooking_ingredient:" .. prefab end
         if rules.IsProtected(prefab) then return false, "protected_ingredient:" .. prefab end
     end
-    if not rules.AllowsMix(ingredients, 0) then return false, "fresh_big_meat_limit" end
-    if require("my_friend_recipe_planner").EvaluateSpecific(inst, cooker, ingredients, wanted, 0) == nil then
+    local stale = 0
+    if not rules.AllowsMix(ingredients, 0) then
+        pool = pool or M.Pool(inst)
+        batches = batches or 1
+        local needed = {}
+        for _, name in ipairs(ingredients) do needed[name] = (needed[name] or 0) + batches end
+        for _, group in ipairs(pool) do
+            if rules.IsBigMeat(group.prefab) and needed[group.prefab] then
+                local old = 0
+                for _, source in ipairs(group.sources) do
+                    if rules.IsExpiringBigMeat(source.item) then old = old + source.count end
+                end
+                local usable_old = math.min(needed[group.prefab], old)
+                stale = stale + usable_old
+                -- Keep enough slots for the required expiring portions, even
+                -- if all four ingredient names are already present in pockets.
+                local fresh = needed[group.prefab] - usable_old
+                group.count = 0
+                for _, source in ipairs(group.sources) do
+                    if not rules.IsExpiringBigMeat(source.item) then
+                        source.count = math.min(fresh, source.count)
+                        fresh = fresh - source.count
+                    end
+                    group.count = group.count + source.count
+                end
+            end
+        end
+        stale = math.floor(stale / batches)
+        if not rules.AllowsMix(ingredients, stale) then return false, "fresh_big_meat_limit" end
+    end
+    if require("my_friend_recipe_planner").EvaluateSpecific(inst, cooker, ingredients, wanted, stale) == nil then
         return false, "mix_does_not_guarantee_requested_recipe"
     end
     return true

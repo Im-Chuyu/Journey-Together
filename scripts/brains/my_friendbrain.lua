@@ -478,7 +478,7 @@ end
 function MyFriendBrain:OnStart()
     local inst = self.inst
     local entries = {}
-    local function Add(id, score, node)
+    local function Add(id, score, node, onstart)
         local function ScopedScore(c)
             if inst._my_friend_body ~= nil and not require("my_friend_body_api").AllowLocal(inst, id, c) then return 0 end
             if c.hazard_retreat and id ~= "hurt" and id ~= "hurt_wait"
@@ -491,7 +491,7 @@ function MyFriendBrain:OnStart()
                 and not c.ghost then return 0 end
             return score(c)
         end
-        entries[#entries + 1] = { id = id, score = ScopedScore, node = node,
+        entries[#entries + 1] = { id = id, score = ScopedScore, node = node, onstart = onstart,
             passive = id == "follow" or id == "free" or id == "catch_up"
                 or id == "catch_up_mount" or id == "vigil"
                 or id == "light_wait" or id == "thermal_wait" or id == "greeting"
@@ -500,49 +500,40 @@ function MyFriendBrain:OnStart()
                 or id == "game_sit"
                 or id == "expedition_wait" }
     end
+    local emergency = {
+        farewell = true, light = true, seek_light = true, emergency_light_supply = true,
+        emergency_fire = true, hurt = true, eat = true, revive = true, temperature = true,
+        watch_heal = true, wormwood_heal = true, wortox_heal_self = true, wanda_dreadstone = true, wanda_refuel = true,
+    }
+    local during_command = {command = true, wormhole = true, rescue = true, revive_return = true}
+    local during_regroup = {
+        backpack_recovery = true, carry_backpack = true, touch_tower = true,
+        squeeze_heart = true, make_heart = true,
+    }
     local function Action(id, score, getter, text, timeout, unrestricted)
         Add(id, score, RouteAction(inst, function()
             local command = Commands.Get(inst)
-            if Policy.IsFollowGatheringPaused(inst)
-                and id ~= "farewell"
-                and id ~= "command" and id ~= "wormhole" and id ~= "revive" and id ~= "rescue" and id ~= "light"
-                and id ~= "hurt" and id ~= "eat" and id ~= "temperature"
-                and id ~= "seek_light" and id ~= "emergency_light_supply"
-                and id ~= "emergency_fire" and id ~= "backpack_recovery" and id ~= "revive_return"
-                and id ~= "carry_backpack"
-                and id ~= "touch_tower"
-                and id ~= "squeeze_heart" and id ~= "make_heart" and id ~= "watch_heal" and id ~= "wormwood_heal"
-                and id ~= "wanda_dreadstone" and id ~= "wanda_refuel"
-                and not ((id == "food" or id == "container_food" or id == "cook")
-                    and inst.components.hunger:GetPercent() < .2) then return end
-            if command ~= nil and (command.id == "seeds" or command.id == "tidy" or command.id == "equipment")
-                and id ~= "farewell"
-                and id ~= "command" and id ~= "wormhole" and id ~= "revive" and id ~= "rescue" and id ~= "light"
-                and id ~= "hurt" and id ~= "eat" and id ~= "temperature"
-                and id ~= "seek_light" and id ~= "emergency_fire" and id ~= "revive_return"
-                and id ~= "watch_heal" and id ~= "wormwood_heal"
-                and id ~= "wanda_dreadstone" and id ~= "wanda_refuel" then return end
-            if LightAI.IsDark(inst) and id ~= "farewell" and id ~= "light" and id ~= "seek_light"
-                and id ~= "emergency_light_supply" and id ~= "emergency_fire"
-                and id ~= "base_fire" and id ~= "hurt" and id ~= "eat"
-                and id ~= "revive" and id ~= "temperature" and id ~= "watch_heal" and id ~= "wormwood_heal"
-                and id ~= "wanda_dreadstone" and id ~= "wanda_refuel" then return end
-            local action = getter(inst)
+            if not emergency[id] then
+                if not during_command[id] then
+                    if Policy.IsFollowGatheringPaused(inst) and not during_regroup[id]
+                        and not ((id == "food" or id == "container_food" or id == "cook")
+                            and inst.components.hunger:GetPercent() < .2) then return end
+                    if command ~= nil and (command.id == "seeds" or command.id == "tidy"
+                        or command.id == "equipment") then return end
+                end
+                if id ~= "base_fire" and LightAI.IsDark(inst) then return end
+            end
+            local action = BaseAI.PrepareAction(inst, getter)
             if action ~= nil and Policy.IsRoaming(inst) then
                 action = require("my_friend_exploration_riding").PrepareAction(inst, action)
             end
             if action ~= nil then
-                if id ~= "expedition" and Fishing.IsWaiting(inst) then
-                    Fishing.Cancel(inst, inst._my_friend_command)
-                end
                 if Policy.GetLeader(inst) ~= nil and id ~= "command"
                     and (action.action == ACTIONS.CHOP or action.action == ACTIONS.MINE) then
                     action._my_friend_cancelled = true
                     action:Fail()
                     return
                 end
-                require("my_friend_dialogue").OnAction(inst, action)
-                if text ~= nil then BaseAI.SetTask(inst, text) end
                 return (unrestricted or action._my_friend_fire_retreat) and action
                     or Policy.GuardAction(inst, action)
             end
@@ -553,7 +544,14 @@ function MyFriendBrain:OnStart()
             -- simply leaned on whatever was in the way until the action timed
             -- out, then tried the identical straight line again. "hurt" is a
             -- deliberate short dash away from a spot and "eat" does not travel.
-            and id ~= "eat"))
+            and id ~= "eat"), function(action, completed)
+            if id ~= "expedition" and Fishing.IsWaiting(inst) then
+                Fishing.Cancel(inst, inst._my_friend_command)
+            end
+            require("my_friend_dialogue").OnAction(inst, action, completed)
+            local label = text or action._my_friend_task_label
+            if label ~= nil then BaseAI.SetTask(inst, label) end
+        end)
     end
     local function Alive(score)
         return function(c) return not c.ghost and (type(score) == "function" and score(c) or score) or 0 end
@@ -645,6 +643,11 @@ function MyFriendBrain:OnStart()
     Action("wanda_refuel", Alive(function(c)
         return inst.prefab == "wanda" and not c.hurt and not c.hurt_evade and 150 or 0
     end), require("my_friend_wanda").GetRefuelAction, "正在给警钟补充噩梦燃料", 8, true)
+    Action("wortox_heal_self", Alive(function(c)
+        return inst.prefab == "wortox" and not c.threat and not c.hurt and not c.hurt_evade
+            and not c.dark and not c.thermal
+            and require("my_friend_wortox").GetHealSelfScore(inst) or 0
+    end), require("my_friend_wortox").GetHealSelfAction, "正在释放灵魂自疗", 5, true)
     Action("wortox_heal_player", Alive(function(c)
         return inst.prefab == "wortox" and not c.threat and not c.dark
             and not c.thermal and c.hunger >= .4

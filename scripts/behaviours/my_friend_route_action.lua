@@ -363,7 +363,7 @@ function RouteAction:VisitRoute()
     self:PushMovement(walk)
 end
 
-function RouteAction:Visit()
+function RouteAction:Visit(prepared_action)
     if self.status == READY then
         self:ClearRoute()
         Navigation.CancelSteering(self.inst)
@@ -373,7 +373,7 @@ function RouteAction:Visit()
         self.failed_approaches = nil
         self.movement_resumes = 0
         self.stall_action, self.stall_position, self.stall_since = nil, nil, nil
-        self.action = self.getactionfn(self.inst)
+        self.action = prepared_action or self.getactionfn(self.inst)
         self.inst._my_friend_navigation_action = self.action
         self.pendingstatus = nil
         local action = self.action

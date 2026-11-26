@@ -11,7 +11,7 @@ description = simplified_chinese and "在这片永恒大陆，我会与你并肩
     or russian and "На этом вечном континенте я буду путешествовать вместе с тобой."
     or "On this eternal continent, I will travel with you."
 author = "阮秀"
-version = "3.0.6"
+version = "3.0.7"
 forumthread = ""
 api_version = 10
 
@@ -299,6 +299,22 @@ local function ChatIconOptions()
 end
 
 configuration_options = {
+    {
+        name = "possession_grace_minutes",
+        label = simplified_chinese and "换体离线保留时间" or traditional_chinese and "換體離線保留時間"
+            or russian and "Ожидание после выхода" or "Body exchange disconnect grace",
+        hover = simplified_chinese and "换体玩家离线后保留的真实时间。超时后伙伴归队，玩家重连时取回自己的身体。"
+            or traditional_chinese and "換體玩家離線後保留的真實時間。超時後夥伴歸隊，玩家重連時取回自己的身體。"
+            or russian and "Минуты реального времени до возврата спутника после выхода игрока."
+            or "Real-time minutes before the companion returns. The player reclaims their body on reconnect.",
+        options = {
+            {description = simplified_chinese and "5 分钟" or traditional_chinese and "5 分鐘" or russian and "5 мин" or "5 min", data = 5},
+            {description = simplified_chinese and "15 分钟" or traditional_chinese and "15 分鐘" or russian and "15 мин" or "15 min", data = 15},
+            {description = simplified_chinese and "30 分钟" or traditional_chinese and "30 分鐘" or russian and "30 мин" or "30 min", data = 30},
+            {description = simplified_chinese and "60 分钟" or traditional_chinese and "60 分鐘" or russian and "60 мин" or "60 min", data = 60},
+        },
+        default = 15,
+    },
     {
         name = "companion_chat_icon",
         label = simplified_chinese and "伙伴聊天头像" or traditional_chinese and "夥伴聊天頭像"

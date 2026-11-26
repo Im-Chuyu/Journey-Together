@@ -17,7 +17,7 @@ return {
               "stay with me", "let's go", "come back"} },
     { id = "ask_activity", en = {"what are you doing", "what are you up to"} },
     { id = "explore", en = {"explore", "go exploring", "scout the map"} },
-    { id = "stop_fish", en = {} },
+    { id = "stop_fish", label = "Stop Fishing", en = {} },
     { id = "fish", en = {"go fishing", "catch fish", "fish"} },
     { id = "rockfruit", en = {"rock fruit", "rock avocado"} },
     { id = "bullkelp", en = {"bull kelp", "bullkelp"} },

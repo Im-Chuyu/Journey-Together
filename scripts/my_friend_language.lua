@@ -61,4 +61,24 @@ function M.CharacterCommandWords(language, character)
     end
     return result
 end
+-- Both ends need the same IDs before the game's character list is complete.
+-- Empty keyword lists can still describe a wheel button.
+function M.CommandCatalogue(language)
+    local entries = M.CommandWords(language) or {}
+    local seen = {}
+    local function AddCharacter(character)
+        if type(character) ~= "string" or seen[character] then return end
+        seen[character] = true
+        for _, entry in ipairs(M.CharacterCommandWords(language, character)) do
+            entry.character = character
+            entries[#entries + 1] = entry
+        end
+    end
+    for _, character in ipairs(require("my_friend_characters").List()) do AddCharacter(character) end
+    for _, character in ipairs({"wendy", "wickerbottom", "warly", "wanda", "wathgrithr", "wortox"}) do
+        AddCharacter(character)
+    end
+    return entries
+end
+
 return M

@@ -16,13 +16,23 @@ Affinity is personal to each player. It usually starts at 20 and grows through c
 
 Use the companion's current name and a keyword in the same message. “Wendy, plant trees” uses seeds she carries around the spot where **she** received the order. “Wendy, this is home” marks the spot where **you** are standing. Wheel and chat orders have the same requirements. When she asks about rock fruit, Jellybeans or pickup permission, answer the question directly, without her name.
 
+To end a fishing order, add **Stop Fishing** to a wheel slot and use it while your companion is fishing.
+
+## Disconnecting during a body exchange
+
+After a body exchange, you play the companion’s character while the AI plays yours. Reconnect with the same account within **15 real-time minutes** to continue the exchange. The host can set the grace period to 5, 15, 30 or 60 minutes. A running deadline survives a world save and restart.
+
+Once time expires and the AI finishes its current busy action, the companion returns and another player can exchange with it. If you borrowed Wendy as Wilson, Wendy keeps what she carried after the game processed your logout. When you return, you receive what AI Wilson actually carried at handover. Items the game dropped on logout stay on the ground. Death stays with the body.
+
+Travel between the forest and caves and character selection at the portal preserve the exchange. If the two bodies are on different shards when time expires, both servers must be connected to finish the handover.
+
 ## Life at camp
 
 A base covers a radius of 48 units. Your companion remembers nearby cookpots, ice boxes, salt boxes and chests. Marking camp lets you carry on travelling together. Once off duty she may rest on a free chair.
 
 - **Equipment.** At a player-designated base, a companion short of protection can use accessible materials to make a Football Helmet and Ham Bat, or try a Log Suit and Spear. Normal crafting requirements apply.
-- **Food and weather.** She can eat prepared food from accessible containers, choose recipes to suit her health, sanity and hunger, and use equipment to keep warm or dry. Characters keep their diets, including Wigfrid's meat-only diet.
-- **Character abilities.** Wickerbottom can return to a remembered bookcase. Wortox manages his souls and heals nearby injured players. Wigfrid can craft and charge an Elding Spear with the materials she carries.
+- **Food and weather.** A hungry companion looks for food their character can eat and can collect a finished dish when safe. Warly can cook at low hunger if he has no suitable carried food. Below 65% hunger, Wortox prefers pocket souls above a reserve of ten. Companions also use equipment to keep warm or dry.
+- **Character abilities.** Wickerbottom can return to a remembered bookcase. Wortox heals nearby injured players and releases one soul at a time to heal himself when safe and missing at least 20 health. Wigfrid can craft and charge an Elding Spear with the materials she carries.
 
 ## Combat and revival
 

@@ -85,9 +85,14 @@ local function CanPlan(inst)
         and not Policy.IsFollowGatheringPaused(inst) and not Policy.IsLeaderDead(inst)
         and not Policy.IsBusy(inst) and (c.combat == nil or c.combat.target == nil)
         and (c.rider == nil or not c.rider:IsRiding())
-        and c.hunger ~= nil and (c.hunger:GetPercent() >= .25 or special)
-        and (c.health.GetPercent == nil or c.health:GetPercent() > .35)
-        and not require("my_friend_light_ai").IsDark(inst)
+        and c.hunger ~= nil and not require("my_friend_light_ai").IsDark(inst)
+end
+
+local function CanPrepare(inst)
+    local c = inst.components
+    return (c.health.GetPercent == nil or c.health:GetPercent() > .35)
+        and (c.hunger:GetPercent() >= .25 or CookCommand(inst) ~= nil
+            or inst.prefab == "warly" and Food.FindBestFood(inst) == nil)
 end
 
 local function FridgeAvailable(inst, fridge, origin)
@@ -235,6 +240,22 @@ local function SelectOwnedPot(inst, pots)
 end
 
 local function GetPlan(inst)
+    if not CanPrepare(inst) then
+        local current = inst._my_friend_recipe_pot
+        if Owned(inst, current) and Accessible(inst, current) and current.components.stewer:IsDone() then
+            return current, current._my_friend_recipe_job
+        end
+        if GetTime() >= (inst._my_friend_check_ready_pot or 0) then
+            inst._my_friend_check_ready_pot = GetTime() + 2
+            for _, pot in ipairs(Nearby(inst)) do
+                if Owned(inst, pot) and pot.components.stewer:IsDone() then
+                    inst._my_friend_recipe_pot = pot
+                    return pot, pot._my_friend_recipe_job
+                end
+            end
+        end
+        return nil, nil, "paused"
+    end
     local health_deficit = CookCommand(inst) == nil and Food.GetMealHealthDeficit(inst) or nil
     local healing_needed = health_deficit ~= nil
     local recovery_only = CookCommand(inst) == nil and inst._my_friend_recipe_requested == nil
@@ -265,7 +286,8 @@ local function GetPlan(inst)
             and Cleanup.CanClean(inst, owned) then return owned, {cleanup = true} end
         return owned, owned._my_friend_recipe_job
     end
-    local wanted = inst._my_friend_recipe_requested
+    local command = CookCommand(inst)
+    local wanted = command ~= nil and command.recipe or inst._my_friend_recipe_requested
     -- An existing meal takes precedence over opening a new pot.
     if wanted == nil and not NeedsNewMeal(inst) then
         inst._my_friend_recipe_cache = nil
@@ -295,6 +317,7 @@ local function GetPlan(inst)
     if plan ~= nil and wanted == nil then
         plan.healing_needed, plan.recovery_only = healing_needed, recovery_only
     end
+    if plan ~= nil then plan.recipe = wanted end
     inst._my_friend_recipe_cache = {pot = chosen, plan = plan,
         healing_needed = healing_needed, recovery_only = recovery_only, untiltime = GetTime() + 5}
     return chosen, plan, chosen == nil and cooking and "waiting" or nil
@@ -309,8 +332,7 @@ local function FindIngredients(inst, pot, remaining)
         if (remaining[group.prefab] or 0) > 0 then
             for _, source in ipairs(group.sources) do
                 local item = source.item
-                if require("my_friend_food_rules").IsBigMeat(item.prefab)
-                    and require("my_friend_food_rules").IsStale(item) then stale = stale or item end
+                if require("my_friend_food_rules").IsExpiringBigMeat(item) then stale = stale or item end
                 local owner = item.components.inventoryitem:GetGrandOwner()
                 if owner == inst then
                     carried = carried or item
@@ -357,6 +379,7 @@ local function Guard(inst, pot, action, valid)
     action._my_friend_dialogue_kind = action.action == ACTIONS.HARVEST and "recipe_ready" or "recipe_cook"
     action.validfn = function()
         return require("my_friend_food_rules").CanCook(inst) and Accessible(inst, pot)
+            and (action.action == ACTIONS.HARVEST or CanPrepare(inst))
             and inst._my_friend_command == command
             and not inst._my_friend_under_threat and valid()
     end
@@ -404,21 +427,10 @@ function M.AddIngredient(act)
     return false
 end
 
-local function CanHarvest(inst, pot)
-    local inventory = inst.components.inventory
-    if not inventory:IsFull() then return true end
-    local product = pot.components.stewer.product
-    local recipe = Cooking.GetRecipe(pot.prefab, product)
-    local count = recipe ~= nil and recipe.stacksize or 1
-    for _, item in ipairs(inventory:ReferenceAllItems()) do
-        if item.prefab == product and inventory:CanAcceptCount(item, count) >= count then return true end
-    end
-    return false
-end
-
 function M.GetAction(inst)
     if not CanPlan(inst) then return nil, "paused" end
-    local delivery = Cleanup.GetDeliveryAction(inst, Guard)
+    local delivery = inst._my_friend_recipe_cleanup ~= nil and CanPrepare(inst)
+        and Cleanup.GetDeliveryAction(inst, Guard) or nil
     if delivery ~= nil then return delivery end
     local pot, plan, status = GetPlan(inst)
     if pot == nil or not Accessible(inst, pot) then return nil, status or "unavailable" end
@@ -427,28 +439,22 @@ function M.GetAction(inst)
     if s:IsCooking() then return nil, "waiting" end
     if s:IsDone() then
         if not Owned(inst, pot) then return end
-        local requested = plan.recipe
-        -- Ingredients are consumed once cooking begins; freshness guards are
-        -- checked before COOK, not again against vanished ingredient records.
-        local valid_product = requested ~= nil and s.product == requested
-            and Planner.RecipeValue(inst, Cooking.GetRecipe(pot.prefab, s.product)) ~= nil
-            or requested == nil and Planner.RecipeValue(inst, Cooking.GetRecipe(pot.prefab, s.product)) ~= nil
-        if not valid_product then
-            Forget(inst, pot)
-            return nil, "paused"
-        end
-        if not CanHarvest(inst, pot) then return nil, "full" end
+        local product = s.product
+        if not Pot.CanReceiveHarvest(inst, pot) then return nil, "full" end
         local command = inst._my_friend_command
         local action = BufferedAction(inst, pot, ACTIONS.HARVEST)
         action:AddSuccessAction(function()
             Forget(inst, pot)
             if command ~= nil and command == inst._my_friend_command
-                and command.special == "cook" and requested == command.recipe then
+                and command.special == "cook" and plan.recipe == command.recipe
+                and (command.recipe == nil or product == command.recipe) then
                 command.cooked = (command.cooked or 0) + 1
                 command.waiting = nil
             end
         end)
-        return Guard(inst, pot, action, function() return Owned(inst, pot) and s:IsDone() end)
+        return Guard(inst, pot, action, function()
+            return Owned(inst, pot) and s:IsDone() and s.product == product and Pot.CanReceiveHarvest(inst, pot)
+        end)
     end
     if not Owned(inst, pot) and (pot._my_friend_recipe_job ~= nil or pot._my_friend_beefalo_chef ~= nil) then return end
     local remaining = Remaining(pot, plan.prefabs)
@@ -472,7 +478,7 @@ function M.GetAction(inst)
         action.arrivedist = Inventory.ContainerReach(inst, pot)
         action:AddSuccessAction(function()
             pot._my_friend_recipe_job = {owner = Pot.OwnerID(inst), prefabs = plan.prefabs,
-                recipe = inst._my_friend_recipe_requested, healing = plan.healing,
+                recipe = plan.recipe, healing = plan.healing,
                 healing_needed = plan.healing_needed, recovery_only = plan.recovery_only}
             inst._my_friend_recipe_pot = pot
         end)

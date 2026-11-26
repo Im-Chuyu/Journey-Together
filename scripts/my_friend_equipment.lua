@@ -282,7 +282,7 @@ end
 
 -- Count the best usable item per slot, not every spare helmet in a backpack.
 -- This is preparation for rain, independent of whether it is raining now.
-function M.GetAvailableRainProtection(inst)
+function M.GetAvailableRainProtection(inst, carried)
     local inventory = inst.components.inventory
     local total = InherentRainProtection(inst)
     if inventory == nil then return Clamp01(total) end
@@ -303,8 +303,8 @@ function M.GetAvailableRainProtection(inst)
         end
     end
     for slot in pairs(protection) do Consider(inventory:GetEquippedItem(slot)) end
-    for _, item in ipairs(inventory:ReferenceAllItems()) do Consider(item) end
-    Consider(inventory:GetActiveItem())
+    for _, item in ipairs(carried or inventory:ReferenceAllItems()) do Consider(item) end
+    if carried == nil then Consider(inventory:GetActiveItem()) end
     for _, value in pairs(protection) do total = total + value end
     return Clamp01(total)
 end

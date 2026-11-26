@@ -16,22 +16,36 @@ local function SoulSize(item)
     return stack ~= nil and stack:StackSize() or 1
 end
 
-function M.CountPocketSouls(inst)
+local function PocketSouls(inst, expected)
     local inventory = inst.components.inventory
-    local count, first = 0, nil
+    local count, usable, first, edible = 0, 0, nil, nil
     for _, item in pairs(inventory ~= nil and inventory.itemslots or {}) do
         if item:IsValid() and item.prefab == "wortox_soul" then
-            count, first = count + SoulSize(item), first or item
+            count = count + SoulSize(item)
+            first = first or item
+            local inv = item.components.inventoryitem
+            if item.components.soul ~= nil and inv ~= nil and inv.owner == inst and not inv.islockedinslot then
+                usable = usable + SoulSize(item)
+                if expected == nil or expected == item then edible = edible or item end
+            end
         end
     end
-    return count, first
+    return count, first, math.max(0, math.min(count - 10, usable)), edible
 end
 
-function M.FindHungerSoul(inst)
-    if inst.prefab ~= "wortox" or inst.components.hunger == nil
+M.CountPocketSouls = PocketSouls
+
+function M.FindHungerSoul(inst, expected)
+    if inst.prefab ~= "wortox" or inst.components.souleater == nil or inst.components.hunger == nil
         or inst.components.hunger:GetPercent() >= .65 then return end
-    local count, item = M.CountPocketSouls(inst)
-    if count > 10 and item ~= nil and inst.components.eater:CanEat(item) then return item end
+    local _, _, portions, item = PocketSouls(inst, expected)
+    if portions > 0 then return item end
+end
+
+function M.GetSoulFoodSupply(inst)
+    if inst.prefab ~= "wortox" or inst.components.souleater == nil then return 0 end
+    local _, _, portions = PocketSouls(inst)
+    return portions * TUNING.CALORIES_MED
 end
 
 local function PocketRoom(inventory, item)
@@ -544,12 +558,60 @@ local function FindPatient(inst)
     return inst._my_friend_soul_patient
 end
 
-local function CanHealPlayers(inst)
+local function CanReleaseSoul(inst)
     return IsHealingCompanion(inst) and not inst._my_friend_under_threat
-        and inst._my_friend_command == nil and not inst._my_friend_storage_action
+        and not inst._my_friend_storage_action
         and not inst._my_friend_container_action and not inst._my_friend_backpack_action
         and inst.components.inventory ~= nil
         and GetTime() >= (inst._my_friend_soul_heal_after or 0)
+end
+
+local function WaitForSoulHealing(inst)
+    inst._my_friend_soul_heal_after = GetTime() + TUNING.WORTOX_SOUL_HEAL_DELAY + .5
+end
+
+local function CanReceiveSelfHeal(inst)
+    return Health.CanReceiveHealing(inst) and inst.entity:IsVisible()
+        and not inst.components.health:IsInvincible() and not inst.is_teleporting
+end
+
+local function FindSelfHealSoul(inst, expected)
+    if not TheWorld.ismastersim or not CanReleaseSoul(inst) or not CanReceiveSelfHeal(inst) then return end
+    local health = inst.components.health
+    if health:GetMaxWithPenalty() - health.currenthealth < TUNING.HEALING_MED then return end
+    local _, _, _, soul = PocketSouls(inst, expected)
+    return soul
+end
+
+function M.GetHealSelfScore(inst)
+    return not Policy.IsBusy(inst) and FindSelfHealSoul(inst) ~= nil and 112 or 0
+end
+
+function M.GetHealSelfAction(inst)
+    if Policy.IsBusy(inst) then return end
+    local soul = FindSelfHealSoul(inst)
+    if soul == nil then return end
+    local action = BufferedAction(inst, nil, ACTIONS.MY_FRIEND_WORTOX_SELF_HEAL, soul)
+    action.validfn = function() return FindSelfHealSoul(inst, soul) ~= nil end
+    return action
+end
+
+function M.ReleaseSelfHealSoul(inst, soul)
+    if soul == nil or FindSelfHealSoul(inst, soul) == nil then return false end
+    -- DropItem returns the released unit, which can differ from the pocket stack.
+    local dropped = inst.components.inventory:DropItem(soul, false, false)
+    local item = dropped ~= nil and dropped:IsValid() and dropped.components.inventoryitem or nil
+    if item == nil or item.owner ~= nil then
+        inst._my_friend_soul_heal_after = GetTime() + 5
+        return false
+    end
+    dropped._my_friend_self_heal_owner = inst.GUID
+    WaitForSoulHealing(inst)
+    return true
+end
+
+local function CanHealPlayers(inst)
+    return CanReleaseSoul(inst) and inst._my_friend_command == nil
 end
 
 function M.GetHealPlayerScore(inst)
@@ -578,7 +640,7 @@ function M.GetHealPlayerAction(inst)
         action.options.wholestack = false
         action:AddSuccessAction(function()
             -- Wait for vanilla delayed healing before spending the next soul.
-            inst._my_friend_soul_heal_after = GetTime() + TUNING.WORTOX_SOUL_HEAL_DELAY + .5
+            WaitForSoulHealing(inst)
             Dialogue.Say(inst, "activity_wortox_heal", patient)
         end)
     end
@@ -640,6 +702,24 @@ function M.InstallSoulHealing()
     local original = common.DoHeal
     common.DoHeal = function(soul, ...)
         local friend = TheWorld._my_friend
+        if soul._my_friend_self_heal_owner ~= nil then
+            local owner = soul._my_friend_self_heal_owner
+            soul._my_friend_self_heal_owner = false -- a skill can make the same soul pulse again
+            if friend ~= nil and friend.GUID == owner and IsHealingCompanion(friend)
+                and CanReceiveSelfHeal(friend) and friend.components.health:IsHurt()
+                and soul:GetDistanceSqToInst(friend) < TUNING.WORTOX_SOULHEAL_RANGE^2 then
+                friend.components.health:DoDelta(TUNING.HEALING_MED, nil, soul.prefab)
+                local combat = friend:IsValid() and friend.components.combat or nil
+                if combat ~= nil then
+                    local fx = SpawnPrefab("wortox_soul_heal_fx")
+                    if fx ~= nil then
+                        fx.entity:AddFollower():FollowSymbol(friend.GUID, combat.hiteffectsymbol, 0, -50, 0)
+                        fx:Setup(friend)
+                    end
+                end
+            end
+            return
+        end
         if friend == nil or not friend:IsValid() or friend.components.health == nil
             or friend.components.health:IsDead() or friend:HasTag("playerghost")
             or not friend.entity:IsVisible()

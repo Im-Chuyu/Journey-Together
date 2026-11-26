@@ -192,8 +192,10 @@ function Utility:Visit()
     self.combat_decision_at = now + COMBAT_PERIOD
     self:WatchAction(context.leader == nil)
     local ranked = {}
+    local active_score = 0
     for index, entry in ipairs(self.entries) do
         local score = entry.score(context)
+        if entry == self.active then active_score = score or 0 end
         if score ~= nil and score > 0 then
             ranked[#ranked + 1] = { entry = entry, score = score, index = index }
         end
@@ -203,29 +205,32 @@ function Utility:Visit()
     end)
 
     if self.active ~= nil then
-        local score = self.active.score(context) or 0
         local mode_changed = self.leader ~= context.leader
         local urgent = false
-        local prepared
+        local proposed_action
         if not Policy.IsBusy(self.inst) then
             for _, candidate in ipairs(ranked) do
                 if candidate.entry == self.active then break end
-                if candidate.score > score and (self.active.passive
-                    or candidate.score >= 80 and candidate.score > score + 10) then
+                if candidate.score > active_score and (self.active.passive
+                    or candidate.score >= 80 and candidate.score > active_score + 10) then
                     local node = candidate.entry.node
                     if node.getactionfn ~= nil then
                         local action = node.getactionfn(self.inst)
                         if action ~= nil then
-                            local getter = node.getactionfn
-                            node.getactionfn = function(actor)
-                                node.getactionfn = getter
-                                return action
+                            -- Getters can equip tools and trigger a busy state. Release
+                            -- this proposal if the current owner can no longer yield.
+                            if Policy.IsBusy(self.inst) then
+                                action._my_friend_cancelled = true
+                                action:Fail()
+                                break
                             end
+                            candidate.action = action
+                            proposed_action = action
                             urgent = true
-                            prepared = candidate
                             break
                         end
                         candidate.unavailable = true
+                        if Policy.IsBusy(self.inst) then break end
                     else
                         urgent = true
                         break
@@ -234,23 +239,21 @@ function Utility:Visit()
             end
         end
         -- Let SGwilson finish its damage/eat/build frame before changing owners.
-        if not Policy.IsBusy(self.inst) and (mode_changed or score <= 0 or urgent) then
+        if Policy.IsBusy(self.inst) then
+            self.status = RUNNING
+            self:Sleep(BUSY_PERIOD)
+            return
+        elseif mode_changed or active_score <= 0 or urgent then
             self:CancelActive()
-            if prepared ~= nil then
-                local entry = prepared.entry
-                entry.node:Reset()
-                entry.node:Visit()
-                if entry.node.status == RUNNING or entry.node.status == SUCCESS then
-                    self.active = entry
-                    self.leader = context.leader
-                    self.inst._my_friend_decision = { task = entry.id, score = prepared.score,
-                        mode = context.leader ~= nil and "follow" or "free" }
-                    self.status = RUNNING
-                    self:Sleep(ActivePeriod(prepared.entry, self.inst))
-                    return
+            -- Releasing a fishing rod can start the native catch animation.
+            if Policy.IsBusy(self.inst) then
+                if proposed_action ~= nil then
+                    proposed_action._my_friend_cancelled = true
+                    proposed_action:Fail()
                 end
-                self:ReleaseNode(entry.node, entry.passive)
-                prepared.unavailable = true
+                self.status = RUNNING
+                self:Sleep(BUSY_PERIOD)
+                return
             end
         else
             self.active.node:Visit()
@@ -272,21 +275,20 @@ function Utility:Visit()
         local entry = candidate.entry
         if not candidate.unavailable then
             entry.node:Reset()
-            entry.node:Visit()
-        end
-        if not candidate.unavailable
-            and (entry.node.status == RUNNING or entry.node.status == SUCCESS) then
-            self.active = entry
-            if entry.id ~= nil then require("my_friend_dialogue").OnDecision(self.inst, entry.id) end
-            self.inst._my_friend_decision = { task = entry.id, score = candidate.score,
-                mode = context.leader ~= nil and "follow" or "free" }
-            self.status = RUNNING
-            self:Sleep(ActivePeriod(self.active, self.inst))
-            return
-        end
-        if not candidate.unavailable then
-            -- A node can fail on its first Visit (invalid action or route).
-            -- It never becomes active, so CancelActive cannot release its locks.
+            entry.node:Visit(candidate.action)
+            if (entry.node.status == RUNNING or entry.node.status == SUCCESS) and entry.node.pendingstatus ~= FAILED then
+                self.active = entry
+                if entry.onstart ~= nil then
+                    entry.onstart(entry.node.action, entry.node.status == SUCCESS or entry.node.pendingstatus == SUCCESS)
+                end
+                if entry.id ~= nil then require("my_friend_dialogue").OnDecision(self.inst, entry.id) end
+                self.inst._my_friend_decision = { task = entry.id, score = candidate.score,
+                    mode = context.leader ~= nil and "follow" or "free" }
+                self.status = RUNNING
+                self:Sleep(ActivePeriod(entry, self.inst))
+                return
+            end
+            -- A node can fail before it becomes active. Release its locks here.
             self:ReleaseNode(entry.node, entry.passive)
         end
     end

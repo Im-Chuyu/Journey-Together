@@ -5,16 +5,20 @@ local function Send(name, shard, ...)
     SendModRPCToShard(GetShardModRPC("MyFriends", name), {tostring(shard)}, ...)
 end
 
-local function HasCompanion(ignore_departure)
-    local friend = TheWorld._my_friend
-    if friend ~= nil and friend:IsValid() then return true end
+local function HasTransferOrSession()
     if require("my_friend_possess").HasSessions() then return true end
     if TheWorld._my_friend_home_pending ~= nil then return true end
     for _, player in ipairs(AllPlayers or {}) do
         local traveller = player.components.my_friend_traveller
         if traveller ~= nil and traveller.record ~= nil then return true end
     end
-    return not ignore_departure and GetTime() < (TheWorld._my_friend_departing_until or 0)
+    return false
+end
+
+local function HasCompanion()
+    local friend = TheWorld._my_friend
+    return friend ~= nil and friend:IsValid() or HasTransferOrSession()
+        or GetTime() < (TheWorld._my_friend_departing_until or 0)
 end
 
 function M.MarkDeparture()
@@ -87,10 +91,20 @@ function M.ReceiveChunk(source, token, index, total, chunk)
         or index < 1 or index > total or type(chunk) ~= "string" or #chunk > CHUNK_SIZE then return end
     local received = TheWorld._my_friend_home_received or {}
     TheWorld._my_friend_home_received = received
-    if received[token] then Send("HomeAck", source, token) return end
+    if TheWorld._my_friend_loading then return end
+    if received[token] == true then Send("HomeAck", source, token) return end
+    if type(received[token]) == "string" then
+        Send("HomeConflict", source, token, received[token])
+        return
+    end
     local buffers = TheWorld._my_friend_home_buffers or {}
     TheWorld._my_friend_home_buffers = buffers
     local key = tostring(source)
+    -- A session or an in-flight migration is not proof of delivery.
+    if HasTransferOrSession() then
+        buffers[key] = nil
+        return
+    end
     local buffer = buffers[key]
     if buffer == nil or buffer.token ~= token or buffer.total ~= total then
         buffer = {token = token, total = total, parts = {}, count = 0}
@@ -106,13 +120,15 @@ function M.ReceiveChunk(source, token, index, total, chunk)
         buffers[key] = nil
         return
     end
-    -- A live companion already exists here: the arriving copy is stale.
-    -- Acknowledge anyway, otherwise the cave keeps a pending record forever
-    -- and can never send the companion home again.
-    if HasCompanion(true) then
-        received[token] = true
+    local live = TheWorld._my_friend
+    if live ~= nil and live:IsValid() then
+        -- Neither body may overwrite the other. Keep a terminal outcome so a
+        -- delayed duplicate cannot spawn after the live companion moves on.
+        local live_id = live._my_friend_id
+        if type(live_id) ~= "string" or live_id == "" then return end
+        received[token] = live_id
         buffers[key] = nil
-        Send("HomeAck", source, token)
+        Send("HomeConflict", source, token, live_id)
         return
     end
     local migration = require("my_friend_migration")
@@ -150,6 +166,19 @@ function M.ReceiveAck(source, token)
         TheWorld._my_friend_home_pending = nil
         TheWorld._my_friend_home_payload = nil
     end
+end
+
+function M.ReceiveConflict(source, token, live_id)
+    local world = TheWorld
+    local pending = world ~= nil and world.prefab == "cave" and world._my_friend_home_pending or nil
+    if tostring(source) ~= tostring(SHARDID.MASTER) or pending == nil or pending.token ~= token
+        or type(live_id) ~= "string" or live_id == "" then return end
+    -- Preserve the original body and inventory for recovery without blocking
+    -- a later, genuine return trip or automatically replaying this one.
+    world._my_friend_home_conflicts = world._my_friend_home_conflicts or {}
+    world._my_friend_home_conflicts[token] = {record = pending.record, surface_id = live_id}
+    world._my_friend_home_pending, world._my_friend_home_payload = nil, nil
+    print("[MyFriends] Return-home conflict: retained cave record " .. token .. " (surface companion " .. live_id .. ")")
 end
 
 function M.ReceiveProbe(source, token)

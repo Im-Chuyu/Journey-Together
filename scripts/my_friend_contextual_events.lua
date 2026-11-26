@@ -171,7 +171,8 @@ local function ReconcileCycles(world)
     -- applied the value that already arrived through the event callback. The
     -- previous value is that stale reading; do not undo the just-recorded
     -- rollback with it.
-    if state.current ~= world.state.cycles and state.previous == world.state.cycles then
+    if state.observed_cycles == state.current and state.current ~= world.state.cycles
+        and state.previous == world.state.cycles then
         return
     end
     DayChanged(world, world.state.cycles)
@@ -230,11 +231,17 @@ function M.AttachWorld(world)
         key = type(session) == "string" and session ~= ""
             and "my_friend_context_" .. session .. "_" .. tostring(shard) or nil}
     world._my_friend_context_days = state
-    world:ListenForEvent("cycleschanged", function(_, cycles) DayChanged(world, cycles) end)
+    local function OnCyclesChanged(_, cycles)
+        if state.loaded and type(cycles) == "number" and cycles ~= state.current then
+            state.observed_cycles = cycles
+            DayChanged(world, cycles)
+        end
+    end
+    world:ListenForEvent("cycleschanged", OnCyclesChanged)
     -- Loading a rollback can update the world state before the prefab's
     -- initial event reaches this listener. Watch the authoritative state and
     -- reconcile once more after persistent memory finishes loading.
-    world:WatchWorldState("cycles", function(_, cycles) DayChanged(world, cycles) end)
+    world:WatchWorldState("cycles", OnCyclesChanged)
     world:WatchWorldState("season", function(_, season) SeasonChanged(world, season) end)
     world:WatchWorldState("israining", function(_, raining)
         WeatherChanged(world, "_my_friend_context_raining", raining, "rain_request")
@@ -273,12 +280,6 @@ function M.AttachWorld(world)
         state.rewind_leader_userid = decoded ~= nil
             and type(decoded.rewind_leader_userid) == "string"
             and decoded.rewind_leader_userid or nil
-        local historical_delta = state.current - state.previous
-        if state.rewind_key == nil and historical_delta < 0
-            and historical_delta >= -5 then
-            state.rewind_key = historical_delta >= -2 and DAY_NEAR or DAY_FAR
-            state.rewind_leader_userid = state.last_leader_userid
-        end
         state.follow_days = decoded ~= nil and type(decoded.follow_days) == "table"
             and decoded.follow_days or {}
         state.follow_pending = decoded ~= nil and type(decoded.follow_pending) == "table"

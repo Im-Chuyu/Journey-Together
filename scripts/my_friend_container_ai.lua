@@ -211,6 +211,7 @@ end
 function M.Cancel(inst)
     local meal = inst._my_friend_meal
     inst._my_friend_meal = nil
+    inst._my_friend_food_supply_cache = nil
     inst._my_friend_food_returns = inst._my_friend_food_returns or {}
     if meal ~= nil then
         for _, record in ipairs(meal.portions or {}) do StashInterrupted(inst, record) end
@@ -261,13 +262,13 @@ local function NextMealAction(inst, meal)
             if entry.count > 0 and IsCarried(inst, entry.item) then record = entry break end
         end
         if record == nil then FinishMeal(inst, meal) return end
-        local shouldeat = not FoodAI.IsForbiddenFood(record.item)
+        local shouldeat = FoodAI.CanSelectFood(inst, record.item)
             and FoodAI.CanSafelyEat(inst, record.item)
             and (not meal.ate or meal.command == nil and FoodAI.Evaluate(inst, record.item) ~= nil)
         if shouldeat then
             action = BufferedAction(inst, nil, ACTIONS.EAT, record.item)
             action.validfn = function()
-                return not FoodAI.IsForbiddenFood(record.item) and IsCarried(inst, record.item)
+                return FoodAI.CanSelectFood(inst, record.item) and IsCarried(inst, record.item)
                     and FoodAI.CanSafelyEat(inst, record.item)
             end
             local before = Count(record.item)
@@ -330,7 +331,7 @@ local function NextMealAction(inst, meal)
             else
                 action = BufferedAction(inst, nil, ACTIONS.EAT, food)
                 action.validfn = function()
-                    return not FoodAI.IsForbiddenFood(food)
+                    return FoodAI.CanSelectFood(inst, food)
                         and FoodAI.CanSafelyEat(inst, food)
                         and (not meal.ready_only or M.IsReadyMeal(inst, food))
                         and IsAvailable(inst, target) and container:GetItemSlot(food) ~= nil

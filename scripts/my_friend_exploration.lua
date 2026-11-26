@@ -31,8 +31,9 @@ end
 
 function M.Load(inst, data)
     local memory = data ~= nil and data.my_friend_explored or nil
-    if type(memory) == "table" and type(memory.visited) == "table"
-        and type(memory.serial) == "number" then inst._my_friend_explored = memory end
+    inst._my_friend_explore_observe = nil
+    inst._my_friend_explored = type(memory) == "table" and type(memory.visited) == "table"
+        and type(memory.serial) == "number" and memory or nil
 end
 
 local function Destination(inst, command)

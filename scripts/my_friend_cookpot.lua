@@ -18,6 +18,35 @@ function M.OwnerID(inst)
     return inst._my_friend_id or tostring(inst.GUID)
 end
 
+function M.CanReceiveHarvest(inst, pot)
+    local product = pot.components.stewer.product
+    local inv = inst.components.inventory
+    if not product or not inv then return false end
+    if not inv:IsFull() then return true end
+    local recipe = require("cooking").GetRecipe(pot.prefab, product)
+    local count = recipe and recipe.stacksize or 1
+    for _, item in ipairs(inv:ReferenceAllItems()) do
+        if item.prefab == product then return inv:CanAcceptCount(item, count) >= count end
+    end
+    local pack = inv:GetOverflowContainer()
+    if not pack or pack:IsFull() or pack.readonlycontainer or pack:IsRestricted(inst) then return false end
+    -- An empty backpack slot can accept a new dish. Ask the native capacity
+    -- check about that product, including custom slot filters and recipe yield.
+    local cache = inst._my_friend_harvest_room
+    local revision = inst._my_friend_discovery_inventory
+    if cache and cache.product == product and cache.count == count and cache.pack == pack.inst.GUID
+        and cache.revision == revision and GetTime() < cache.untiltime then return cache.fits end
+    local sample = SpawnPrefab(product)
+    if sample == nil then return false end
+    local ok, capacity = pcall(inv.CanAcceptCount, inv, sample, count)
+    sample:Remove()
+    if not ok then error(capacity, 0) end
+    local fits = capacity >= count
+    inst._my_friend_harvest_room = {product = product, count = count, pack = pack.inst.GUID,
+        revision = revision, untiltime = GetTime() + 1, fits = fits}
+    return fits
+end
+
 function M.Accessible(inst, pot, origin, radius)
     if pot == nil or not pot:IsValid() or not M.PREFABS[pot.prefab]
         or not M.IsAllowed(inst, pot)

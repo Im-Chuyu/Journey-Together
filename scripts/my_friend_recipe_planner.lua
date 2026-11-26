@@ -37,7 +37,7 @@ function M.Available(inst, item, explicit)
     if inv == nil or inv.islockedinslot or Storage.IsReserved(inst, item)
         or not Rules.CanUseIngredient(item, explicit)
         or inst.prefab ~= "warly" and (item.prefab == "lightninggoathorn" or item.prefab == "boneshard")
-        or item:HasAnyTag("spoiled", "irreplaceable") then return false end
+        or item:HasTag("irreplaceable") or item:HasTag("spoiled") and not Rules.IsExpiringBigMeat(item) then return false end
     local owner = inv.owner
     local c = owner ~= nil and owner.components.container or nil
     return c == nil or not c.readonlycontainer and not c:IsRestricted(inst)
@@ -65,11 +65,13 @@ function M.RecipeValue(inst, recipe, stats, health_deficit)
     local healing = 0
     local memory = inst.components.foodmemory
     local multiplier = memory ~= nil and memory:GetFoodMultiplier(recipe.name) or 1
+    h = h * (eater.healthabsorption or 1) * multiplier
+    f = f * (eater.hungerabsorption or 1) * multiplier
+    s = s * (eater.sanityabsorption or 1) * multiplier
     if health_deficit ~= nil then
-        healing = math.min(health_deficit, h * (eater.healthabsorption or 1) * multiplier)
+        healing = math.min(health_deficit, h)
     end
-    return M.NutritionValue(inst, h, f, s, stats), healing,
-        s * (eater.sanityabsorption or 1) * multiplier
+    return M.NutritionValue(inst, h, f, s, stats), healing, s
 end
 
 -- Score nutrition and ingredient cost against the same current deficits.
@@ -153,12 +155,9 @@ function M.EvaluateSpecific(inst, cooker, prefabs, wanted, stale_meat)
     end
     local eater = inst.components.eater
     if eater == nil or not AcceptsType(eater.caneat, recipe.foodtype) then return end
-    local health = recipe.health or 0
-    if not Food.CanHealWithFood(inst) then health = 0 end
-    local hunger = recipe.hunger or 0
-    local sanity = recipe.sanity or 0
-    local value = M.NutritionValue(inst, health, hunger, sanity, nil, true)
-    return value, recipe.cooktime or 1
+    -- The requested output is a crafting goal even when the chef is full or
+    -- would not choose the dish for a meal. Callers only need a valid match.
+    return 1, recipe.cooktime or 1
 end
 
 function M.Pool(inst, fridges, grounds)
@@ -197,7 +196,7 @@ function M.Pool(inst, fridges, grounds)
             groups[item.prefab] = group
         end
         group.count = group.count + count
-        if Rules.IsBigMeat(item.prefab) and Rules.IsStale(item) then
+        if Rules.IsExpiringBigMeat(item) then
             group.stale_count = (group.stale_count or 0) + count
         end
         group.sources[#group.sources + 1] = {item = item, count = count}

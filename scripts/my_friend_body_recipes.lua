@@ -128,13 +128,13 @@ local function Cook(inst, state, recipe, cooker, count, wanted, mix, nearby)
         health=recipe.health,hunger=recipe.hunger,sanity=recipe.sanity,ingredients={},sources={},
         stations=stations,stations_limited=stations_limited,radius=20,supplies_limited=false,stage="recipe_query",expected_output=count}
     local plan, pending
+    local pool = explicit and require("my_friend_body_cooking").Pool(inst,containers,ground)
+        or planner.Pool(inst,containers,ground)
     if explicit then
-        local ok,reason = require("my_friend_body_cooking").Validate(inst,cooker,wanted,mix)
+        local ok,reason = require("my_friend_body_cooking").Validate(inst,cooker,wanted,mix,pool,count)
         if not ok then out.valid_mix=false;out.reason=reason;return out end
         plan = {prefabs=mix}
     end
-    local pool = explicit and require("my_friend_body_cooking").Pool(inst,containers,ground)
-        or planner.Pool(inst,containers,ground)
     if not explicit then plan,pending = planner.Find(inst,cooker,pool,wanted) end
     out.pending,out.valid_mix = pending == true,plan ~= nil
     if plan == nil then
@@ -168,7 +168,7 @@ local function Cook(inst, state, recipe, cooker, count, wanted, mix, nearby)
         for _,source in ipairs(group.sources or {}) do
             if remaining<=0 then break end
             local item=source.item
-            if item.components.inventoryitem:GetGrandOwner()~=inst then
+            if source.count > 0 and item.components.inventoryitem:GetGrandOwner()~=inst then
                 local take=math.min(source.count,remaining)
                 local owner=item.components.inventoryitem.owner
                 local opening = owner ~= nil and (openings[owner] or owner) or nil

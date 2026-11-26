@@ -79,11 +79,11 @@ local function Available(inst, entity, needs, blocked)
         or inst.components.inventory:CanAcceptCount(entity, 1) <= 0) then return end
     if needs.food then
         if Policy.IsBaseCacheItem(inst, entity) and inst.components.hunger:GetPercent() >= .4 then return end
-        if FoodAI.IsUsableFood(inst, entity)
+        if FoodAI.CanForageFood(inst, entity)
             and inst.components.inventory:CanAcceptCount(entity, 1) > 0 then return { food = 1 } end
         if c.pickable ~= nil and c.pickable.caninteractwith and c.pickable:CanBePicked()
-            and Behaviour.IsFoodProduct(c.pickable.product) then return { food = 1 } end
-        if c.crop ~= nil and c.crop:IsReadyForHarvest() then return { food = 1 } end
+            and Behaviour.IsFoodProduct(c.pickable.product) and FoodAI.CanForageCrop(inst, c.pickable.product) then return { food = 1 } end
+        if c.crop ~= nil and c.crop:IsReadyForHarvest() and FoodAI.CanForageCrop(inst, c.crop.product_prefab) then return { food = 1 } end
         return
     end
     local products = Memory.Products(entity)
@@ -95,6 +95,11 @@ end
 local function Resolve(guid)
     local entity = (Ents or {})[guid]
     return entity ~= nil and entity:IsValid() and entity or nil
+end
+
+local function IsInSearchArea(inst, entity, point)
+    return Policy.InRange(inst, entity) and TheWorld.Map:IsPassableAtPoint(point.x, 0, point.z)
+        and not Navigation.IsNearHole(point)
 end
 
 local function SameReference(cache, key, value)
@@ -120,38 +125,38 @@ function M.Find(inst, needs, blocked, context)
         and SameReference(cache, "base", inst._my_friend_base) and SameReference(cache, "leader", leader)
         and cache.season == season
         and (cache.x - x)^2 + (cache.z - z)^2 < 8^2 and now < cache.retry_at then
-        local target = cache.target_guid ~= nil and Resolve(cache.target_guid) or nil
-        if target ~= nil and Available(inst, target, needs, blocked) ~= nil then
-            if not Behaviour.IsTargetUnsafe(inst, target) then return target end
+        if cache.target_guid ~= nil then
+            local target = Resolve(cache.target_guid)
+            if target ~= nil and Available(inst, target, needs, blocked) ~= nil
+                and IsInSearchArea(inst, target, target:GetPosition())
+                and not Behaviour.IsTargetUnsafe(inst, target) then return target end
             cache.target_guid, cache.safety_after = nil, 0
         end
-        if cache.target_guid == nil then
-            -- Threats may move away without changing a resource. Revisit only
-            -- the remembered candidates, never rediscover the entire world.
-            if now >= cache.safety_after then
-                for _, guid in ipairs(cache.candidates) do
-                    local candidate = Resolve(guid)
-                    if candidate ~= nil and Available(inst, candidate, needs, blocked) ~= nil
-                        and not Behaviour.IsTargetUnsafe(inst, candidate) then
-                        cache.target_guid = guid
-                        return candidate
-                    end
+        -- A threat can leave without changing the resource revision.
+        if now >= cache.safety_after then
+            for _, guid in ipairs(cache.candidates) do
+                local candidate = Resolve(guid)
+                if candidate ~= nil and Available(inst, candidate, needs, blocked) ~= nil
+                    and IsInSearchArea(inst, candidate, candidate:GetPosition())
+                    and not Behaviour.IsTargetUnsafe(inst, candidate) then
+                    cache.target_guid = guid
+                    return candidate
                 end
-                cache.safety_after = now + 2
             end
-            return
+            cache.safety_after = now + 2
         end
+        if cache.scanned_world or now < cache.scan_after then return end
     end
     -- Keep the full ordering, including distant safe alternatives. Parallel
     -- numeric tables avoid one allocation and one strong entity reference per
     -- candidate; only GUIDs survive this call.
     local candidates, scores = {}, {}
     local function Consider(entity)
+        if scores[entity.GUID] ~= nil then return end
         local products = Available(inst, entity, needs, blocked)
-        if products ~= nil and Policy.InRange(inst, entity) then
+        if products ~= nil then
             local p = entity:GetPosition()
-            if TheWorld.Map:IsPassableAtPoint(p.x, 0, p.z)
-                and not Navigation.IsNearHole(p) then
+            if IsInSearchArea(inst, entity, p) then
                 local value = 0
                 for prefab in pairs(needs) do if products[prefab] ~= nil then value = value + 1 end end
                 local region = M.RegionAtPoint(p.x, p.z)
@@ -161,6 +166,13 @@ function M.Find(inst, needs, blocked, context)
                         - value * 3 - M.RegionScore(region, needs) * .5
                         - M.TileScore(tile, needs) * .1
             end
+        end
+    end
+    local function FindSafeCandidate()
+        table.sort(candidates, function(a, b) return scores[a] < scores[b] end)
+        for _, guid in ipairs(candidates) do
+            local entity = Resolve(guid)
+            if entity ~= nil and not Behaviour.IsTargetUnsafe(inst, entity) then return entity end
         end
     end
     local memory_needs = {}
@@ -174,23 +186,39 @@ function M.Find(inst, needs, blocked, context)
     end
     local scan_after = cache ~= nil and cache.scan_after or 0
     local retry_at = Discovery.RetryAt(inst)
-    if #candidates == 0 then
+    local best, scanned_world = FindSafeCandidate(), false
+    if best == nil then
         if now >= scan_after then
             scan_after = now + WORLD_SCAN_INTERVAL
-            for _, entity in pairs(Ents or {}) do Consider(entity) end
+            scanned_world = true
+            if needs.food then
+                -- Crop checks may spawn a sample. Collect food GUIDs before
+                -- running any of those checks so they cannot mutate this loop.
+                local food_guids = {}
+                for guid, entity in pairs(Ents or {}) do
+                    local c = entity.components
+                    if c ~= nil and (c.edible ~= nil or c.pickable ~= nil or c.crop ~= nil) then
+                        food_guids[#food_guids + 1] = guid
+                    end
+                end
+                for _, guid in ipairs(food_guids) do
+                    local entity = Resolve(guid)
+                    if entity ~= nil then Consider(entity) end
+                end
+            else
+                for _, entity in pairs(Ents or {}) do Consider(entity) end
+            end
+            best = FindSafeCandidate()
         else
             -- Keep a still-usable destination while new events wait for the
             -- next full search. Re-evaluate the live resource and current scope.
             local previous = cache.target_guid ~= nil and Resolve(cache.target_guid) or nil
-            if previous ~= nil then Consider(previous) end
+            if previous ~= nil then
+                Consider(previous)
+                best = FindSafeCandidate()
+            end
             retry_at = math.min(retry_at, scan_after)
         end
-    end
-    table.sort(candidates, function(a, b) return scores[a] < scores[b] end)
-    local best
-    for _, guid in ipairs(candidates) do
-        local candidate = Resolve(guid)
-        if candidate ~= nil and not Behaviour.IsTargetUnsafe(inst, candidate) then best = candidate break end
     end
     queries[key] = {target_guid = best ~= nil and best.GUID or nil, candidates = candidates, safety_after = now + 2,
         revision = Discovery.ResourceVersion(needs), season = season,
@@ -198,7 +226,7 @@ function M.Find(inst, needs, blocked, context)
         references = setmetatable({home = inst._my_friend_home, base = inst._my_friend_base, leader = leader}, {__mode = "v"}),
         had_home = inst._my_friend_home ~= nil, had_base = inst._my_friend_base ~= nil, had_leader = leader ~= nil,
         x = x, z = z,
-        retry_at = retry_at, scan_after = scan_after}
+        retry_at = retry_at, scan_after = scan_after, scanned_world = scanned_world}
     local count = 0
     for _ in pairs(queries) do count = count + 1 end
     if count > 16 then

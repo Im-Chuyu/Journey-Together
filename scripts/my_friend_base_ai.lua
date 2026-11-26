@@ -264,8 +264,25 @@ local function CountInventory(inst, prefab)
     return count or 0
 end
 
+-- Some action getters also choose a task label. Keep it with the candidate
+-- until the utility selector actually starts it.
+function M.PrepareAction(inst, getter)
+    local previous = inst._my_friend_task_preview
+    inst._my_friend_task_preview = false
+    local ok, action = pcall(getter, inst)
+    local label = inst._my_friend_task_preview
+    inst._my_friend_task_preview = previous
+    if not ok then error(action, 0) end
+    if action ~= nil and label then action._my_friend_task_label = label end
+    return action
+end
+
 function M.SetTask(inst, text)
     if inst ~= nil then
+        if inst._my_friend_task_preview ~= nil then
+            inst._my_friend_task_preview = text or false
+            return
+        end
         inst._my_friend_current_task = text
         inst._my_friend_resting_at_base_fire =
             text == "正在使用基地火坑" and true or nil
@@ -1847,19 +1864,20 @@ local function GetLocalOpportunityAction(inst, needs, stable_only)
             local action_type, tool, kind, product
             if entity.components ~= nil and entity.components.inventoryitem ~= nil
                 and (GROUND_RESOURCES[entity.prefab]
-                    or entity.components.edible ~= nil)
+                    or entity.components.edible ~= nil and FoodAI.CanForageFood(inst, entity))
                 and CanPickUp(inst, entity) then
                     action_type, kind, product = ACTIONS.PICKUP,
-                        entity.components.edible ~= nil and "food" or "ground",
+                        not GROUND_RESOURCES[entity.prefab] and "food" or "ground",
                         entity.prefab
             else
                 local pickable = entity.components ~= nil and entity.components.pickable or nil
                 if pickable ~= nil and pickable.caninteractwith and pickable:CanBePicked()
-                    and BehaviourAI.IsFoodProduct(pickable.product) then
+                    and BehaviourAI.IsFoodProduct(pickable.product) and FoodAI.CanForageCrop(inst, pickable.product) then
                     action_type, kind, product = ACTIONS.PICK, "food", pickable.product
                 end
                 local crop = entity.components ~= nil and entity.components.crop or nil
-                if action_type == nil and crop ~= nil and crop:IsReadyForHarvest() then
+                if action_type == nil and crop ~= nil and crop:IsReadyForHarvest()
+                    and FoodAI.CanForageCrop(inst, crop.product_prefab) then
                     action_type, kind, product = ACTIONS.HARVEST, "food", crop.product_prefab
                 end
                 local workable = entity.components ~= nil and entity.components.workable or nil
@@ -3251,6 +3269,7 @@ function M.GetInventoryReliefAction(inst)
             and equipment[item] == nil
             and not require("my_friend_inventory").IsPlayerProtected(item)
             and not Storage.IsCargo(inst, item)
+            and not require("my_friend_food_storage").IsReserved(inst, item)
             and not IsEquippedItem(inst, item) and not item:HasAnyTag("irreplaceable", "heavy", "backpack") then
             local removable = CountInventory(inst, item.prefab) - StackSize(item)
                 >= (protected[item.prefab] or 0)
@@ -3258,7 +3277,8 @@ function M.GetInventoryReliefAction(inst)
             if c.edible ~= nil and inst.components.eater ~= nil
                 and inst.components.eater:CanEat(item) and inst.components.eater:PrefersToEat(item) then
                 local health, calories = FoodAI.GetFoodDeltas(inst, item)
-                local nutrition = health >= 0 and math.max(0, calories) * StackSize(item) or 0
+                local servings = inst.components.eater.eatwholestack and 1 or StackSize(item)
+                local nutrition = health >= 0 and math.max(0, calories) * servings or 0
                 removable = supply - nutrition >= FoodAI.GetDailyHunger(inst)
                 score = 30 + nutrition
             elseif c.tool ~= nil then

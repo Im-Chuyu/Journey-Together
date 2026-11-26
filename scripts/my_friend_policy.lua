@@ -5,7 +5,7 @@ M.FOLLOW_RANGE = 7
 
 function M.IsLocalPlayer(player)
     if player == nil or not player:IsValid() or player:HasTag("my_friend")
-        or player._despawning then return false end
+        or player._despawning or player._my_friend_return_waiting then return false end
     for _, online in ipairs(AllPlayers or {}) do
         if online == player then return true end
     end

@@ -25,16 +25,17 @@ function M.NeedsRoasting(inst, item, health)
     return health < 0 or perish ~= nil and perish:GetPercent() < (TUNING.PERISH_STALE or .2)
 end
 
-function M.IsStale(item)
-    local perish = item ~= nil and item.components ~= nil and item.components.perishable or nil
-    return perish ~= nil and perish:GetPercent() < .5
-end
-
 function M.IsBigMeat(name) return BIG_MEAT[name] == true end
+
+function M.IsExpiringBigMeat(item)
+    local perish = item.components.perishable
+    return BIG_MEAT[item.prefab] == true and perish ~= nil and perish:GetPercent() < (TUNING.PERISH_STALE or .2)
+end
 
 function M.CanUseIngredient(item, explicit)
     return item ~= nil and not M.IsProtected(item)
-        and (item.prefab ~= "meat_dried" or explicit == true or M.IsStale(item))
+        and (item.prefab ~= "meat_dried" or explicit == true or item.components.perishable ~= nil
+            and item.components.perishable:GetPercent() < (TUNING.PERISH_FRESH or .5))
 end
 
 function M.AllowsMix(prefabs, stale_meat)
@@ -49,7 +50,7 @@ end
 function M.CountStaleMeat(items)
     local count = 0
     for _, item in pairs(items or {}) do
-        if BIG_MEAT[item.prefab] and M.IsStale(item) then
+        if M.IsExpiringBigMeat(item) then
             local stack = item.components.stackable
             count = count + (stack ~= nil and stack:StackSize() or 1)
         end

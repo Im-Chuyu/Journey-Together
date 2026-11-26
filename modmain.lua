@@ -138,6 +138,7 @@ AddShardModRPCHandler("MyFriends", "HomeChunk", ShardHome.ReceiveChunk)
 AddShardModRPCHandler("MyFriends", "HomeAck", ShardHome.ReceiveAck)
 AddShardModRPCHandler("MyFriends", "PresenceProbe", ShardHome.ReceiveProbe)
 AddShardModRPCHandler("MyFriends", "Presence", ShardHome.ReceivePresence)
+AddShardModRPCHandler("MyFriends", "HomeConflict", ShardHome.ReceiveConflict)
 
 local function OpenFriendContainer(doer, target, container)
     local leader = doer.components ~= nil and doer.components.follower ~= nil
@@ -504,6 +505,8 @@ local Dialogue = require("my_friend_dialogue")
 local Commands = require("my_friend_commands")
 local CookingAI = require("my_friend_cooking_ai")
 local Possess = require("my_friend_possess")
+Possess.SetGraceMinutes(GetModConfigData("possession_grace_minutes"))
+AddShardModRPCHandler("MyFriends", "PossessionReturn", require("my_friend_possession_transport").Receive)
 local OldFriendCook = _G.ACTIONS.COOK.fn
 _G.ACTIONS.COOK.fn = function(act)
     return require("my_friend_food_rules").CookAction(act, OldFriendCook)
@@ -518,6 +521,10 @@ AddStategraphActionHandler("wilson", _G.ActionHandler(FriendSpearBuild, "dolonga
 local FriendSpearCharge = AddAction("MY_FRIEND_SPEAR_CHARGE", Text("充能奔雷矛", "Charge Elding Spear"),
     function(act) return require("my_friend_wathgrithr").PerformSpearCharge(act) end)
 AddStategraphActionHandler("wilson", _G.ActionHandler(FriendSpearCharge, "dolongaction"))
+local FriendWortoxSelfHeal = AddAction("MY_FRIEND_WORTOX_SELF_HEAL", Text("释放灵魂自疗", "Release healing soul"),
+    function(act) return require("my_friend_wortox").ReleaseSelfHealSoul(act.doer, act.invobject) end)
+FriendWortoxSelfHeal.do_not_locomote = true
+AddStategraphActionHandler("wilson", _G.ActionHandler(FriendWortoxSelfHeal, "doshortaction"))
 AddStategraphPostInit("wilsonghost", Dialogue.ProtectStategraph)
 
 AddStategraphPostInit("wilson", function(sg)
@@ -770,6 +777,19 @@ local function ConfigureFriend(inst)
         end
     end
     if inst._my_friend_save_hooks_added ~= true then
+        -- SaveGame groups records by the wrapper name, but native components
+        -- and character OnSave callbacks must see the actual character.
+        local character = inst.prefab
+        local wrapper = Characters.SavePrefab(character)
+        local getpersistdata = inst.GetPersistData
+        inst.GetPersistData = function(self, ...)
+            if self.prefab ~= wrapper then return getpersistdata(self, ...) end
+            self.prefab = character
+            local ok, data, refs = _G.pcall(getpersistdata, self, ...)
+            self.prefab = wrapper
+            if not ok then _G.error(data, 0) end
+            return data, refs
+        end
         local oldsave, oldload = inst.OnSave, inst.OnLoad
         inst.OnSave = function(self, data)
             local refs = oldsave ~= nil and oldsave(self, data) or nil
@@ -1806,6 +1826,7 @@ local function ConfigureFriendWorld(world)
         data.my_friend_initialized = self._my_friend_initialized == true
         data.my_friend_known_shards = self._my_friend_known_shards
         data.my_friend_home_pending = self._my_friend_home_pending
+        data.my_friend_home_conflicts = self._my_friend_home_conflicts
         data.my_friend_home_received = self._my_friend_home_received
         return refs
     end
@@ -1817,6 +1838,7 @@ local function ConfigureFriendWorld(world)
             and (data.my_friend_initialized == true or data.my_friend_saved == true) or false
         self._my_friend_known_shards = data ~= nil and data.my_friend_known_shards or {}
         self._my_friend_home_pending = data ~= nil and data.my_friend_home_pending or nil
+        self._my_friend_home_conflicts = data ~= nil and data.my_friend_home_conflicts or nil
         self._my_friend_home_received = data ~= nil and data.my_friend_home_received or {}
         -- Model administrator grants were retired; old save data is ignored.
         self._my_friend_model_permissions = nil

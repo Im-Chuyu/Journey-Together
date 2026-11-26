@@ -163,40 +163,65 @@ local function BookCommand(text, has_general_command)
     end
 end
 
+-- Stable wheel choices and the defaults for a named chat command. Chat may
+-- supply a more specific book, food or recipe in the rest of the message.
+local CHARACTER_COMMANDS = {
+    wendy = {
+        wendy_recall = {special = "wendy_recall"},
+        build_ash_urn = {special = "build", recipe = "sisturn", center_tile = true},
+    },
+    wanda = {
+        wanda_make_weapon = {special = "build", recipe = "pocketwatch_weapon"},
+        wanda_make_heal_watch = {special = "build", recipe = "pocketwatch_heal"},
+        wanda_make_revive_watch = {special = "build", recipe = "pocketwatch_revive"},
+    },
+    wickerbottom = {
+        read_book = {special = "read"},
+        bookstation = {special = "build", recipe = "bookstation"},
+    },
+    warly = {cook = {special = "cook"}},
+    wathgrithr = {wathgrithr_lightning_spear = {special = "lightning_spear", recipe = "spear_wathgrithr_lightning"}},
+}
+
+function M.FromID(friend, id)
+    local commands = CHARACTER_COMMANDS[friend.prefab]
+    return commands ~= nil and commands[id] or nil
+end
+
 function M.Parse(friend, text, has_general_command)
     if friend == nil or type(text) ~= "string" then return end
     text = text:lower()
     if friend.prefab == "wathgrithr"
         and HasCharacterCommand(text, "wathgrithr", "wathgrithr_lightning_spear") then
-        return {special = "lightning_spear", recipe = "spear_wathgrithr_lightning"}
+        return M.FromID(friend, "wathgrithr_lightning_spear")
     end
     if friend.prefab == "wendy" and Any(text,
         {"收回", "回去", "藏", "recall abigail", "recall"}) then
-        return {special = "wendy_recall"}
+        return M.FromID(friend, "wendy_recall")
     end
     if friend.prefab == "wendy"
         and HasCharacterCommand(text, "wendy", "build_ash_urn") then
-        return {special = "build", recipe = "sisturn", center_tile = true}
+        return M.FromID(friend, "build_ash_urn")
     end
     if friend.prefab == "wanda" then
         if HasCharacterCommand(text, "wanda", "wanda_make_weapon") then
-            return {special = "build", recipe = "pocketwatch_weapon"}
+            return M.FromID(friend, "wanda_make_weapon")
         elseif HasCharacterCommand(text, "wanda", "wanda_make_heal_watch") then
-            return {special = "build", recipe = "pocketwatch_heal"}
+            return M.FromID(friend, "wanda_make_heal_watch")
         elseif HasCharacterCommand(text, "wanda", "wanda_make_revive_watch") then
-            return {special = "build", recipe = "pocketwatch_revive"}
+            return M.FromID(friend, "wanda_make_revive_watch")
         end
     end
     if friend.prefab == "wickerbottom" then
         if Any(text, {"书架", "書架", "书房", "bookshelf", "bookcase"})
             and Any(text, {"造", "做", "制作", "制做", "放", "build", "make", "place"}) then
-            return {special = "build", recipe = "bookstation"}
+            return M.FromID(friend, "bookstation")
         end
         local result = BookCommand(text, has_general_command)
         if result ~= nil then return result end
     elseif friend.prefab == "warly" then
         if Any(text, {"做菜", "cook food", "cook", "烹饪", "烹飪"}) then
-            return {special = "cook", recipe = nil}
+            return M.FromID(friend, "cook")
         end
         local device = Find(text, DEVICES)
         if device ~= nil and Any(text, {"造", "做", "制作", "制做"}) then

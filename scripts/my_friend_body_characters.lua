@@ -6,7 +6,8 @@ local PROFILES = {
     wickerbottom = {actions = {"read_book", "build_special"}, automatic = {"bookshelf_memory", "last_copy_storage"}},
     wathgrithr = {actions = {"lightning_spear"}, automatic = {"combat_lunge", "spear_cycle"}},
     warly = {actions = {"build_special", "spice_food"}, automatic = {}},
-    wortox = {actions = {"make_heart", "squeeze_heart"}, automatic = {"soul_balance", "nearby_player_healing", "soul_collection"}},
+    wortox = {actions = {"make_heart", "squeeze_heart"},
+        automatic = {"soul_balance", "nearby_player_healing", "soul_self_healing", "soul_collection"}},
     wormwood = {actions = {"heal_self"}, automatic = {"carried_medicine_healing"}},
     wx78 = {actions = {}, automatic = {"circuit_and_charge_save_restore"}},
 }

@@ -184,7 +184,7 @@ function M.PublicSay(inst, kind, argument)
     return true
 end
 
-function M.OnAction(inst, action)
+function M.OnAction(inst, action, completed)
     if action._my_friend_fertilizer_wait then return end
     local names = {
         CHOP = "chop", MINE = "mine", PICK = "gather", PICKUP = "gather",
@@ -206,7 +206,8 @@ function M.OnAction(inst, action)
     if kind == "plant" or kind == "fertilize" then
         if not action._my_friend_garden_dialogue then
             action._my_friend_garden_dialogue = true
-            action:AddSuccessAction(function() M.Say(inst, kind) end)
+            if completed then M.Say(inst, kind)
+            else action:AddSuccessAction(function() M.Say(inst, kind) end) end
         end
     elseif kind ~= nil then
         M.Say(inst, kind)

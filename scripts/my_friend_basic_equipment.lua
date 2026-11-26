@@ -71,6 +71,32 @@ local function Available(inst)
         and (manual or not Base.GetStoragePressure(inst))
 end
 
+local function CarriedItems(inst)
+    local inventory = inst.components.inventory
+    local items = inventory:ReferenceAllItems()
+    local active = inventory:GetActiveItem()
+    if active ~= nil then items[#items + 1] = active end
+    return items
+end
+
+-- Only share inventory observations within this synchronous planning pass.
+-- The action's validfn always checks live equipment again.
+local function GoalCheck(inst)
+    local items
+    local needs = {}
+    return function(name)
+        if needs[name] == nil then
+            items = items or CarriedItems(inst)
+            needs[name] = NeedsGoal(inst, name, items)
+        end
+        return needs[name]
+    end
+end
+
+local function ScanDue(state, key)
+    return state == nil or GetTime() >= (state[key] or 0)
+end
+
 function M.Score(inst, context)
     local state = inst._my_friend_base_equipment
     if state ~= nil and (state.home ~= inst._my_friend_home
@@ -83,11 +109,11 @@ function M.Score(inst, context)
         or context.thermal or context.hurt or context.hurt_evade then return 0 end
     if not Available(inst) then return 0 end
     if Home.Mode(inst) == "base" then
-        local combat = NeedsGoal(inst, "spear") or NeedsGoal(inst, "armorwood")
-        if not (combat and GetTime() >= (state ~= nil and state.next_scan or 0)
-            or NeedsGoal(inst, "umbrella") and GetTime() >= (state ~= nil and state.rain_next_scan or 0)
-            or NeedsGoal(inst, "sewing_kit") and GetTime() >= (state ~= nil and state.sewing_next_scan or 0)
-            or NeedsGoal(inst, "heatrock") and GetTime() >= (state ~= nil and state.heatrock_next_scan or 0)) then return 0 end
+        local needs = GoalCheck(inst)
+        if not (ScanDue(state, "next_scan") and (needs("spear") or needs("armorwood"))
+            or ScanDue(state, "rain_next_scan") and needs("umbrella")
+            or ScanDue(state, "sewing_next_scan") and needs("sewing_kit")
+            or ScanDue(state, "heatrock_next_scan") and needs("heatrock")) then return 0 end
     end
     -- Food stocking has its own higher priority; a two-day stock deficit must
     -- not disable equipment when no food job can currently run.
@@ -96,16 +122,13 @@ function M.Score(inst, context)
     return 73
 end
 
-NeedsGoal = function(inst, name)
+NeedsGoal = function(inst, name, items)
     if name == "umbrella" then
-        return require("my_friend_equipment").GetAvailableRainProtection(inst) < M.RAIN_THRESHOLD
+        return require("my_friend_equipment").GetAvailableRainProtection(inst, items) < M.RAIN_THRESHOLD
     end
     if name == "sewing_kit" or name == "heatrock" then
         if name == "heatrock" and GetValidRecipe(name) == nil then return false end
-        local items = inst.components.inventory:ReferenceAllItems()
-        local active = inst.components.inventory:GetActiveItem()
-        if active ~= nil then items[#items + 1] = active end
-        for _, item in ipairs(items) do
+        for _, item in ipairs(items or CarriedItems(inst)) do
             local c = item:IsValid() and item.components or nil
             local ii = c ~= nil and c.inventoryitem or nil
             if c ~= nil and (name == "sewing_kit" and c.sewing ~= nil
@@ -118,17 +141,13 @@ NeedsGoal = function(inst, name)
         end
         return true
     end
-    return not HasEquipment(inst, name, true)
+    return not HasEquipment(inst, name, true, items)
 end
 
-HasEquipment = function(inst, kind, usable)
-    local inventory = inst.components.inventory
-    local items = inventory:ReferenceAllItems()
-    local active = inventory:GetActiveItem()
-    if active ~= nil then items[#items + 1] = active end
+HasEquipment = function(inst, kind, usable, items)
     -- ReferenceAllItems includes worn equipment and backpack contents. Retain
     -- worn-out items for the repair system instead of crafting duplicates.
-    for _, item in ipairs(items) do
+    for _, item in ipairs(items or CarriedItems(inst)) do
         local c = item.components
         if item:IsValid() and c ~= nil and c.equippable ~= nil
             and (not usable or not item:HasTag("broken")
@@ -177,7 +196,7 @@ local function HeatRockMaterials(inst, snapshot)
     return materials
 end
 
-local function PlanSet(inst, snapshot, area, goal)
+local function PlanSet(inst, snapshot, area, needs, goal)
     local choices = goal ~= nil and {{goal}}
         or {{"footballhat", "hambat"}, {"armorwood", "spear"},
             {"footballhat"}, {"hambat"}, {"armorwood"}, {"spear"}}
@@ -206,7 +225,7 @@ local function PlanSet(inst, snapshot, area, goal)
         end
         local possible = true
         for _, name in ipairs(set) do
-            if NeedsGoal(inst, name) and not AddRecipe(name, name) then possible = false break end
+            if needs(name) and not AddRecipe(name, name) then possible = false break end
         end
         if possible and #steps > 0 then return steps end
     end
@@ -219,8 +238,9 @@ local function GetBaseAction(inst, area, manual)
         state = {home = inst._my_friend_home, base = base}
         inst._my_friend_base_equipment = state
     end
+    local needs = GoalCheck(inst)
     local step = state.steps ~= nil and state.steps[1] or nil
-    while step ~= nil and not NeedsGoal(inst, step.goal) do
+    while step ~= nil and not needs(step.goal) do
         table.remove(state.steps, 1)
         step = state.steps[1]
     end
@@ -235,27 +255,26 @@ local function GetBaseAction(inst, area, manual)
     local snapshot
     if step == nil then
         state.steps, state.goal, inst._my_friend_equipment_recipe = nil, nil, nil
-        local combat = manual and (NeedsGoal(inst, "spear") or NeedsGoal(inst, "armorwood"))
-            and GetTime() >= (state.next_scan or 0)
-        local rain = manual and NeedsGoal(inst, "umbrella") and GetTime() >= (state.rain_next_scan or 0)
-        local sewing = manual and NeedsGoal(inst, "sewing_kit") and GetTime() >= (state.sewing_next_scan or 0)
-        local heatrock = NeedsGoal(inst, "heatrock") and GetTime() >= (state.heatrock_next_scan or 0)
+        local combat = manual and ScanDue(state, "next_scan") and (needs("spear") or needs("armorwood"))
+        local rain = manual and ScanDue(state, "rain_next_scan") and needs("umbrella")
+        local sewing = manual and ScanDue(state, "sewing_next_scan") and needs("sewing_kit")
+        local heatrock = ScanDue(state, "heatrock_next_scan") and needs("heatrock")
         if not combat and not rain and not sewing and not heatrock then return end
         snapshot = Materials.Snapshot(inst, area)
         if combat then
-            state.steps = PlanSet(inst, snapshot, area)
+            state.steps = PlanSet(inst, snapshot, area, needs)
             if state.steps == nil then state.next_scan = GetTime() + M.BASE_RETRY end
         end
         if state.steps == nil and rain then
-            state.steps = PlanSet(inst, snapshot, area, "umbrella")
+            state.steps = PlanSet(inst, snapshot, area, needs, "umbrella")
             if state.steps == nil then state.rain_next_scan = GetTime() + M.BASE_RETRY end
         end
         if state.steps == nil and sewing then
-            state.steps = PlanSet(inst, snapshot, area, "sewing_kit")
+            state.steps = PlanSet(inst, snapshot, area, needs, "sewing_kit")
             if state.steps == nil then state.sewing_next_scan = GetTime() + M.BASE_RETRY end
         end
         if state.steps == nil and heatrock then
-            state.steps = PlanSet(inst, HeatRockMaterials(inst, snapshot), area, "heatrock")
+            state.steps = PlanSet(inst, HeatRockMaterials(inst, snapshot), area, needs, "heatrock")
             if state.steps == nil then state.heatrock_next_scan = GetTime() + M.BASE_RETRY end
         end
         step = state.steps ~= nil and state.steps[1] or nil
@@ -345,12 +364,14 @@ end
 function M.GetAction(inst)
     if not Available(inst) then return end
     if Home.Mode(inst) == "base" then return GetBaseAction(inst, ManualArea(inst), true) end
+    local carried = CarriedItems(inst)
     for _, name in ipairs({"spear", "armorwood"}) do
-        if inst._my_friend_equipment_recipe == name and HasEquipment(inst, name) then
+        local equipped = HasEquipment(inst, name, false, carried)
+        if inst._my_friend_equipment_recipe == name and equipped then
             inst._my_friend_equipment_recipe = nil
         end
         local recipe = GetValidRecipe(name)
-        if recipe ~= nil and not HasEquipment(inst, name) then
+        if recipe ~= nil and not equipped then
             -- This uses the same recipe planner as base construction: it can
             -- withdraw from owned chests, refine rope, and approach a science
             -- machine before issuing the actual build action.

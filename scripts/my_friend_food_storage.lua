@@ -10,7 +10,8 @@ function M.ReferenceItems(inst)
     local inventory = inst.components.inventory
     local items = inventory ~= nil and inventory:ReferenceAllItems() or {}
     for index = #items, 1, -1 do
-        if IsOwnSack(inst, items[index]) then
+        if IsOwnSack(inst, items[index]) and not items[index].components.container.readonlycontainer
+            and not items[index].components.container:IsRestricted(inst) then
             for _, food in ipairs(items[index].components.container:GetAllItems()) do
                 items[#items + 1] = food
             end
@@ -19,13 +20,17 @@ function M.ReferenceItems(inst)
     return items
 end
 
-function M.IsReserved(inst, item, excluded)
-    if item == excluded then return true end
-    if require("my_friend_pets").IsIngredient(inst, item) then return true end
+function M.ReservedCount(inst, item, size)
+    if require("my_friend_pets").IsIngredient(inst, item) then return size end
+    local reserved = 0
     for _, record in ipairs(inst._my_friend_food_returns or {}) do
-        if record.item == item and record.count > 0 then return true end
+        if record.item == item and record.count > 0 then reserved = reserved + record.count end
     end
-    return false
+    return math.min(size, reserved)
+end
+
+function M.IsReserved(inst, item, excluded)
+    return item == excluded or M.ReservedCount(inst, item, 1) > 0
 end
 
 -- Inventory maintenance, like merging stacks: move only one stack per tick.

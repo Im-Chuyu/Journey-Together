@@ -431,8 +431,7 @@ function M.Prepare(inst, state, job)
         end
         if skill == "eat" then
             local food = require("my_friend_food_ai")
-            if food.IsForbiddenFood(item) or not inst.components.eater:CanEat(item)
-                or not inst.components.eater:PrefersToEat(item) or not food.CanSafelyEat(inst, item) then return false, "cannot_eat" end
+            if not food.CanEatCarried(inst, item) then return false, "cannot_eat" end
         end
         if skill == "use_item" then
             local components = item.components
@@ -597,14 +596,6 @@ local function Transfer(inst, job, action)
     if skill == "transfer" and job.moved > 0 and moved:IsValid() then ReleaseItem(inst, moved) end
     return job.moved > 0
 end
-local function CanReceiveProduct(inst, prefab)
-    local inventory = inst.components.inventory
-    if not inventory:IsFull() then return true end
-    for _, item in ipairs(Observation.Items(inst)) do
-        if item.prefab == prefab and inventory:CanAcceptCount(item, 1) > 0 then return true end
-    end
-    return false
-end
 -- Runs only from the custom vanilla BufferedAction after routing/SG validation.
 function M.Operate(action)
     local inst, job = action.doer, action._body_job
@@ -658,7 +649,7 @@ function M.Operate(action)
         local product = target.components.stewer.product
         local expected = job.recipe or job.args.recipe
         if expected ~= nil and product ~= expected then job.operation_error = "unexpected_recipe"; return false end
-        if not CanReceiveProduct(inst, product) then job.operation_error = "inventory_full"; return false end
+        if not require("my_friend_cookpot").CanReceiveHarvest(inst, target) then job.operation_error = "inventory_full"; return false end
         local harvested = ACTIONS.HARVEST.fn(action)
         local reserved = target._my_friend_recipe_job
         if harvested and reserved ~= nil and reserved.owner == require("my_friend_cookpot").OwnerID(inst) then
@@ -683,7 +674,8 @@ function M.Operate(action)
         local pot, item = action.target, action.invobject
         if pot._my_friend_body_cook ~= job.id or not Owned(inst, item)
             or not PotAvailable(inst, pot) or not pot.components.container:IsOpenedBy(inst)
-            or pot.components.stewer:IsCooking() then return false end
+            or pot.components.stewer:IsCooking()
+            or not require("my_friend_recipe_planner").Available(inst, item, job.explicit_mix) then return false end
         local moved = item.components.inventoryitem:RemoveFromOwner(false)
         if moved == nil then return false end
         moved.prevcontainer, moved.prevslot = nil, nil
@@ -817,7 +809,7 @@ local function Cook(inst, state, job)
     if stew:IsCooking() then job.stage = "cooking"; return end
     if stew:IsDone() then
         if not job.started or stew.product ~= job.recipe then Fail(inst, job, "unexpected_recipe"); return end
-        if not CanReceiveProduct(inst, job.recipe) then Fail(inst, job, "inventory_full"); return end
+        if not require("my_friend_cookpot").CanReceiveHarvest(inst, pot) then Fail(inst, job, "inventory_full"); return end
         local before = Count(inst, job.recipe)
         return Operate(inst, job, pot, nil, "harvest", function()
             local received = Count(inst, job.recipe) - before
@@ -834,11 +826,19 @@ local function Cook(inst, state, job)
         remaining[item.prefab] = remaining[item.prefab] - 1; prefabs[#prefabs + 1] = item.prefab
     end
     for _, name in ipairs(job.prefabs) do if remaining[name] > 0 then
+        local selected
+        local rules = require("my_friend_food_rules")
+        local needs_old = not rules.AllowsMix(job.prefabs, rules.CountStaleMeat(c:GetAllItems()))
         for _, item in ipairs(Observation.Items(inst)) do
             if item.prefab == name and require("my_friend_recipe_planner").Available(inst, item, job.explicit_mix) then
-                return Operate(inst, job, pot, item, "cook_add")
+                selected = selected or item
+                if not rules.IsBigMeat(name) or rules.IsExpiringBigMeat(item) == needs_old then
+                    selected = item
+                    break
+                end
             end
         end
+        if selected ~= nil then return Operate(inst, job, pot, selected, "cook_add") end
         Fail(inst, job, "ingredients_changed"); return
     end end
     if require("my_friend_recipe_planner").EvaluateSpecific(inst, pot.prefab, prefabs, job.recipe,
@@ -984,7 +984,7 @@ function M.GetAction(inst, state, job)
             Fail(inst, job, "product_not_ready"); return
         end
         local product = target.components.stewer.product
-        if not CanReceiveProduct(inst, product) then Fail(inst, job, "inventory_full"); return end
+        if not require("my_friend_cookpot").CanReceiveHarvest(inst, target) then Fail(inst, job, "inventory_full"); return end
         local before = Count(inst, product)
         return Operate(inst, job, target, nil, "harvest", function()
             local count = Count(inst, product) - before
@@ -1086,15 +1086,14 @@ function M.GetAction(inst, state, job)
                 item_state=Observation.Describe(inst,state,item)})
         end)
     elseif skill == "eat" then
-        if not Owned(inst, item) or not require("my_friend_food_ai").CanSafelyEat(inst, item) then Fail(inst, job, "cannot_eat"); return end
+        if not Owned(inst, item) or not require("my_friend_food_ai").CanEatCarried(inst, item) then Fail(inst, job, "cannot_eat"); return end
         local before = {inst.components.health.currenthealth, inst.components.hunger.current, inst.components.sanity.current}
         return Make(inst, job, nil, ACTIONS.EAT, item, nil, function()
             Done(inst, job, {health_delta = inst.components.health.currenthealth - before[1],
                 hunger_delta = inst.components.hunger.current - before[2], sanity_delta = inst.components.sanity.current - before[3]})
         end, function()
             local food = require("my_friend_food_ai")
-            return Owned(inst, item) and not food.IsForbiddenFood(item) and inst.components.eater:CanEat(item)
-                and inst.components.eater:PrefersToEat(item) and food.CanSafelyEat(inst, item)
+            return Owned(inst, item) and food.CanEatCarried(inst, item)
         end)
     elseif skill == "use_item" then
         local target = Resolve(job, "target") or (job.verb ~= "READ" and job.verb ~= "CAST_POCKETWATCH" and inst or nil)

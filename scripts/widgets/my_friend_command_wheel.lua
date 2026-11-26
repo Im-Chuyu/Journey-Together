@@ -4,7 +4,6 @@ local ImageButton = require "widgets/imagebutton"
 local Text = require "widgets/text"
 local Language = require "my_friend_strings"
 local LanguageFiles = require "my_friend_language"
-local Characters = require "my_friend_characters"
 
 local WheelButton = Class(ImageButton, function(self, wheel, slot, size)
     ImageButton._ctor(self, "images/button_icons.xml", "circle.tex")
@@ -82,36 +81,11 @@ end
 
 local function CommandList()
     local result, seen = {}, {}
-    local characters, character_seen = {}, {}
-    for _, character in ipairs(Characters.List()) do
-        if type(character) == "string" and not character_seen[character] then
-            character_seen[character] = true
-            characters[#characters + 1] = character
+    for _, entry in ipairs(LanguageFiles.CommandCatalogue(Language.language)) do
+        if not seen[entry.id] then
+            seen[entry.id] = true
+            result[#result + 1] = {id = entry.id, label = CommandLabel(entry.id, entry.keywords, entry.label)}
         end
-    end
-    -- Keep the same startup-safe fallback as the server command loader.
-    for _, character in ipairs({"wendy", "wickerbottom", "warly", "wanda", "wathgrithr"}) do
-        if not character_seen[character] then
-            character_seen[character] = true
-            characters[#characters + 1] = character
-        end
-    end
-    local function Add(configured)
-        for _, entry in ipairs(configured or {}) do
-            if type(entry) == "table" and type(entry.id) == "string"
-                and type(entry.keywords) == "table" and #entry.keywords > 0
-                and not seen[entry.id] then
-                seen[entry.id] = true
-                result[#result + 1] = {id = entry.id,
-                    label = CommandLabel(entry.id, entry.keywords, entry.label)}
-            end
-        end
-    end
-    Add(LanguageFiles.CommandWords(Language.language))
-    -- Character commands live beside each character's language/dialogue file,
-    -- but the picker intentionally exposes the complete catalogue at once.
-    for _, character in ipairs(characters) do
-        Add(LanguageFiles.CharacterCommandWords(Language.language, character))
     end
     return result
 end
