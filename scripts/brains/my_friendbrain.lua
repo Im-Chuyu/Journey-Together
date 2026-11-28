@@ -28,6 +28,7 @@ local BeefaloAI = require("my_friend_beefalo")
 local Riding = BeefaloAI.Riding
 local Fishing = require("my_friend_fishing")
 local Exploration = require("my_friend_exploration")
+local Farewell = require("my_friend_farewell")
 local SpecialGather = require("my_friend_command_special_gather")
 local FriendEmote = Class(BehaviourNode, function(self, inst)
     BehaviourNode._ctor(self, "FriendEmote")
@@ -504,7 +505,7 @@ function MyFriendBrain:OnStart()
         entries[#entries + 1] = { id = id, score = ScopedScore, node = node, onstart = onstart,
             passive = id == "follow" or id == "free" or id == "catch_up"
                 or id == "catch_up_mount" or id == "vigil"
-                or id == "light_wait" or id == "thermal_wait" or id == "greeting"
+                or id == "light_wait" or id == "thermal_wait" or id == "greeting" or id == "farewell_wait"
                 or id == "construction_wait" or id == "command_wait" or id == "emote"
                 or id == "sit" or id == "expedition" or id == "fishing_wait"
                 or id == "game_sit"
@@ -587,8 +588,11 @@ function MyFriendBrain:OnStart()
     Add("ghost", function(c) return c.ghost and 149 or 0 end, StandStill(inst))
     -- Saying goodbye before a character change: walk away from everyone and
     -- let nothing else get in the way.
-    Action("farewell", Alive(function() return require("my_friend_farewell").Score(inst) end),
-        require("my_friend_farewell").GetAction, "正在与大家告别并离开", 20)
+    Action("farewell", Alive(function() return Farewell.Score(inst) end),
+        Farewell.GetAction, "正在与大家告别并离开", 20)
+    Add("farewell_wait", Alive(function()
+        return Farewell.IsDeparting(inst) ~= nil and Farewell.SCORE - 1 or 0
+    end), StandStill(inst))
     Action("light", Alive(function(c) return c.dark and 140 or 84 end),
         LightAI.GetLightAction, "正在保证照明", 5, true)
     Add("wait_for_me", Alive(function(c)

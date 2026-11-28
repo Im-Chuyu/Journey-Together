@@ -30,7 +30,7 @@ function M.UpdatePlan(inst, data)
     end
 end
 local REFLEXES = {body = true, revive = true, revive_return = true, ghost = true, ghost_follow = true,
-    farewell = true, hurt = true, hurt_wait = true, combat = true, recover_combat_item = true, escape = true,
+    farewell = true, farewell_wait = true, hurt = true, hurt_wait = true, combat = true, recover_combat_item = true, escape = true,
     light = true, seek_light = true, emergency_light_supply = true, emergency_fire = true, eat = true,
     watch_heal = true, wanda_dreadstone = true, wormwood_heal = true, wanda_refuel = true,
     temperature = true, repair = true, thermal_wait = true, base_fire = true, light_wait = true,

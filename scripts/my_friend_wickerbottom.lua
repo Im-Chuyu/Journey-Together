@@ -43,11 +43,11 @@ local function SyncBase(inst)
         and (base == nil or home.x ~= base.x or home.z ~= base.z) then
         base = {x = home.x, z = home.z}
         inst._my_friend_book_base, inst._my_friend_bookstations = base, {}
-    elseif base == nil then
+    elseif home == nil then
         local point = require("my_friend_base_ai").GetBasePoint(inst)
-        if point ~= nil then
+        if point ~= nil and (base == nil or base.x ~= point.x or base.z ~= point.z) then
             base = {x = point.x, z = point.z}
-            inst._my_friend_book_base = base
+            inst._my_friend_book_base, inst._my_friend_bookstations = base, {}
         end
     end
     return base
@@ -78,6 +78,13 @@ function M.Scan(inst)
     -- remembered shelves do not provide its book; idle/store never scan.
     Observe(inst, base, TheSim:FindEntities(base.x, 0, base.z, Home.Radius(inst),
         {"structure"}, {"INLIMBO", "burnt", "fire"}))
+end
+
+function M.OnStationBuilt(station)
+    local inst = TheWorld._my_friend
+    if inst == nil or not inst:IsValid() or inst.prefab ~= "wickerbottom" then return end
+    local base = SyncBase(inst)
+    if base ~= nil then Observe(inst, base, {station}) end
 end
 
 function M.ScanNearby(inst, command)

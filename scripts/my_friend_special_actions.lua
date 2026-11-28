@@ -240,7 +240,7 @@ function M.GetAction(inst, command)
         if action == nil and inst._my_friend_command == command then
             if not command.reported then
                 command.reported = true
-                Dialogue.Reply(inst, "special_no_book")
+                Dialogue.Reply(inst, command.failed_bookstations ~= nil and "book_read_failed" or "special_no_book")
                 require("my_friend_commands").Clear(inst)
             end
         end

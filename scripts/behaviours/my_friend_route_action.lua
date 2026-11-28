@@ -386,6 +386,15 @@ function RouteAction:Visit(prepared_action)
         end)
         action:AddSuccessAction(function() if self.action == action then self:OnSucceed() end end)
         self.status, self.time = RUNNING, GetTime()
+        -- A shelf in a crowded base can be usable from here even when no
+        -- point on the approach ring is walkable or an earlier route failed.
+        if action.target ~= nil and action.target == action._my_friend_bookstation
+            and (action.action == ACTIONS.MY_FRIEND_OPEN or action.action == ACTIONS.MY_FRIEND_STORE)
+            and require("my_friend_inventory").CanReachContainer(self.inst, action.target) then
+            action.arrivedist = action.arrivedist + .1 -- match CanReachContainer
+            self:PushOriginal()
+            return
+        end
         local point = Navigation.ActionPoint(action)
         local position = self.inst:GetPosition()
         -- Out of bounds for the current mode (home circle or leader range):

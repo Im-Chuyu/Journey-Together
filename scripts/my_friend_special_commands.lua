@@ -220,11 +220,8 @@ function M.Parse(friend, text, has_general_command)
         local result = BookCommand(text, has_general_command)
         if result ~= nil then return result end
     elseif friend.prefab == "warly" then
-        if Any(text, {"做菜", "cook food", "cook", "烹饪", "烹飪"}) then
-            return M.FromID(friend, "cook")
-        end
         local device = Find(text, DEVICES)
-        if device ~= nil and Any(text, {"造", "做", "制作", "制做"}) then
+        if device ~= nil and Any(text, {"造", "做", "制作", "制做", "build", "make"}) then
             return {special = "build", recipe = device.recipe}
         end
         local spice = Find(text, SPICES)
@@ -238,8 +235,11 @@ function M.Parse(friend, text, has_general_command)
             end
         end
         local food = Find(text, FOODS)
-        if food ~= nil and Any(text, {"造", "做", "制作", "制做"}) then
+        if food ~= nil and Any(text, {"造", "做", "制作", "制做", "cook", "烹饪", "烹飪"}) then
             return {special = "cook", recipe = food.recipe}
+        end
+        if Any(text, {"做菜", "cook food", "cook", "烹饪", "烹飪"}) then
+            return M.FromID(friend, "cook")
         end
     end
 end

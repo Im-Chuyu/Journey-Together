@@ -19,7 +19,8 @@ local function Accessible(inst, station)
         or station:HasAnyTag("INLIMBO", "burnt", "fire") then return false end
     local c = station.components.container
     local leader = Policy.GetLeader(inst)
-    return c ~= nil and not c.readonlycontainer and not c:IsRestricted(inst)
+    return c ~= nil and c.canbeopened and not c.readonlycontainer and not c:IsRestricted(inst)
+        and (c:IsOpenedBy(inst) or leader ~= nil and c:IsOpenedBy(leader) or c:CanOpen())
         and (not c:IsOpenedByOthers(inst) or leader ~= nil and c:IsOpenedBy(leader))
         and (Policy.InRange(inst, station) or Wickerbottom.IsRemembered(inst, station))
 end
@@ -32,8 +33,10 @@ end
 local function Stations(inst)
     if inst.prefab ~= "wickerbottom" then return {} end
     local stations = {}
+    local command = inst._my_friend_command
     for _, station in ipairs(Wickerbottom.Stations(inst)) do
-        if Accessible(inst, station) then stations[#stations + 1] = station end
+        if not (command ~= nil and command.failed_bookstations ~= nil and command.failed_bookstations[station.GUID])
+            and Accessible(inst, station) then stations[#stations + 1] = station end
     end
     table.sort(stations, function(a, b) return inst:GetDistanceSqToInst(a) < inst:GetDistanceSqToInst(b) end)
     return stations
@@ -66,9 +69,10 @@ local function GroundBooks(inst, target)
 end
 
 local function StoreStation(inst, book, stations)
+    if book.components.inventoryitem.islockedinslot then return end
     for _, station in ipairs(stations) do
         local c = station.components.container
-        if not c:IsOpenedByOthers(inst) and c:CanTakeItemInSlot(book)
+        if Inventory.StorageReady(inst, station) and not c:IsOpenedByOthers(inst) and c:CanTakeItemInSlot(book)
             and c:CanAcceptCount(book, 1) >= 1 then return station end
     end
 end
@@ -80,7 +84,13 @@ function M.Close(inst, command)
         station.components.container:Close(inst)
         inst:PushEvent("closecontainer", {container = station})
     end
-    if command ~= nil then command.bookstation = nil end
+    if command ~= nil then command.bookstation, command.opened_bookstation = nil, nil end
+end
+
+local function SkipStation(inst, command, station)
+    command.failed_bookstations = command.failed_bookstations or {}
+    command.failed_bookstations[station.GUID] = true
+    M.Close(inst, command)
 end
 
 function M.PrepareCommand(inst, command)
@@ -113,6 +123,11 @@ end
 
 function M.GetReadAction(inst, command)
     if inst.prefab ~= "wickerbottom" then return end
+    local opened = command.opened_bookstation
+    if opened ~= nil and opened:IsValid() and Inventory.CanReachContainer(inst, opened)
+        and not IsOpen(inst, opened) then
+        SkipStation(inst, command, opened)
+    end
     if not Wickerbottom.HasRecords(inst) and not command.bookstations_scanned then
         command.bookstations_scanned = true
         Wickerbottom.Scan(inst)
@@ -128,7 +143,9 @@ function M.GetReadAction(inst, command)
         stations, stored = Stations(inst), {}
         for _, station in ipairs(stations) do
             for _, book in pairs(station.components.container.slots or {}) do
-                if book:IsValid() and (command.target == nil or book.prefab == command.target)
+                if book:IsValid() and book.components.inventoryitem ~= nil
+                    and book.components.inventoryitem.owner == station and not book.components.inventoryitem.islockedinslot
+                    and (command.target == nil or book.prefab == command.target)
                     and book.components.book ~= nil and Uses(book) > 0 then
                     stored[#stored + 1] = {book = book, station = station}
                 end
@@ -160,8 +177,6 @@ function M.GetReadAction(inst, command)
         end
     end
     if chosen == nil or Uses(chosen.book) < 2 and not command.use_last_book then
-        local visit = Wickerbottom.GetVisitAction(inst, command)
-        if visit ~= nil then return visit end
         local function Rechoose()
             RefreshStored()
             chosen = carried[1] or stored[1]
@@ -175,6 +190,10 @@ function M.GetReadAction(inst, command)
         end
         if (chosen == nil or Uses(chosen.book) < 2 and not command.use_last_book)
             and Wickerbottom.ScanNearby(inst, command) then Rechoose() end
+        if chosen == nil or Uses(chosen.book) < 2 and not command.use_last_book then
+            local visit = Wickerbottom.GetVisitAction(inst, command)
+            if visit ~= nil then return visit end
+        end
     end
     if chosen == nil then return end
     local count = #carried + #stored + #ground
@@ -182,6 +201,9 @@ function M.GetReadAction(inst, command)
         if chosen.station == nil then
             local station = StoreStation(inst, chosen.book, stations)
             if station ~= nil then
+                if inst.components.rider ~= nil and inst.components.rider:IsRiding() then
+                    return require("my_friend_riding").GetDismountAction(inst)
+                end
                 local action = StoreAction(inst, station, chosen.book, command)
                 action:AddSuccessAction(function()
                     if count == 1 then
@@ -200,16 +222,30 @@ function M.GetReadAction(inst, command)
         end
     end
     local book, station = chosen.book, chosen.station
+    if command.bookstation ~= nil and command.bookstation ~= station then M.Close(inst, command) end
     if station ~= nil then
+        if inst.components.rider ~= nil and inst.components.rider:IsRiding() then
+            return require("my_friend_riding").GetDismountAction(inst)
+        end
         command.bookstation = station
-        if not IsOpen(inst, station) or inst:GetDistanceSqToInst(station) > Inventory.ContainerReach(inst, station)^2 then
+        if not IsOpen(inst, station) or not Inventory.CanReachContainer(inst, station) then
             local action = BufferedAction(inst, station, ACTIONS.MY_FRIEND_OPEN)
             action.arrivedist = Inventory.ContainerReach(inst, station)
             action._my_friend_dialogue_kind = "book_shelf_read"
             action.validfn = function()
                 return inst._my_friend_command == command and Accessible(inst, station)
                     and book:IsValid() and book.components.inventoryitem.owner == station
+                    and not book.components.inventoryitem.islockedinslot
             end
+            action:AddSuccessAction(function()
+                if inst._my_friend_command == command then command.opened_bookstation = station end
+            end)
+            action:AddFailAction(function()
+                if not action._my_friend_cancelled and inst._my_friend_command == command
+                    and book:IsValid() and book.components.inventoryitem.owner == station then
+                    SkipStation(inst, command, station)
+                end
+            end)
             return Wickerbottom.Guard(inst, action, station)
         end
     end
@@ -223,7 +259,8 @@ function M.GetReadAction(inst, command)
             or station ~= nil and Accessible(inst, station)
                 and IsOpen(inst, station)
                 and book.components.inventoryitem.owner == station
-                and inst:GetDistanceSqToInst(station) <= (Inventory.ContainerReach(inst, station) + .5)^2
+                and not book.components.inventoryitem.islockedinslot
+                and Inventory.CanReachContainer(inst, station)
     end
     action:AddSuccessAction(function()
         if not book:IsValid() then Dialogue.Reply(inst, "book_used_up") end
@@ -240,6 +277,7 @@ end
 
 function M.GetStoreAction(inst)
     if inst.prefab ~= "wickerbottom" or inst._my_friend_command ~= nil
+        or inst.components.rider ~= nil and inst.components.rider:IsRiding()
         or inst._my_friend_storage_action ~= nil or inst._my_friend_work_target ~= nil
         or inst._my_friend_under_threat or Policy.IsBusy(inst)
         or GetTime() < (inst._my_friend_book_store_after or 0) then return end

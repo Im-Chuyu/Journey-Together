@@ -32,7 +32,7 @@ A base covers a radius of 48 units. Your companion remembers nearby cookpots, ic
 
 - **Equipment.** At a player-designated base, a companion short of protection can use accessible materials to make a Football Helmet and Ham Bat, or try a Log Suit and Spear. Normal crafting requirements apply.
 - **Food and weather.** A hungry companion looks for food their character can eat and can collect a finished dish when safe. Warly can cook at low hunger if he has no suitable carried food. Below 65% hunger, Wortox prefers pocket souls above a reserve of ten. Companions also use equipment to keep warm or dry.
-- **Character abilities.** Wickerbottom can return to a remembered bookcase. Wortox heals nearby injured players and releases one soul at a time to heal himself when safe and missing at least 20 health. Wigfrid can craft and charge an Elding Spear with the materials she carries.
+- **Character abilities.** Ask Wickerbottom to read a book by name. She can dismount and open a nearby bookcase or one at base. A book read from its shelf stays there. Wortox heals nearby injured players and releases one soul at a time to heal himself when safe and missing at least 20 health. Wigfrid can craft and charge an Elding Spear with the materials she carries.
 
 ## Combat and revival
 

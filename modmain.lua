@@ -1774,6 +1774,11 @@ AddComponentPostInit("skilltreeupdater", function(self, inst)
 end)
 require("my_friend_character_actions").InstallSoulHealing()
 AddPrefabPostInit("wortox_soul_spawn", require("my_friend_wortox").InstallSoulAttraction)
+AddPrefabPostInit("bookstation", function(station)
+    if _G.TheWorld.ismastersim then
+        station:ListenForEvent("onbuilt", require("my_friend_wickerbottom").OnStationBuilt)
+    end
+end)
 AddPrefabPostInit("wortox_reviver", require("my_friend_wortox").ConfigureHeart)
 AddPrefabPostInitAny(require("my_friend_shadow_compat").ConfigureCreature)
 

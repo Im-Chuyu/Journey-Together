@@ -4,6 +4,7 @@
 -- chosen character, which then arrives the way a first companion would.
 local Policy = require("my_friend_policy")
 local Characters = require("my_friend_characters")
+local Navigation = require("my_friend_navigation")
 
 local M = {}
 
@@ -13,6 +14,9 @@ M.RANGE = 36
 -- other business left.
 M.SCORE = 145
 M.STEP = 10
+M.DETOUR_STEP = 18
+M.LEG_RANGE = 24
+M.BLOCKED_TIMEOUT = 30
 -- Safety valve: players who chase the companion forever would otherwise
 -- leave the world with a companion that can never finish leaving.
 M.TIMEOUT = 300
@@ -24,11 +28,17 @@ end
 
 M.IsDeparting = IsDeparting
 
-local function NearestPlayer(inst)
+local function DistanceSq(a, b)
+    return (a.x - b.x)^2 + (a.z - b.z)^2
+end
+
+local function NearestPlayer(inst, position, players)
     local closest, best
     for _, player in ipairs(AllPlayers or {}) do
         if Policy.IsLocalPlayer(player) then
-            local distance = inst:GetDistanceSqToInst(player)
+            local point = position ~= nil and player:GetPosition() or nil
+            if players ~= nil then players[#players + 1] = point end
+            local distance = point ~= nil and DistanceSq(position, point) or inst:GetDistanceSqToInst(player)
             if best == nil or distance < best then closest, best = player, distance end
         end
     end
@@ -70,50 +80,83 @@ function M.Score(inst)
     return IsDeparting(inst) ~= nil and M.SCORE or 0
 end
 
--- Walks directly away from whoever is closest.
-function M.GetAction(inst)
-    local departing = IsDeparting(inst)
-    if departing == nil or Policy.IsBusy(inst) then return end
-    local player, distancesq = NearestPlayer(inst)
-    if player == nil then return end
-    local position = inst:GetPosition()
-    local source = player:GetPosition()
-    local dx, dz = position.x - source.x, position.z - source.z
-    local length = math.sqrt(dx * dx + dz * dz)
-    local heading = length > .01 and math.atan2(dz, dx) or math.random() * PI2
-    for index = 0, 11 do
-        -- Fan out from straight away, so a shoreline never traps the walk.
-        local offset = math.ceil(index / 2) * (index % 2 == 0 and 1 or -1)
-        local angle = heading + offset * PI2 / 16
-        local point = Vector3(position.x + math.cos(angle) * M.STEP, 0,
-            position.z + math.sin(angle) * M.STEP)
-        if TheWorld.Map:IsPassableAtPoint(point.x, 0, point.z)
-            and not require("my_friend_navigation").IsNearHole(point) then
-            local action = BufferedAction(inst, nil, ACTIONS.WALKTO, nil, point)
-            action.arrivedist = 2
-            return action
-        end
-    end
+function M.InTravelRange(inst, action, point)
+    return action._my_friend_farewell == IsDeparting(inst)
+        and DistanceSq(action._my_friend_farewell_origin, point) <= M.LEG_RANGE^2
 end
 
--- Periodic. Performs the handover once the companion is alone, or when the
--- timeout expires.
-function M.Update(inst)
+local function ChooseGoal(inst, position, players, heading, step, minimum)
+    local goal, best = nil, minimum
+    for index = 0, 15 do
+        local offset = math.ceil(index / 2) * (index % 2 == 0 and 1 or -1)
+        local angle = heading + offset * PI2 / 16
+        local point = Vector3(position.x + math.cos(angle) * step, 0, position.z + math.sin(angle) * step)
+        if Navigation.IsLand(point) and not Navigation.IsBlocked(inst, point) then
+            local clearance = math.huge
+            for _, player in ipairs(players) do clearance = math.min(clearance, DistanceSq(point, player)) end
+            if clearance > best then goal, best = point, clearance end
+        end
+    end
+    return goal
+end
+
+function M.GetAction(inst)
     local departing = IsDeparting(inst)
-    if departing == nil then return end
-    if not inst:IsValid() or inst:HasTag("playerghost")
-        or inst.components.health == nil or inst.components.health:IsDead() then
+    local now = GetTime()
+    if departing == nil or departing.finishing or now < (departing.retry_at or 0)
+        or Policy.IsBusy(inst) then return end
+    local position = inst:GetPosition()
+    local players = {}
+    local player, distancesq = NearestPlayer(inst, position, players)
+    if player == nil or distancesq > M.RANGE^2 then return end
+    local source = player:GetPosition()
+    local dx, dz = position.x - source.x, position.z - source.z
+    local length = math.sqrt(distancesq)
+    local heading = length > .01 and math.atan2(dz, dx) or math.random() * PI2
+    local minimum = (length + .5)^2
+    local point = ChooseGoal(inst, position, players, heading, M.STEP, minimum)
+        or ChooseGoal(inst, position, players, heading, M.DETOUR_STEP, minimum)
+    if point == nil then
+        departing.blocked_since = departing.blocked_since or now
+        departing.retry_at = now + 1
         return
     end
+    local action = BufferedAction(inst, nil, ACTIONS.WALKTO, nil, point)
+    action.arrivedist = .15
+    action._my_friend_farewell, action._my_friend_farewell_origin = departing, position
+    action:AddSuccessAction(function()
+        if IsDeparting(inst) == departing then departing.blocked_since = nil end
+    end)
+    action:AddFailAction(function()
+        if IsDeparting(inst) == departing and not action._my_friend_cancelled then
+            departing.blocked_since = departing.blocked_since or GetTime()
+            if not Navigation.IsBlocked(inst, point) then Navigation.Block(inst, point, false, true) end
+        end
+    end)
+    return action
+end
+
+local function CanComplete(inst, departing)
+    if not inst:IsValid() or inst:HasTag("playerghost")
+        or inst.components.health == nil or inst.components.health:IsDead()
+        or Policy.IsBusy(inst) then return false end
     local _, distancesq = NearestPlayer(inst)
-    local alone = distancesq == nil or distancesq > M.RANGE * M.RANGE
-    if not alone and GetTime() - (departing.started or 0) < M.TIMEOUT then return end
-    inst._my_friend_departing = nil
+    local now = GetTime()
+    return distancesq == nil or distancesq > M.RANGE^2 or now - (departing.started or 0) >= M.TIMEOUT
+        or departing.blocked_since ~= nil and now - departing.blocked_since >= M.BLOCKED_TIMEOUT
+end
+
+function M.Update(inst)
+    local departing = IsDeparting(inst)
+    if departing == nil or departing.finishing or not CanComplete(inst, departing) then return end
+    departing.finishing = true
     -- Outside the entity's own task, because the handover removes it.
-    local character, keep_items = departing.character, departing.keep_items
     TheWorld:DoTaskInTime(0, function()
-        if not inst:IsValid() then return end
-        M.Complete(inst, character, keep_items)
+        if IsDeparting(inst) ~= departing then return end
+        if CanComplete(inst, departing) and M.Complete(inst, departing.character, departing.keep_items) ~= nil then
+            return
+        end
+        departing.finishing = nil
     end)
 end
 
